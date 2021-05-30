@@ -22,9 +22,10 @@ generate_buildinfo() {
   cat <<-EOF
 include-dirs:
     ${SCRIPT_DIR}/third_party/Halide/include
-ld-options:
-    ${SCRIPT_DIR}/cbits/libhalide_runtime.o
+extra-lib-dirs:
+    ${SCRIPT_DIR}/cbits
 extra-libraries:
+    halide_runtime
     pthread
     dl
 EOF

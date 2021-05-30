@@ -10,7 +10,7 @@ license-file:        LICENSE
 author:              Tom Westerhout
 maintainer:          Tom Westerhout <14264576+twesterhout@users.noreply.github.com>
 copyright:           2021 Tom Westerhout
-build-type:          Configure
+build-type:          Custom
 extra-doc-files:     README.md
                      CHANGELOG.md
 extra-source-files:  configure
@@ -23,6 +23,11 @@ tested-with:         GHC == 8.10.4
 source-repository head
   type:                git
   location:            https://github.com/twesterhout/halide-haskell.git
+
+custom-setup
+  setup-depends:       base >= 4.13.0.0 && < 5
+                     , Cabal >= 2.4
+                     , directory >= 1.2.1
 
 common common-options
   build-depends:       base >= 4.13.0.0
