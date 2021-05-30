@@ -31,6 +31,10 @@ jobs:
         path: ~/.cabal/store
         key: ${{ runner.os }}-${{ matrix.ghc }}-cabal
 
+    - name: Info
+      run: |
+        ld --version
+
     - name: Build
       run: |
         cabal v2-update
