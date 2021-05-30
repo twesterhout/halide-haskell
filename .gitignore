@@ -52,3 +52,10 @@ TAGS
 
 # other
 .DS_Store
+
+# Halide
+lib*.a
+app/libfoo.h
+*.registration.cpp
+*_generator
+third_party/Halide-*
