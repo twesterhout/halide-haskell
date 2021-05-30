@@ -20,11 +20,11 @@ HALIDE_ARCHIVE := $(HALIDE_FOLDER)-$(HALIDE_COMMIT).tar.gz
 HALIDE_ROOT := $(PWD)/third_party/$(HALIDE_FOLDER)
 
 third_party/$(HALIDE_ARCHIVE):
-	cd third_party && \
+	mkdir -p third_party && cd third_party && \
 	wget --no-verbose https://github.com/halide/Halide/releases/download/v$(HALIDE_VERSION)/$(HALIDE_ARCHIVE)
 
 $(HALIDE_ROOT): third_party/$(HALIDE_ARCHIVE)
-	cd third_party && \
+	mkdir -p third_party && cd third_party && \
 	tar -xf $(HALIDE_ARCHIVE)
 
 cbits/dummy_generator: cbits/dummy_generator.cpp $(HALIDE_ROOT)
