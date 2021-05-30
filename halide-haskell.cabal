@@ -13,6 +13,11 @@ copyright:           2021 Tom Westerhout
 build-type:          Configure
 extra-doc-files:     README.md
                      CHANGELOG.md
+extra-source-files:  configure
+                     Makefile
+                     cbits/dummy_generator.cpp
+                     app/Makefile
+                     app/foo_generator.cpp
 tested-with:         GHC == 8.10.4
 
 source-repository head
