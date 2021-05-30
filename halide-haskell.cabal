@@ -13,14 +13,14 @@ copyright:           2021 Tom Westerhout
 build-type:          Simple
 extra-doc-files:     README.md
                      CHANGELOG.md
-tested-with:         GHC == 8.8.3
+tested-with:         GHC == 8.10.4
 
 source-repository head
   type:                git
   location:            https://github.com/twesterhout/halide-haskell.git
 
 common common-options
-  build-depends:       base ^>= 4.13.0.0
+  build-depends:       base >= 4.13.0.0
   
   ghc-options:         -Wall
                        -Wcompat
