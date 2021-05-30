@@ -10,8 +10,7 @@ license-file:        LICENSE
 author:              Tom Westerhout
 maintainer:          Tom Westerhout <14264576+twesterhout@users.noreply.github.com>
 copyright:           2021 Tom Westerhout
-build-type:          Simple
--- Configure
+build-type:          Configure
 extra-doc-files:     README.md
                      CHANGELOG.md
 extra-source-files:  configure
@@ -52,10 +51,6 @@ library
   import:              common-options
   hs-source-dirs:      src
   exposed-modules:     Halide
-  include-dirs:        third_party/Halide/include
-  ld-options:          cbits/libhalide_runtime.o
-  extra-libraries:     pthread dl
-
   -- c-sources:           cbits/force.c
 
 executable halide-haskell
