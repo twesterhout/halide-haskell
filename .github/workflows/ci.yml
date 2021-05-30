@@ -9,16 +9,15 @@ on:
 jobs:
   build:
     name: ghc ${{ matrix.ghc }}
-    runs-on: ubuntu-16.04
+    runs-on: ubuntu-18.04
     strategy:
       matrix:
-        cabal: ["2.4"]
+        cabal: ["3.2.0.0"]
         ghc:
-          - "8.8.3"
+          - "8.10.4"
 
     steps:
     - uses: actions/checkout@v2
-      if: github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.ref == 'refs/heads/master'
 
     - uses: actions/setup-haskell@v1
       name: Setup Haskell
@@ -40,3 +39,7 @@ jobs:
     - name: Test
       run: |
         cabal v2-test --enable-tests
+
+    - name: Example
+      run: |
+        cabal v2-run halide-haskell
