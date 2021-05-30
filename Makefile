@@ -17,7 +17,8 @@ else
 endif
 HALIDE_FOLDER := Halide-$(HALIDE_VERSION)-$(HALIDE_ARCH)-$(HALIDE_OS)
 HALIDE_ARCHIVE := $(HALIDE_FOLDER)-$(HALIDE_COMMIT).tar.gz
-HALIDE_ROOT := $(PWD)/third_party/$(HALIDE_FOLDER)
+HALIDE_ROOT := third_party/Halide
+# $(PWD)/third_party/$(HALIDE_FOLDER)
 
 third_party/$(HALIDE_ARCHIVE):
 	mkdir -p third_party && cd third_party && \
@@ -25,7 +26,8 @@ third_party/$(HALIDE_ARCHIVE):
 
 $(HALIDE_ROOT): third_party/$(HALIDE_ARCHIVE)
 	mkdir -p third_party && cd third_party && \
-	tar -xf $(HALIDE_ARCHIVE)
+	tar -xf $(HALIDE_ARCHIVE) && \
+	ln -f --symbolic $(HALIDE_FOLDER) Halide
 
 cbits/dummy_generator: cbits/dummy_generator.cpp $(HALIDE_ROOT)
 	$(CXX) -std=c++11 \
@@ -36,7 +38,7 @@ cbits/dummy_generator: cbits/dummy_generator.cpp $(HALIDE_ROOT)
 		-lpthread -lm -lz -ldl 
 
 cbits/libhalide_runtime.a: cbits/dummy_generator
-	./cbits/dummy_generator -r libhalide_runtime -o cbits -e static_library \
+	./cbits/dummy_generator -r libhalide_runtime -o cbits -e object,static_library \
 		target=$(HALIDE_ARCH)-$(HALIDE_OS)
 
 all: cbits/libhalide_runtime.a
@@ -44,4 +46,4 @@ all: cbits/libhalide_runtime.a
 .PHONY: clean
 clean:
 	rm -rf cbits/libhalide_runtime.a cbits/dummy_generator \
-		third_party/$(HALIDE_FOLDER)
+		$(HALIDE_ROOT) third_party/$(HALIDE_FOLDER)

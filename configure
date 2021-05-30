@@ -9,11 +9,22 @@ set -o pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -L | sed 's://:/:g')"
 
 generate_buildinfo() {
+  #   cat <<-EOF
+  # extra-lib-dirs:
+  #     ${SCRIPT_DIR}/cbits
+  # ghc-options:
+  #     -optl-Wl,-L${SCRIPT_DIR}/cbits -optl-Wl,-lhalide_runtime
+  # extra-libraries:
+  #     halide_runtime
+  #     pthread
+  #     dl
+  # EOF
   cat <<-EOF
-extra-lib-dirs:
-    ${SCRIPT_DIR}/cbits
+include-dirs:
+    ${SCRIPT_DIR}/third_party/Halide/include
+ld-options:
+    ${SCRIPT_DIR}/cbits/libhalide_runtime.o
 extra-libraries:
-    halide_runtime
     pthread
     dl
 EOF
