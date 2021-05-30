@@ -32,7 +32,7 @@ cbits/dummy_generator: cbits/dummy_generator.cpp $(HALIDE_ROOT)
 		-I$(HALIDE_ROOT)/include \
 		$< $(HALIDE_ROOT)/share/Halide/tools/GenGen.cpp -o $@ \
 		-L$(HALIDE_ROOT)/lib -Wl,-rpath=$(HALIDE_ROOT)/lib \
-		-lHalide -lpthread -ldl
+		-lHalide -lpthread -ldl -lm
 
 cbits/libhalide_runtime.a: cbits/dummy_generator
 	./cbits/dummy_generator -r libhalide_runtime -o cbits -e static_library \

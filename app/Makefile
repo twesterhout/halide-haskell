@@ -7,7 +7,7 @@ foo_generator: foo_generator.cpp
 		-I$(HALIDE_ROOT)/include \
 		$< $(HALIDE_ROOT)/share/Halide/tools/GenGen.cpp -o $@ \
 		-L$(HALIDE_ROOT)/lib -Wl,-rpath=$(HALIDE_ROOT)/lib \
-		-lHalide -lpthread -ldl
+		-lHalide -lpthread -ldl -lm
 
 libfoo.a: foo_generator
 	./foo_generator -g foo -n libfoo -o . target=x86-64-linux-no_runtime
