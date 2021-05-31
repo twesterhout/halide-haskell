@@ -7,6 +7,7 @@
 module Halide
   ( HalideBuffer (..),
     bufferFromPtrShape,
+    bufferFromPtrShapeStrides,
     HalideDimension (..),
     IsHalideType (..),
     HalideType (..),
@@ -56,9 +57,6 @@ simpleDimension extent stride = HalideDimension 0 (toInt32 extent) (toInt32 stri
 
 rowMajorStrides :: Integral a => [a] -> [a]
 rowMajorStrides = drop 1 . scanr (*) 1
-
-rowMajorDimensions :: [Int] -> [HalideDimension]
-rowMajorDimensions shape = zipWith simpleDimension shape (rowMajorStrides shape)
 
 data HalideDeviceInterface
 
@@ -165,9 +163,9 @@ instance Storable HalideBuffer where
     pokeByteOff p 40 (halideBufferDim x)
     pokeByteOff p 48 (halideBufferPadding x)
 
-bufferFromPtrShape :: forall a b. IsHalideType a => Ptr a -> [Int] -> (Ptr HalideBuffer -> IO b) -> IO b
-bufferFromPtrShape p shape action =
-  withArrayLen (rowMajorDimensions shape) $ \n dim -> do
+bufferFromPtrShapeStrides :: forall a b. IsHalideType a => Ptr a -> [Int] -> [Int] -> (Ptr HalideBuffer -> IO b) -> IO b
+bufferFromPtrShapeStrides p shape stride action =
+  withArrayLen (zipWith simpleDimension shape stride) $ \n dim -> do
     let buffer =
           HalideBuffer
             { halideBufferDevice = 0,
@@ -180,6 +178,9 @@ bufferFromPtrShape p shape action =
               halideBufferPadding = nullPtr
             }
     with buffer action
+
+bufferFromPtrShape :: forall a b. IsHalideType a => Ptr a -> [Int] -> (Ptr HalideBuffer -> IO b) -> IO b
+bufferFromPtrShape p shape = bufferFromPtrShapeStrides p shape (rowMajorStrides shape)
 
 class IsHalideBuffer a where
   withHalideBuffer :: a -> (Ptr HalideBuffer -> IO b) -> IO b
