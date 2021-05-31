@@ -51,8 +51,14 @@ toInt32 x = case toIntegralSized x of
   Just y -> y
   Nothing -> error $ "integer overflow when converting " <> show (toInteger x) <> " to Int32"
 
-simpleDimension :: Int -> HalideDimension
-simpleDimension n = HalideDimension 0 (toInt32 n) 1 0
+simpleDimension :: Int -> Int -> HalideDimension
+simpleDimension extent stride = HalideDimension 0 (toInt32 extent) (toInt32 stride) 0
+
+rowMajorStrides :: Integral a => [a] -> [a]
+rowMajorStrides = drop 1 . scanr (*) 1
+
+rowMajorDimensions :: [Int] -> [HalideDimension]
+rowMajorDimensions shape = zipWith simpleDimension shape (rowMajorStrides shape)
 
 data HalideDeviceInterface
 
@@ -161,7 +167,7 @@ instance Storable HalideBuffer where
 
 bufferFromPtrShape :: forall a b. IsHalideType a => Ptr a -> [Int] -> (Ptr HalideBuffer -> IO b) -> IO b
 bufferFromPtrShape p shape action =
-  withArrayLen (simpleDimension <$> shape) $ \n dim -> do
+  withArrayLen (rowMajorDimensions shape) $ \n dim -> do
     let buffer =
           HalideBuffer
             { halideBufferDevice = 0,
