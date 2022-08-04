@@ -4,7 +4,7 @@
 -- Maintainer: Tom Westerhout <14264576+twesterhout@users.noreply.github.com>
 --
 -- See README for more info
-module Halide
+module Language.Halide
   ( HalideBuffer (..),
     bufferFromPtrShape,
     bufferFromPtrShapeStrides,
@@ -23,6 +23,7 @@ import Foreign.Marshal.Array
 import Foreign.Marshal.Utils
 import Foreign.Ptr (Ptr, castPtr, nullPtr)
 import Foreign.Storable
+import GHC.Stack (HasCallStack)
 
 data HalideDimension = HalideDimension
   { halideDimensionMin :: {-# UNPACK #-} !Int32,
@@ -34,26 +35,34 @@ data HalideDimension = HalideDimension
 
 instance Storable HalideDimension where
   sizeOf _ = 16
+  {-# INLINE sizeOf #-}
   alignment _ = 4
+  {-# INLINE alignment #-}
   peek p =
     HalideDimension
       <$> peekByteOff p 0
       <*> peekByteOff p 4
       <*> peekByteOff p 8
       <*> peekByteOff p 12
+  {-# INLINE peek #-}
   poke p x = do
     pokeByteOff p 0 (halideDimensionMin x)
     pokeByteOff p 4 (halideDimensionExtent x)
     pokeByteOff p 8 (halideDimensionStride x)
     pokeByteOff p 12 (halideDimensionFlags x)
+  {-# INLINE poke #-}
 
-toInt32 :: (Bits a, Integral a) => a -> Int32
+toInt32 :: (HasCallStack, Bits a, Integral a) => a -> Int32
 toInt32 x = case toIntegralSized x of
   Just y -> y
   Nothing -> error $ "integer overflow when converting " <> show (toInteger x) <> " to Int32"
+{-# INLINE toInt32 #-}
 
+-- | @simpleDimension extent stride@ creates a @HalideDimension@ of size @extent@ separated by
+-- @stride@.
 simpleDimension :: Int -> Int -> HalideDimension
 simpleDimension extent stride = HalideDimension 0 (toInt32 extent) (toInt32 stride) 0
+{-# INLINE simpleDimension #-}
 
 rowMajorStrides :: Integral a => [a] -> [a]
 rowMajorStrides = drop 1 . scanr (*) 1
@@ -163,10 +172,17 @@ instance Storable HalideBuffer where
     pokeByteOff p 40 (halideBufferDim x)
     pokeByteOff p 48 (halideBufferPadding x)
 
-bufferFromPtrShapeStrides :: forall a b. IsHalideType a => Ptr a -> [Int] -> [Int] -> (Ptr HalideBuffer -> IO b) -> IO b
+bufferFromPtrShapeStrides ::
+  forall a b.
+  IsHalideType a =>
+  Ptr a ->
+  [Int] ->
+  [Int] ->
+  (Ptr HalideBuffer -> IO b) ->
+  IO b
 bufferFromPtrShapeStrides p shape stride action =
   withArrayLen (zipWith simpleDimension shape stride) $ \n dim -> do
-    let buffer =
+    let !buffer =
           HalideBuffer
             { halideBufferDevice = 0,
               halideBufferDeviceInterface = nullPtr,
@@ -179,7 +195,13 @@ bufferFromPtrShapeStrides p shape stride action =
             }
     with buffer action
 
-bufferFromPtrShape :: forall a b. IsHalideType a => Ptr a -> [Int] -> (Ptr HalideBuffer -> IO b) -> IO b
+bufferFromPtrShape ::
+  forall a b.
+  IsHalideType a =>
+  Ptr a ->
+  [Int] ->
+  (Ptr HalideBuffer -> IO b) ->
+  IO b
 bufferFromPtrShape p shape = bufferFromPtrShapeStrides p shape (rowMajorStrides shape)
 
 class IsHalideBuffer a where
