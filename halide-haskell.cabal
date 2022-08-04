@@ -20,7 +20,7 @@ source-repository head
   location:            https://github.com/twesterhout/halide-haskell.git
 
 common common-options
-  build-depends:       base >= 4.13.0.0
+  build-depends:       base >= 4.13.0.0 && < 5
 
   ghc-options:         -Wall
                        -Wcompat
@@ -46,15 +46,3 @@ library
   import:              common-options
   hs-source-dirs:      src
   exposed-modules:     Language.Halide
-
-executable halide-haskell
-  import:              common-options
-  hs-source-dirs:      app
-  main-is:             Main.hs
-  build-depends:       halide-haskell
-                     , vector
-  ghc-options:         -threaded
-                       -rtsopts
-                       -with-rtsopts=-N
-  extra-lib-dirs:      app
-  extra-libraries:     foo
