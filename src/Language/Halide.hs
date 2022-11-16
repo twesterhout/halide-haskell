@@ -12,6 +12,7 @@ module Language.Halide
     IsHalideType (..),
     HalideType (..),
     IsHalideBuffer (..),
+    lesson01,
   )
 where
 
@@ -19,11 +20,15 @@ import Data.Bits
 import Data.Int
 import Data.Proxy
 import Data.Word
+import Foreign.C.Types (CInt(..))
 import Foreign.Marshal.Array
 import Foreign.Marshal.Utils
 import Foreign.Ptr (Ptr, castPtr, nullPtr)
 import Foreign.Storable
 import GHC.Stack (HasCallStack)
+
+foreign import ccall "lesson_01"
+  lesson01 :: IO CInt
 
 data HalideDimension = HalideDimension
   { halideDimensionMin :: {-# UNPACK #-} !Int32,
