@@ -20,7 +20,7 @@ import Data.Bits
 import Data.Int
 import Data.Proxy
 import Data.Word
-import Foreign.C.Types (CInt(..))
+import Foreign.C.Types (CInt (..))
 import Foreign.Marshal.Array
 import Foreign.Marshal.Utils
 import Foreign.Ptr (Ptr, castPtr, nullPtr)

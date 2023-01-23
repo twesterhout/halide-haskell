@@ -45,7 +45,13 @@ common common-options
 library
   import:              common-options
   hs-source-dirs:      src
-  cxx-sources:         cbits/test.cpp
   exposed-modules:     Language.Halide
+                       Language.Halide.Internal
+                       Language.Halide.Internal.Context
+                       Language.Halide.Internal.Types
+  build-depends:       inline-c
+                     , inline-c-cpp
+                     , template-haskell
+  cxx-sources:         cbits/test.cpp
   extra-libraries:     Halide
                        stdc++
