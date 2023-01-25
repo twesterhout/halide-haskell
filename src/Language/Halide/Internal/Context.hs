@@ -2,7 +2,7 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TemplateHaskellQuotes #-}
 
-module Language.Halide.Internal.Context (CxxExpr, defineExprConstructors, IsCxxExpr, toCxxExpr) where
+module Language.Halide.Internal.Context (CxxExpr, CxxExprVector, CxxFunc, CxxFuncRef, defineExprConstructors, IsCxxExpr, toCxxExpr) where
 
 import Foreign.Ptr
 import qualified Language.C.Inline as C
@@ -13,6 +13,12 @@ import Language.Haskell.TH
 import Language.Haskell.TH.Syntax
 
 data CxxExpr
+
+data CxxFunc
+
+data CxxFuncRef
+
+data CxxExprVector
 
 class IsCxxExpr a where
   toCxxExpr :: a -> IO (Ptr CxxExpr)

@@ -4,7 +4,7 @@
 -- Maintainer: Tom Westerhout <14264576+twesterhout@users.noreply.github.com>
 --
 -- See README for more info
-module Language.Halide
+module Language.Halide.Buffer
   ( HalideBuffer (..),
     bufferFromPtrShape,
     bufferFromPtrShapeStrides,
@@ -20,6 +20,9 @@ import Data.Bits
 import Data.Int
 import Data.Proxy
 import Data.Word
+import qualified Data.Vector.Storable as S
+import qualified Data.Vector.Storable.Mutable as SM
+import Control.Monad.ST (RealWorld)
 import Foreign.C.Types (CInt (..))
 import Foreign.Marshal.Array
 import Foreign.Marshal.Utils
@@ -211,3 +214,13 @@ bufferFromPtrShape p shape = bufferFromPtrShapeStrides p shape (rowMajorStrides 
 
 class IsHalideBuffer a where
   withHalideBuffer :: a -> (Ptr HalideBuffer -> IO b) -> IO b
+
+instance (IsHalideType a, Storable a) => IsHalideBuffer (S.Vector a) where
+  withHalideBuffer v f =
+    S.unsafeWith v $ \dataPtr ->
+      bufferFromPtrShape dataPtr [S.length v] f
+
+instance (IsHalideType a, Storable a) => IsHalideBuffer (S.MVector RealWorld a) where
+  withHalideBuffer v f =
+    SM.unsafeWith v $ \dataPtr ->
+      bufferFromPtrShape dataPtr [SM.length v] f
