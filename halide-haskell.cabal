@@ -55,6 +55,7 @@ library
                      , template-haskell
                      , text
                      , vector
+                     , constraints
   cxx-sources:         cbits/test.cpp
   extra-libraries:     Halide
                        stdc++

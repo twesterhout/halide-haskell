@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Language.Halide.Internal
@@ -14,25 +15,36 @@ module Language.Halide.Internal
     defineFunc,
     printLoopNest,
     realizeOnBuffer,
+    -- Typed interface
+    TypedExpr (..),
+    TypedFunc (..),
+    define,
+    (!),
+    realizeTypedOnBuffer1D,
   )
 where
 
 import Control.Exception (bracket)
 import Control.Monad (forM_, (<=<))
-import Data.Bits (toIntegralSized)
+import Control.Monad.ST (RealWorld)
+import Data.Bits (Bits (bit), toIntegralSized)
+import Data.Constraint
 import Data.Int
+import Data.Kind (Type)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import Data.Vector.Storable.Mutable (MVector)
 import Data.Word
 import Foreign.C.Types (CDouble (..), CFloat (..))
 import Foreign.ForeignPtr
 import Foreign.ForeignPtr.Unsafe
 import Foreign.Ptr (FunPtr, Ptr)
+import Foreign.Storable
 import qualified Language.C.Inline as C
 import qualified Language.C.Inline.Cpp as C
 import qualified Language.C.Inline.Unsafe as CU
-import Language.Halide.Buffer (HalideBuffer, IsHalideBuffer (..))
+import Language.Halide.Buffer
 import Language.Halide.Internal.Context
 import System.IO.Unsafe (unsafePerformIO)
 import Text.Printf (vFmt)
@@ -157,6 +169,71 @@ withExprMany xs f = do
        in [CU.exp| void { $(std::vector<Halide::Expr>* v)->push_back(*$(Halide::Expr* p)) } |]
     f v
 
+newtype TypedExpr a = TypedExpr Expr
+
+newtype TypedFunc a = TypedFunc Func
+
+instance (Num a, IsCxxExpr a) => Num (TypedExpr a) where
+  fromInteger :: Integer -> TypedExpr a
+  fromInteger x = TypedExpr (mkExpr (fromInteger x :: a))
+  (+) :: TypedExpr a -> TypedExpr a -> TypedExpr a
+  (TypedExpr a) + (TypedExpr b) = unsafePerformIO $!
+    withExpr a $ \aPtr ->
+      withExpr b $
+        fmap TypedExpr . wrapCxxExpr <=< plusCxxExpr aPtr
+
+class ArgList a where
+  type FuncType a b :: Type
+  type ConstraintType a (c :: Type -> Constraint) :: Constraint
+  toExprList :: a -> [Expr]
+
+-- define :: Text -> a -> TypedExpr b -> IO (TypedFunc (FuncType a b))
+-- (!) :: TypedFunc (FuncType a b) -> a -> TypedExpr b
+
+instance ArgList (TypedExpr a) where
+  type FuncType (TypedExpr a) b = a -> b
+  type ConstraintType (TypedExpr a) c = c a
+  toExprList :: TypedExpr a -> [Expr]
+  toExprList (TypedExpr a) = [a]
+
+instance ArgList (TypedExpr a, TypedExpr b) where
+  type FuncType (TypedExpr a, TypedExpr b) c = a -> b -> c
+  type ConstraintType (TypedExpr a, TypedExpr b) c = (c a, c b)
+  toExprList :: (TypedExpr a, TypedExpr b) -> [Expr]
+  toExprList (TypedExpr a, TypedExpr b) = [a, b]
+
+define :: ArgList x => Text -> x -> TypedExpr b -> IO (TypedFunc (FuncType x b))
+define name x (TypedExpr y) = do
+  f <- mkFunc (Just name)
+  r <- applyFunc f (toExprList x)
+  defineFunc r y
+  pure $ TypedFunc f
+
+infix 9 !
+
+(!) :: ArgList x => TypedFunc (FuncType x y) -> x -> TypedExpr y
+(!) (TypedFunc func) args =
+  unsafePerformIO . fmap TypedExpr $
+    withFunc func $ \f ->
+      withExprMany (toExprList args) $ \v ->
+        wrapCxxExpr
+          =<< [CU.exp| Halide::Expr* {
+              new Halide::Expr{(*$(Halide::Func* f))(*$(std::vector<Halide::Expr>* v))} } |]
+
+-- define :: Text -> Expr a                   -> Expr b -> IO (Func (a -> b))
+-- define :: Text -> (Expr a, Expr b)         -> Expr c -> IO (Func (a -> b -> c))
+-- define :: Text -> (Expr a, Expr b, Expr c) -> Expr d -> IO (Func (a -> b -> c -> d))
+--
+-- (!) :: Func (a -> b)           -> Expr a                   -> Expr b
+-- (!) :: Func (a -> b -> c)      -> (Expr a, Expr b)         -> Expr c
+-- (!) :: Func (a -> b -> c -> d) -> (Expr a, Expr b, Expr c) -> Expr d
+--
+-- do
+--   (i :: Expr Int32) <- mkVar "i"
+--   f <- define "f" i $ i + i + 2
+--   printLoopNest f
+--
+--
 defineFunc :: FuncRef -> Expr -> IO ()
 defineFunc func expr =
   withFuncRef func $ \f -> withExpr expr $ \e ->
@@ -173,6 +250,14 @@ data Buffer
 
 realizeOnBuffer :: IsHalideBuffer a => Func -> a -> IO ()
 realizeOnBuffer func buffer =
+  withFunc func $ \f ->
+    withHalideBuffer buffer $ \x ->
+      [CU.exp| void {
+        $(Halide::Func* f)->realize(
+          Halide::Pipeline::RealizationArg{$(halide_buffer_t* x)}) } |]
+
+realizeTypedOnBuffer1D :: (Storable a, IsHalideType a) => TypedFunc (Int32 -> a) -> MVector RealWorld a -> IO ()
+realizeTypedOnBuffer1D (TypedFunc func) buffer =
   withFunc func $ \f ->
     withHalideBuffer buffer $ \x ->
       [CU.exp| void {

@@ -6,8 +6,18 @@ import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Storable.Mutable as SM
 import Language.Halide.Internal
 
-main :: IO ()
-main = do
+typedExample :: IO ()
+typedExample = do
+  (i :: TypedExpr Int32) <- TypedExpr <$> mkVar "i"
+  f@(TypedFunc func) <- define "f" i $ i + i + 2
+  printLoopNest func
+
+  mv <- SM.replicate 10 (0 :: Int32)
+  realizeTypedOnBuffer1D f mv
+  print =<< S.unsafeFreeze mv
+
+untypedExample :: IO ()
+untypedExample = do
   i <- mkVar "i"
   f <- mkFunc (Just "f")
   ref <- applyFunc f [i]
@@ -17,3 +27,8 @@ main = do
   mv <- SM.replicate 10 (0 :: Int32)
   realizeOnBuffer f mv
   print =<< S.unsafeFreeze mv
+
+main :: IO ()
+main = do
+  untypedExample
+  typedExample
