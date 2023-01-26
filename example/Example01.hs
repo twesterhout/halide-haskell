@@ -9,11 +9,12 @@ import Language.Halide.Internal
 typedExample :: IO ()
 typedExample = do
   (i :: TypedExpr Int32) <- TypedExpr <$> mkVar "i"
-  f@(TypedFunc func) <- define "f" i $ i + i + 2
+  f <- define "f" i $ i + i + 2
+  g@(TypedFunc func) <- define "g" i $ 1 + f ! i
   printLoopNest func
 
   mv <- SM.replicate 10 (0 :: Int32)
-  realizeTypedOnBuffer1D f mv
+  realizeTypedOnBuffer1D g mv
   print =<< S.unsafeFreeze mv
 
 untypedExample :: IO ()
