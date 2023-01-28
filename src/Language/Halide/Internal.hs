@@ -29,22 +29,15 @@ module Language.Halide.Internal
 where
 
 import Control.Exception (bracket)
-import Control.Monad (forM_, (<=<), (>=>))
-import Control.Monad.ST (RealWorld)
-import Data.Bits (Bits (bit), toIntegralSized)
-import Data.Constraint
+import Control.Monad (forM_, (>=>))
 import Data.Int
 import Data.Kind (Type)
 import Data.Proxy
 import Data.Text (Text)
-import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Vector.Storable (Vector)
 import qualified Data.Vector.Storable as S
-import Data.Vector.Storable.Mutable (MVector)
 import qualified Data.Vector.Storable.Mutable as SM
-import Data.Word
-import Foreign.C.Types (CDouble (..), CFloat (..))
 import Foreign.ForeignPtr
 import Foreign.ForeignPtr.Unsafe
 import Foreign.Ptr (FunPtr, Ptr)
@@ -56,9 +49,7 @@ import qualified Language.C.Inline.Unsafe as CU
 import Language.Halide.Buffer
 import Language.Halide.Internal.Context
 import Language.Halide.Type
-import Language.Haskell.TH (Foreign)
 import System.IO.Unsafe (unsafePerformIO)
-import Text.Printf (vFmt)
 
 -- import qualified Language.C.Inline.Context as CC
 -- import qualified Language.C.Types as CT
@@ -74,7 +65,6 @@ C.context $
     <> C.cppTypePairs
       [ ("Halide::Expr", [t|CxxExpr|]),
         ("Halide::Func", [t|CxxFunc|]),
-        ("Halide::FuncRef", [t|CxxFuncRef|]),
         ("std::vector", [t|CxxVector|]),
         ("halide_buffer_t", [t|HalideBuffer|])
       ]
@@ -138,6 +128,8 @@ instance (IsHalideType a, Num a) => Num (Expr a) where
   abs a = unsafePerformIO $! withExpr a $ absCxxExpr >=> wrapCxxExpr
   negate :: Expr a -> Expr a
   negate a = unsafePerformIO $! withExpr a $ negateCxxExpr >=> wrapCxxExpr
+  signum :: Expr a -> Expr a
+  signum = error "Num instance of (Expr a) does not implement signum"
 
 -- defineCastFromTo "int32_t" "float"
 instance Castable Int32 Float where
@@ -149,20 +141,20 @@ cast x = unsafePerformIO $! withExpr x $ castImpl (Proxy @from) (Proxy @to) >=> 
 
 newtype Func (n :: Nat) (a :: Type) = Func (ForeignPtr CxxFunc)
 
-createCxxFunc :: Maybe Text -> IO (Ptr CxxFunc)
-createCxxFunc Nothing = [CU.exp| Halide::Func* { new Halide::Func{} } |]
-createCxxFunc (Just name) =
-  [CU.exp| Halide::Func* {
-    new Halide::Func{std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}} 
-  } |]
-  where
-    s = T.encodeUtf8 name
+-- createCxxFunc :: Maybe Text -> IO (Ptr CxxFunc)
+-- createCxxFunc Nothing = [CU.exp| Halide::Func* { new Halide::Func{} } |]
+-- createCxxFunc (Just name) =
+--   [CU.exp| Halide::Func* {
+--     new Halide::Func{std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}}
+--   } |]
+--   where
+--     s = T.encodeUtf8 name
 
 deleteCxxFunc :: FunPtr (Ptr CxxFunc -> IO ())
 deleteCxxFunc = [C.funPtr| void deleteFunc(Halide::Func *x) { delete x; } |]
 
-wrapCxxFunc :: Ptr CxxFunc -> IO (Func n a)
-wrapCxxFunc = fmap Func . newForeignPtr deleteCxxFunc
+-- wrapCxxFunc :: Ptr CxxFunc -> IO (Func n a)
+-- wrapCxxFunc = fmap Func . newForeignPtr deleteCxxFunc
 
 -- mkFunc :: Maybe Text -> IO Func
 -- mkFunc name = wrapCxxFunc =<< createCxxFunc name
