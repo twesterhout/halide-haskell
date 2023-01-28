@@ -9,29 +9,24 @@ module Language.Halide.Buffer
     bufferFromPtrShape,
     bufferFromPtrShapeStrides,
     HalideDimension (..),
-    IsHalideType (..),
-    HalideType (..),
     IsHalideBuffer (..),
-    lesson01,
   )
 where
 
+import Control.Monad.ST (RealWorld)
 import Data.Bits
 import Data.Int
 import Data.Proxy
-import Data.Word
 import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Storable.Mutable as SM
-import Control.Monad.ST (RealWorld)
+import Data.Word
 import Foreign.C.Types (CInt (..))
 import Foreign.Marshal.Array
 import Foreign.Marshal.Utils
 import Foreign.Ptr (Ptr, castPtr, nullPtr)
 import Foreign.Storable
 import GHC.Stack (HasCallStack)
-
-foreign import ccall "lesson_01"
-  lesson01 :: IO CInt
+import Language.Halide.Type
 
 data HalideDimension = HalideDimension
   { halideDimensionMin :: {-# UNPACK #-} !Int32,
@@ -76,74 +71,6 @@ rowMajorStrides :: Integral a => [a] -> [a]
 rowMajorStrides = drop 1 . scanr (*) 1
 
 data HalideDeviceInterface
-
-data HalideTypeCode
-  = HalideTypeInt
-  | HalideTypeUInt
-  | HalideTypeFloat
-  | HalideTypeHandle
-  | HalideTypeBfloat
-  deriving stock (Read, Show, Eq)
-
-instance Enum HalideTypeCode where
-  fromEnum x = case x of
-    HalideTypeInt -> 0
-    HalideTypeUInt -> 1
-    HalideTypeFloat -> 2
-    HalideTypeHandle -> 3
-    HalideTypeBfloat -> 4
-  toEnum x = case x of
-    0 -> HalideTypeInt
-    1 -> HalideTypeUInt
-    2 -> HalideTypeFloat
-    3 -> HalideTypeHandle
-    4 -> HalideTypeBfloat
-    _ -> error $ "invalid HalideTypeCode: " <> show x
-
-data HalideType = HalideType
-  { halideTypeCode :: !HalideTypeCode,
-    halideTypeBits :: {-# UNPACK #-} !Word8,
-    halideTypeLanes :: {-# UNPACK #-} !Word16
-  }
-  deriving stock (Read, Show, Eq)
-
-instance Storable HalideType where
-  sizeOf _ = 4
-  alignment _ = 4
-  peek p =
-    HalideType
-      <$> (toEnum . (fromIntegral :: Word8 -> Int) <$> peekByteOff p 0)
-      <*> peekByteOff p 1
-      <*> peekByteOff p 2
-  poke p (HalideType code bits lanes) = do
-    pokeByteOff p 0 . (fromIntegral :: Int -> Word8) . fromEnum $ code
-    pokeByteOff p 1 bits
-    pokeByteOff p 2 lanes
-
-class IsHalideType a where
-  halideTypeFor :: proxy a -> HalideType
-
-instance IsHalideType Float where halideTypeFor _ = HalideType HalideTypeFloat 32 1
-
-instance IsHalideType Double where halideTypeFor _ = HalideType HalideTypeFloat 64 1
-
-instance IsHalideType Bool where halideTypeFor _ = HalideType HalideTypeUInt 1 1
-
-instance IsHalideType Word8 where halideTypeFor _ = HalideType HalideTypeUInt 8 1
-
-instance IsHalideType Word16 where halideTypeFor _ = HalideType HalideTypeUInt 16 1
-
-instance IsHalideType Word32 where halideTypeFor _ = HalideType HalideTypeUInt 32 1
-
-instance IsHalideType Word64 where halideTypeFor _ = HalideType HalideTypeUInt 64 1
-
-instance IsHalideType Int8 where halideTypeFor _ = HalideType HalideTypeInt 8 1
-
-instance IsHalideType Int16 where halideTypeFor _ = HalideType HalideTypeInt 16 1
-
-instance IsHalideType Int32 where halideTypeFor _ = HalideType HalideTypeInt 32 1
-
-instance IsHalideType Int64 where halideTypeFor _ = HalideType HalideTypeInt 64 1
 
 data HalideBuffer = HalideBuffer
   { halideBufferDevice :: !Word64,

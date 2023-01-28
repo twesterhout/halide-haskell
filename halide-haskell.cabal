@@ -42,11 +42,16 @@ common common-options
                        FlexibleInstances
                        ScopedTypeVariables
                        BangPatterns
+                       MultiParamTypeClasses
+                       TypeApplications
+                       DataKinds
+                       FunctionalDependencies
 
 library
   import:              common-options
   hs-source-dirs:      src
   exposed-modules:     Language.Halide.Buffer
+                       Language.Halide.Type
                        Language.Halide.Internal
                        Language.Halide.Internal.Context
                        Language.Halide.Internal.Types
