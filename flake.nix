@@ -77,8 +77,8 @@
     rec {
       packages = {
         # Build ising-glass-annealer for one given GHC versions.
-        ising-glass-annealer = foldConfigurations (haskellPackages: haskellPackages.halide-haskell);
-        default = packages.ising-glass-annealer.${defaultGhcVersion};
+        halide-haskell = foldConfigurations (haskellPackages: haskellPackages.halide-haskell);
+        default = packages.halide-haskell.${defaultGhcVersion};
       };
 
       # Prepare a development shell for many diffent GHC versions.
