@@ -35,12 +35,14 @@
       };
 
       halideFor = nixpkgs: nixpkgs.halide.overrideAttrs(final: prev: {
-        str = nixpkgs.fetchFromGitHub {
+        version = "16.0.0";
+        src = nixpkgs.fetchFromGitHub {
           owner = "twesterhout";
           repo = "Halide";
           rev = "9b9591ffac1b987dc0f45cf7de3d794bf158ecdd";
           sha256 = "sha256-mGaqpgVRdeZaHuAPlRCqtYa1fASb1uhd9dUcvvYKxmI=";
         };
+        cmakeFlags = prev.cmakeFlags ++ [ "-DWITH_TESTS=OFF" "-DWITH_TUTORIALS=OFF" ];
       });
 
       # This allows us to build a Haskell package with any given GHC version.
