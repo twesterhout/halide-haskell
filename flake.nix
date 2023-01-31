@@ -34,6 +34,15 @@
         ];
       };
 
+      halideFor = nixpkgs: nixpkgs.halide.overrideAttrs(final: prev: {
+        str = nixpkgs.fetchFromGitHub {
+          owner = "twesterhout";
+          repo = "Halide";
+          rev = "9b9591ffac1b987dc0f45cf7de3d794bf158ecdd";
+          sha256 = "sha256-mGaqpgVRdeZaHuAPlRCqtYa1fASb1uhd9dUcvvYKxmI=";
+        };
+      });
+
       # This allows us to build a Haskell package with any given GHC version.
       # It will also affects all dependent libraries.
       # overrides allows us to patch existing Haskell packages, or introduce new ones
@@ -44,9 +53,9 @@
         , haskellPackages ? nixpkgs.haskell.packages."ghc${ghcVersion}"
         }:
         haskellPackages.override {
-          overrides = self: super: rec {
-            halide = nixpkgs.halide;
-            halide-haskell = self.callCabal2nix "halide-haskell" ./. { Halide = halide; };
+          overrides = self: super: {
+            halide = halideFor nixpkgs;
+            halide-haskell = self.callCabal2nix "halide-haskell" ./. { Halide = halideFor nixpkgs; };
           };
         };
 
