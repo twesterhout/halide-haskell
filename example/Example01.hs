@@ -10,3 +10,4 @@ main = do
   g <- define "g" i $ 1 + f ! i
   printLoopNest g
   print =<< realize1D g 10
+  print =<< realize1D g 10

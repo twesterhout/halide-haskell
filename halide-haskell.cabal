@@ -46,6 +46,8 @@ common common-options
                        TypeApplications
                        DataKinds
                        FunctionalDependencies
+                       TypeFamilies
+                       OverloadedStrings
 
 library
   import:              common-options
@@ -53,8 +55,6 @@ library
   exposed-modules:     Language.Halide.Buffer
                        Language.Halide.Type
                        Language.Halide.Internal
-                       Language.Halide.Internal.Context
-                       Language.Halide.Internal.Types
   build-depends:       inline-c
                      , inline-c-cpp
                      , template-haskell

@@ -20,7 +20,6 @@ import Data.Proxy
 import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Storable.Mutable as SM
 import Data.Word
-import Foreign.C.Types (CInt (..))
 import Foreign.Marshal.Array
 import Foreign.Marshal.Utils
 import Foreign.Ptr (Ptr, castPtr, nullPtr)

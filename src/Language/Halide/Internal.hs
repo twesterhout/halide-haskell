@@ -1,9 +1,13 @@
+{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE InstanceSigs #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Language.Halide.Internal
   ( Expr (..),
@@ -33,6 +37,7 @@ import Control.Monad (forM_, (>=>))
 import Data.Int
 import Data.Kind (Type)
 import Data.Proxy
+import Data.Ratio (denominator, numerator)
 import Data.Text (Text)
 import qualified Data.Text.Encoding as T
 import Data.Vector.Storable (Vector)
@@ -47,7 +52,6 @@ import qualified Language.C.Inline as C
 import qualified Language.C.Inline.Cpp as C
 import qualified Language.C.Inline.Unsafe as CU
 import Language.Halide.Buffer
-import Language.Halide.Internal.Context
 import Language.Halide.Type
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -56,8 +60,6 @@ import System.IO.Unsafe (unsafePerformIO)
 -- import qualified Language.C.Inline.Cpp.Exception as C
 -- import qualified Language.C.Inline.Cpp.Exceptions as Legacy
 
-data CxxVector a
-
 C.context $
   C.cppCtx
     <> C.fptrCtx
@@ -65,11 +67,14 @@ C.context $
     <> C.cppTypePairs
       [ ("Halide::Expr", [t|CxxExpr|]),
         ("Halide::Func", [t|CxxFunc|]),
+        ("Halide::Param", [t|CxxParam|]),
         ("std::vector", [t|CxxVector|]),
-        ("halide_buffer_t", [t|HalideBuffer|])
+        ("halide_buffer_t", [t|HalideBuffer|]),
+        ("halide_type_t", [t|HalideType|])
       ]
 
 C.include "<Halide.h>"
+C.include "<math.h>"
 
 newtype Expr a = Expr (ForeignPtr CxxExpr)
 
@@ -86,7 +91,7 @@ absCxxExpr :: Ptr CxxExpr -> IO (Ptr CxxExpr)
 absCxxExpr a = [CU.exp| Halide::Expr* { new Halide::Expr{Halide::abs(*$(Halide::Expr* a))} } |]
 
 negateCxxExpr :: Ptr CxxExpr -> IO (Ptr CxxExpr)
-negateCxxExpr a = [CU.exp| Halide::Expr* { new Halide::Expr{-(*$(Halide::Expr* a))} } |]
+negateCxxExpr a = [CU.exp| Halide::Expr* { new Halide::Expr{ -(*$(Halide::Expr* a))} } |]
 
 divideCxxExpr :: Ptr CxxExpr -> Ptr CxxExpr -> IO (Ptr CxxExpr)
 divideCxxExpr a b = [CU.exp| Halide::Expr* { new Halide::Expr{*$(Halide::Expr* a) / *$(Halide::Expr* b)} } |]
@@ -115,29 +120,73 @@ mkVar name =
   where
     s = T.encodeUtf8 name
 
+unaryOp :: (Ptr CxxExpr -> IO (Ptr CxxExpr)) -> Expr a -> Expr a
+unaryOp f a = unsafePerformIO $! withExpr a f >>= wrapCxxExpr
+
+binaryOp :: (Ptr CxxExpr -> Ptr CxxExpr -> IO (Ptr CxxExpr)) -> Expr a -> Expr a -> Expr a
+binaryOp f a b = unsafePerformIO $! withExpr2 a b $ \aPtr bPtr -> f aPtr bPtr >>= wrapCxxExpr
+
 instance (IsHalideType a, Num a) => Num (Expr a) where
   fromInteger :: Integer -> Expr a
   fromInteger x = unsafePerformIO $! wrapCxxExpr =<< toCxxExpr (fromInteger x :: a)
   (+) :: Expr a -> Expr a -> Expr a
-  a + b = unsafePerformIO $! withExpr2 a b $ \aPtr bPtr -> plusCxxExpr aPtr bPtr >>= wrapCxxExpr
+  (+) = binaryOp plusCxxExpr
   (-) :: Expr a -> Expr a -> Expr a
-  a - b = unsafePerformIO $! withExpr2 a b $ \aPtr bPtr -> minusCxxExpr aPtr bPtr >>= wrapCxxExpr
+  (-) = binaryOp minusCxxExpr
   (*) :: Expr a -> Expr a -> Expr a
-  a * b = unsafePerformIO $! withExpr2 a b $ \aPtr bPtr -> timesCxxExpr aPtr bPtr >>= wrapCxxExpr
+  (*) = binaryOp timesCxxExpr
   abs :: Expr a -> Expr a
-  abs a = unsafePerformIO $! withExpr a $ absCxxExpr >=> wrapCxxExpr
+  abs = unaryOp absCxxExpr
   negate :: Expr a -> Expr a
-  negate a = unsafePerformIO $! withExpr a $ negateCxxExpr >=> wrapCxxExpr
+  negate = unaryOp negateCxxExpr
   signum :: Expr a -> Expr a
   signum = error "Num instance of (Expr a) does not implement signum"
 
--- defineCastFromTo "int32_t" "float"
-instance Castable Int32 Float where
-  castImpl :: proxy Int32 -> proxy Float -> Ptr CxxExpr -> IO (Ptr CxxExpr)
-  castImpl _ _ x = [CU.exp| Halide::Expr* { new Halide::Expr{Halide::cast<int32_t>(*$(Halide::Expr* x))} } |]
+instance (IsHalideType a, Fractional a) => Fractional (Expr a) where
+  (/) :: Expr a -> Expr a -> Expr a
+  (/) = binaryOp divideCxxExpr
+  fromRational :: Rational -> Expr a
+  fromRational r = fromInteger (numerator r) / fromInteger (denominator r)
 
-cast :: forall to from. Castable from to => Expr from -> Expr to
-cast x = unsafePerformIO $! withExpr x $ castImpl (Proxy @from) (Proxy @to) >=> wrapCxxExpr
+instance (Castable a Double, Floating a) => Floating (Expr a) where
+  pi :: Expr a
+  pi = cast @a @Double . unsafePerformIO $! wrapCxxExpr =<< [CU.exp| Halide::Expr* { new Halide::Expr{M_PI} } |]
+  exp :: Expr a -> Expr a
+  exp = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::exp(*$(Halide::Expr* a))} } |]
+  log :: Expr a -> Expr a
+  log = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::log(*$(Halide::Expr* a))} } |]
+  sqrt :: Expr a -> Expr a
+  sqrt = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::sqrt(*$(Halide::Expr* a))} } |]
+  (**) :: Expr a -> Expr a -> Expr a
+  (**) = binaryOp $ \a b ->
+    [CU.exp| Halide::Expr* { new Halide::Expr{Halide::pow(*$(Halide::Expr* a), *$(Halide::Expr* b))} } |]
+  sin :: Expr a -> Expr a
+  sin = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::sin(*$(Halide::Expr* a))} } |]
+  cos :: Expr a -> Expr a
+  cos = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::cos(*$(Halide::Expr* a))} } |]
+  tan :: Expr a -> Expr a
+  tan = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::tan(*$(Halide::Expr* a))} } |]
+  asin :: Expr a -> Expr a
+  asin = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::asin(*$(Halide::Expr* a))} } |]
+  acos :: Expr a -> Expr a
+  acos = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::acos(*$(Halide::Expr* a))} } |]
+  atan :: Expr a -> Expr a
+  atan = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::atan(*$(Halide::Expr* a))} } |]
+  sinh :: Expr a -> Expr a
+  sinh = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::sinh(*$(Halide::Expr* a))} } |]
+  cosh :: Expr a -> Expr a
+  cosh = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::cosh(*$(Halide::Expr* a))} } |]
+  tanh :: Expr a -> Expr a
+  tanh = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::tanh(*$(Halide::Expr* a))} } |]
+  asinh :: Expr a -> Expr a
+  asinh = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::asinh(*$(Halide::Expr* a))} } |]
+  acosh :: Expr a -> Expr a
+  acosh = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::acosh(*$(Halide::Expr* a))} } |]
+  atanh :: Expr a -> Expr a
+  atanh = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::atanh(*$(Halide::Expr* a))} } |]
+
+cast :: forall to from. Castable to from => Expr from -> Expr to
+cast x = unsafePerformIO $! withExpr x $ castImpl (Proxy @to) (Proxy @from) >=> wrapCxxExpr
 
 newtype Func (n :: Nat) (a :: Type) = Func (ForeignPtr CxxFunc)
 
