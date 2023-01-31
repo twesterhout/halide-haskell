@@ -78,24 +78,6 @@ C.include "<math.h>"
 
 newtype Expr a = Expr (ForeignPtr CxxExpr)
 
-plusCxxExpr :: Ptr CxxExpr -> Ptr CxxExpr -> IO (Ptr CxxExpr)
-plusCxxExpr a b = [CU.exp| Halide::Expr* { new Halide::Expr{*$(Halide::Expr* a) + *$(Halide::Expr* b)} } |]
-
-minusCxxExpr :: Ptr CxxExpr -> Ptr CxxExpr -> IO (Ptr CxxExpr)
-minusCxxExpr a b = [CU.exp| Halide::Expr* { new Halide::Expr{*$(Halide::Expr* a) - *$(Halide::Expr* b)} } |]
-
-timesCxxExpr :: Ptr CxxExpr -> Ptr CxxExpr -> IO (Ptr CxxExpr)
-timesCxxExpr a b = [CU.exp| Halide::Expr* { new Halide::Expr{*$(Halide::Expr* a) * *$(Halide::Expr* b)} } |]
-
-absCxxExpr :: Ptr CxxExpr -> IO (Ptr CxxExpr)
-absCxxExpr a = [CU.exp| Halide::Expr* { new Halide::Expr{Halide::abs(*$(Halide::Expr* a))} } |]
-
-negateCxxExpr :: Ptr CxxExpr -> IO (Ptr CxxExpr)
-negateCxxExpr a = [CU.exp| Halide::Expr* { new Halide::Expr{ -(*$(Halide::Expr* a))} } |]
-
-divideCxxExpr :: Ptr CxxExpr -> Ptr CxxExpr -> IO (Ptr CxxExpr)
-divideCxxExpr a b = [CU.exp| Halide::Expr* { new Halide::Expr{*$(Halide::Expr* a) / *$(Halide::Expr* b)} } |]
-
 wrapCxxExpr :: Ptr CxxExpr -> IO (Expr a)
 wrapCxxExpr = fmap Expr . newForeignPtr deleteCxxExpr
 
@@ -107,9 +89,6 @@ withExpr (Expr fp) = withForeignPtr fp
 
 withExpr2 :: Expr a -> Expr a -> (Ptr CxxExpr -> Ptr CxxExpr -> IO b) -> IO b
 withExpr2 a b f = withExpr a $ \aPtr -> withExpr b $ \bPtr -> f aPtr bPtr
-
--- mkExpr :: IsCxxExpr a => a -> Expr
--- mkExpr x = unsafePerformIO $! wrapCxxExpr =<< toCxxExpr x
 
 mkVar :: Text -> IO (Expr Int32)
 mkVar name =
@@ -130,15 +109,15 @@ instance (IsHalideType a, Num a) => Num (Expr a) where
   fromInteger :: Integer -> Expr a
   fromInteger x = unsafePerformIO $! wrapCxxExpr =<< toCxxExpr (fromInteger x :: a)
   (+) :: Expr a -> Expr a -> Expr a
-  (+) = binaryOp plusCxxExpr
+  (+) = binaryOp $ \a b -> [CU.exp| Halide::Expr* { new Halide::Expr{*$(Halide::Expr* a) + *$(Halide::Expr* b)} } |]
   (-) :: Expr a -> Expr a -> Expr a
-  (-) = binaryOp minusCxxExpr
+  (-) = binaryOp $ \a b -> [CU.exp| Halide::Expr* { new Halide::Expr{*$(Halide::Expr* a) - *$(Halide::Expr* b)} } |]
   (*) :: Expr a -> Expr a -> Expr a
-  (*) = binaryOp timesCxxExpr
+  (*) = binaryOp $ \a b -> [CU.exp| Halide::Expr* { new Halide::Expr{*$(Halide::Expr* a) * *$(Halide::Expr* b)} } |]
   abs :: Expr a -> Expr a
-  abs = unaryOp absCxxExpr
+  abs = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::abs(*$(Halide::Expr* a))} } |]
   negate :: Expr a -> Expr a
-  negate = unaryOp negateCxxExpr
+  negate = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{ -(*$(Halide::Expr* a))} } |]
   signum :: Expr a -> Expr a
   signum = error "Num instance of (Expr a) does not implement signum"
 
@@ -190,37 +169,11 @@ cast x = unsafePerformIO $! withExpr x $ castImpl (Proxy @to) (Proxy @from) >=> 
 
 newtype Func (n :: Nat) (a :: Type) = Func (ForeignPtr CxxFunc)
 
--- createCxxFunc :: Maybe Text -> IO (Ptr CxxFunc)
--- createCxxFunc Nothing = [CU.exp| Halide::Func* { new Halide::Func{} } |]
--- createCxxFunc (Just name) =
---   [CU.exp| Halide::Func* {
---     new Halide::Func{std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}}
---   } |]
---   where
---     s = T.encodeUtf8 name
-
 deleteCxxFunc :: FunPtr (Ptr CxxFunc -> IO ())
 deleteCxxFunc = [C.funPtr| void deleteFunc(Halide::Func *x) { delete x; } |]
 
--- wrapCxxFunc :: Ptr CxxFunc -> IO (Func n a)
--- wrapCxxFunc = fmap Func . newForeignPtr deleteCxxFunc
-
--- mkFunc :: Maybe Text -> IO Func
--- mkFunc name = wrapCxxFunc =<< createCxxFunc name
-
 withFunc :: Func n a -> (Ptr CxxFunc -> IO b) -> IO b
 withFunc (Func fp) = withForeignPtr fp
-
--- newtype FuncRef = FuncRef (ForeignPtr CxxFuncRef)
-
--- deleteCxxFuncRef :: FunPtr (Ptr CxxFuncRef -> IO ())
--- deleteCxxFuncRef = [C.funPtr| void deleteFuncRef(Halide::FuncRef *x) { delete x; } |]
-
--- wrapCxxFuncRef :: Ptr CxxFuncRef -> IO FuncRef
--- wrapCxxFuncRef = fmap FuncRef . newForeignPtr deleteCxxFuncRef
-
--- withFuncRef :: FuncRef -> (Ptr CxxFuncRef -> IO a) -> IO a
--- withFuncRef (FuncRef fp) = withForeignPtr fp
 
 applyFunc :: ForeignPtr CxxFunc -> [ForeignPtr CxxExpr] -> IO (ForeignPtr CxxExpr)
 applyFunc func args =
@@ -263,13 +216,6 @@ withExprMany xs f = do
 class Args (a :: Type) (n :: Nat) | a -> n where
   toExprList :: a -> [ForeignPtr CxxExpr]
 
--- class ArgList a where
---   type FuncType a b :: Type
---   type ConstraintType a (c :: Type -> Constraint) :: Constraint
-
--- define :: Text -> a -> TypedExpr b -> IO (TypedFunc (FuncType a b))
--- (!) :: TypedFunc (FuncType a b) -> a -> TypedExpr b
-
 instance Args (Expr Int32) 1 where
   toExprList :: Expr Int32 -> [ForeignPtr CxxExpr]
   toExprList (Expr a) = [a]
@@ -277,12 +223,6 @@ instance Args (Expr Int32) 1 where
 instance Args (Expr Int32, Expr Int32) 2 where
   toExprList :: (Expr Int32, Expr Int32) -> [ForeignPtr CxxExpr]
   toExprList (Expr a, Expr b) = [a, b]
-
--- instance (IsHalideType a, IsHalideType b, IsHalideType c) => ArgList (Expr a, Expr b, Expr c) where
---   type FuncType (Expr a, Expr b, Expr c) d = a -> b -> c -> d
---   type ConstraintType (Expr a, Expr b, Expr c) k = (k a, k b, k c)
---   toExprList :: (Expr a, Expr b, Expr c) -> [ForeignPtr CxxExpr]
---   toExprList (Expr a, Expr b, Expr c) = [a, b, c]
 
 define :: Args args n => Text -> args -> Expr a -> IO (Func n a)
 define name x (Expr y) = Func <$> defineFunc name (toExprList x) y
@@ -305,52 +245,3 @@ realize1D func size = do
         $(Halide::Func* f)->realize(
           Halide::Pipeline::RealizationArg{$(halide_buffer_t* x)}) } |]
   S.unsafeFreeze buffer
-
-{-
--- define :: Text -> Expr a                   -> Expr b -> IO (Func (a -> b))
--- define :: Text -> (Expr a, Expr b)         -> Expr c -> IO (Func (a -> b -> c))
--- define :: Text -> (Expr a, Expr b, Expr c) -> Expr d -> IO (Func (a -> b -> c -> d))
---
--- (!) :: Func (a -> b)           -> Expr a                   -> Expr b
--- (!) :: Func (a -> b -> c)      -> (Expr a, Expr b)         -> Expr c
--- (!) :: Func (a -> b -> c -> d) -> (Expr a, Expr b, Expr c) -> Expr d
---
--- do
---   (i :: Expr Int32) <- mkVar "i"
---   f <- define "f" i $ i + i + 2
---   printLoopNest f
---
---
-defineFunc :: FuncRef -> Expr -> IO ()
-defineFunc func expr =
-  withFuncRef func $ \f -> withExpr expr $ \e ->
-    [CU.block| void {
-      *$(Halide::FuncRef* f) = *$(Halide::Expr* e); } |]
-
-data Realization
-
-data Buffer
-
-realizeOnBuffer :: IsHalideBuffer a => Func -> a -> IO ()
-realizeOnBuffer func buffer =
-  withFunc func $ \f ->
-    withHalideBuffer buffer $ \x ->
-      [CU.exp| void {
-        $(Halide::Func* f)->realize(
-          Halide::Pipeline::RealizationArg{$(halide_buffer_t* x)}) } |]
-
--}
-
--- createCxxExprVector :: [Expr] -> IO (Ptr CxxExprVector)
--- createCxxExprVector xs = do
---   [CU.block| std::vector<Halide::Expr>* {
---
---
---   } |]
-
---
--- mkFunc :: Maybe Text -> Func
--- mkFunc name = unsafePerformIO $! wrapCxxFunc =<< createCxxFunc name
---
--- withFunc :: Func -> (Ptr CxxFunc -> IO a) -> IO a
--- withFunc (Func fp) = withForeignPtr fp
