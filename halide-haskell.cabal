@@ -48,6 +48,7 @@ common common-options
                        FunctionalDependencies
                        TypeFamilies
                        OverloadedStrings
+                       TypeOperators
 
 library
   import:              common-options
@@ -60,6 +61,7 @@ library
                      , template-haskell
                      , text
                      , vector
+                     , primitive
                      , constraints
   cxx-sources:         cbits/test.cpp
   extra-libraries:     Halide

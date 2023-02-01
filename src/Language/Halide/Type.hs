@@ -12,7 +12,10 @@ module Language.Halide.Type
     CxxExpr,
     CxxFunc,
     CxxParam,
+    CxxParameter,
     CxxVector,
+    CxxUserContext,
+    CxxCallable,
   )
 where
 
@@ -33,7 +36,13 @@ data CxxExpr
 
 data CxxParam a
 
+data CxxParameter
+
 data CxxFunc
+
+data CxxUserContext
+
+data CxxCallable
 
 data CxxVector a
 

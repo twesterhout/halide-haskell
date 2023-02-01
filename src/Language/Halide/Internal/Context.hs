@@ -14,12 +14,6 @@ import qualified Language.C.Inline.Unsafe as CU
 import Language.Halide.Type
 import Language.Haskell.TH
 
-data CxxFunc
-
-data CxxFuncRef
-
-data CxxExprVector
-
 -- C.context $
 --   C.cppCtx
 --     <> C.cppTypePairs

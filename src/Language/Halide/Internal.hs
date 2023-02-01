@@ -1,6 +1,7 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -18,6 +19,8 @@ module Language.Halide.Internal
     (!),
     printLoopNest,
     realize1D,
+    testKernel1,
+    Arguments (..),
     -- mkFunc,
     -- applyFunc,
     -- defineFunc,
@@ -34,8 +37,15 @@ where
 
 import Control.Exception (bracket)
 import Control.Monad (forM_, (>=>))
+import Control.Monad.Primitive (touch)
+import Control.Monad.ST (RealWorld)
+import Data.Constraint
 import Data.Int
 import Data.Kind (Type)
+import Data.Primitive.PrimArray (MutablePrimArray, PrimArray)
+import qualified Data.Primitive.PrimArray as P
+import qualified Data.Primitive.Ptr as P
+import Data.Primitive.Types (Prim)
 import Data.Proxy
 import Data.Ratio (denominator, numerator)
 import Data.Text (Text)
@@ -43,9 +53,11 @@ import qualified Data.Text.Encoding as T
 import Data.Vector.Storable (Vector)
 import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Storable.Mutable as SM
+import Foreign.C.Types (CUIntPtr (..))
 import Foreign.ForeignPtr
 import Foreign.ForeignPtr.Unsafe
-import Foreign.Ptr (FunPtr, Ptr)
+import Foreign.Marshal (with)
+import Foreign.Ptr (FunPtr, Ptr, castPtr)
 import Foreign.Storable
 import GHC.TypeNats
 import qualified Language.C.Inline as C
@@ -68,6 +80,9 @@ C.context $
       [ ("Halide::Expr", [t|CxxExpr|]),
         ("Halide::Func", [t|CxxFunc|]),
         ("Halide::Param", [t|CxxParam|]),
+        ("Halide::Callable", [t|CxxCallable|]),
+        ("Halide::JITUserContext", [t|CxxUserContext|]),
+        ("Halide::Internal::Parameter", [t|CxxParameter|]),
         ("std::vector", [t|CxxVector|]),
         ("halide_buffer_t", [t|HalideBuffer|]),
         ("halide_type_t", [t|HalideType|])
@@ -123,7 +138,7 @@ instance (IsHalideType a, Num a) => Num (Expr a) where
 
 instance (IsHalideType a, Fractional a) => Fractional (Expr a) where
   (/) :: Expr a -> Expr a -> Expr a
-  (/) = binaryOp divideCxxExpr
+  (/) = binaryOp $ \a b -> [CU.exp| Halide::Expr* { new Halide::Expr{*$(Halide::Expr* a) / *$(Halide::Expr* b)} } |]
   fromRational :: Rational -> Expr a
   fromRational r = fromInteger (numerator r) / fromInteger (denominator r)
 
@@ -174,6 +189,9 @@ deleteCxxFunc = [C.funPtr| void deleteFunc(Halide::Func *x) { delete x; } |]
 
 withFunc :: Func n a -> (Ptr CxxFunc -> IO b) -> IO b
 withFunc (Func fp) = withForeignPtr fp
+
+wrapCxxFunc :: Ptr CxxFunc -> IO (Func n a)
+wrapCxxFunc = fmap Func . newForeignPtr deleteCxxFunc
 
 applyFunc :: ForeignPtr CxxFunc -> [ForeignPtr CxxExpr] -> IO (ForeignPtr CxxExpr)
 applyFunc func args =
@@ -245,3 +263,168 @@ realize1D func size = do
         $(Halide::Func* f)->realize(
           Halide::Pipeline::RealizationArg{$(halide_buffer_t* x)}) } |]
   S.unsafeFreeze buffer
+
+data Param f where
+  ScalarParam :: IsHalideType a => Proxy a -> Text -> Param (Expr a)
+  BufferParam :: (KnownNat n, IsHalideType a) => Proxy n -> Proxy a -> Text -> Param (Func n a)
+
+mkScalarParam :: forall a. IsHalideType a => Text -> IO (Expr a)
+mkScalarParam name = do
+  let s = T.encodeUtf8 name
+  with (halideTypeFor (Proxy @a)) $ \tp ->
+    wrapCxxExpr
+      =<< [CU.exp| Halide::Expr* {
+        new Halide::Expr{
+          Halide::Internal::Parameter{
+            Halide::Type{*$(halide_type_t* tp)},
+            false,
+            0,
+            std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}
+          }.scalar_expr()}
+      } |]
+
+mkBufferParam :: forall n a. (KnownNat n, IsHalideType a) => Text -> IO (Func n a)
+mkBufferParam name = do
+  let s = T.encodeUtf8 name
+      d = fromIntegral $ natVal (Proxy @n)
+  with (halideTypeFor (Proxy @a)) $ \tp ->
+    wrapCxxFunc
+      =<< [CU.exp| Halide::Func* {
+        new Halide::Func{static_cast<Halide::Func>(
+          Halide::ImageParam{
+            Halide::Type{*$(halide_type_t* tp)},
+            $(int d),
+            std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}
+          })}
+      } |]
+
+declareScalarParam :: forall a n b. IsHalideType a => Text -> (Expr a -> IO (Func n b)) -> a -> IO b
+declareScalarParam name mkFunc value = do
+  x <- mkScalarParam @a name
+  f <- mkFunc x
+  undefined
+
+infixr 5 :::
+
+data Arguments (n :: Nat) (k :: [Type]) where
+  Nil :: Arguments 0 '[]
+  (:::) :: (KnownNat n, KnownNat (n + 1)) => !t -> !(Arguments n ts) -> Arguments (n + 1) (t ': ts)
+
+type family All (c :: Type -> Constraint) (ts :: [Type]) :: Constraint where
+  All c '[] = ()
+  All c (t ': ts) = (c t, All c ts)
+
+data ArgvStorage s
+  = ArgvStorage
+      {-# UNPACK #-} !(MutablePrimArray s (Ptr ()))
+      {-# UNPACK #-} !(MutablePrimArray s CUIntPtr)
+
+newArgvStorage :: Int -> IO (ArgvStorage RealWorld)
+newArgvStorage n = ArgvStorage <$> P.newPinnedPrimArray n <*> P.newPinnedPrimArray n
+
+setArgvStorage :: All ValidArgument ts => ArgvStorage RealWorld -> Arguments n ts -> IO ()
+setArgvStorage (ArgvStorage argv scalarStorage) args = do
+  let argvPtr = P.mutablePrimArrayContents argv
+      scalarStoragePtr = P.mutablePrimArrayContents scalarStorage
+      go :: All ValidArgument ts => Int -> Arguments n ts -> IO ()
+      go _ Nil = pure ()
+      go i ((x :: t) ::: xs) = do
+        fillSlot
+          (castPtr $ argvPtr `P.advancePtr` i)
+          (castPtr $ scalarStoragePtr `P.advancePtr` i)
+          x
+        go (i + 1) xs
+  go 0 args
+  touch argv
+  touch scalarStorage
+
+class ValidArgument (t :: Type) where
+  fillSlot :: Ptr () -> Ptr () -> t -> IO ()
+
+instance (Prim t, IsHalideType t) => ValidArgument t where
+  fillSlot argv scalarStorage x = do
+    P.writeOffPtr (castPtr scalarStorage :: Ptr t) 0 x
+    P.writeOffPtr (castPtr argv :: Ptr (Ptr ())) 0 scalarStorage
+
+instance {-# OVERLAPPING #-} ValidArgument (Ptr CxxUserContext) where
+  fillSlot argv scalarStorage x = do
+    P.writeOffPtr (castPtr scalarStorage :: Ptr (Ptr CxxUserContext)) 0 x
+    P.writeOffPtr (castPtr argv :: Ptr (Ptr ())) 0 scalarStorage
+
+instance {-# OVERLAPPING #-} ValidArgument (Ptr HalideBuffer) where
+  fillSlot argv _ x = do
+    P.writeOffPtr (castPtr argv :: Ptr (Ptr HalideBuffer)) 0 x
+
+deleteCxxUserContext :: FunPtr (Ptr CxxUserContext -> IO ())
+deleteCxxUserContext = [C.funPtr| void deleteUserContext(Halide::JITUserContext* p) { delete p; } |]
+
+wrapCxxUserContext :: Ptr CxxUserContext -> IO (ForeignPtr CxxUserContext)
+wrapCxxUserContext = newForeignPtr deleteCxxUserContext
+
+newEmptyCxxUserContext :: IO (ForeignPtr CxxUserContext)
+newEmptyCxxUserContext =
+  wrapCxxUserContext =<< [CU.exp| Halide::JITUserContext* { new Halide::JITUserContext{} } |]
+
+deleteCxxCallable :: FunPtr (Ptr CxxCallable -> IO ())
+deleteCxxCallable = [C.funPtr| void deleteCallable(Halide::Callable* p) { delete p; } |]
+
+wrapCxxCallable :: Ptr CxxCallable -> IO (ForeignPtr CxxCallable)
+wrapCxxCallable = newForeignPtr deleteCxxCallable
+
+cxxCompileToCallable :: Func n a -> IO (ForeignPtr CxxCallable)
+cxxCompileToCallable func =
+  withFunc func $ \f -> do
+    wrapCxxCallable
+      =<< [CU.exp| Halide::Callable* { new Halide::Callable{
+            $(Halide::Func* f)->compile_to_callable({})
+          } } |]
+
+testKernel1 :: IO (Arguments 1 '[Ptr HalideBuffer] -> IO ())
+testKernel1 = do
+  i <- mkVar "i"
+  f <- define "f" i $ 2 * cast @Float i
+  callable <- cxxCompileToCallable f
+  storage@(ArgvStorage argv scalarStorage) <- newArgvStorage 2
+  context <- newEmptyCxxUserContext
+  let kernel args@(p ::: Nil) =
+        withForeignPtr context $ \contextPtr ->
+          withForeignPtr callable $ \callablePtr -> do
+            setArgvStorage storage (contextPtr ::: args)
+            let argvPtr = P.mutablePrimArrayContents argv
+            [CU.exp| void {
+              $(Halide::Callable* callablePtr)->call_argv_fast(2, $(const void* const* argvPtr))
+            } |]
+            -- [CU.exp| void {
+            --   $(Halide::Callable* callablePtr)->operator()($(halide_buffer_t* p))
+            -- } |]
+            touch argv
+            touch scalarStorage
+  pure kernel
+
+-- toCxxParameter :: Param f -> IO (Ptr CxxParameter)
+-- toCxxParameter = undefined
+--
+-- deleteCxxParameter :: Ptr CxxParameter -> IO ()
+-- deleteCxxParameter p = [CU.exp| void { delete $(Halide::Internal::Parameter* p) } |]
+--
+-- mkParamExpr1 :: Param (Expr a) -> (Expr a -> IO b) -> IO b
+-- mkParamExpr1 x f = do
+--   bracket (toCxxParameter x) deleteCxxParameter $ \ptr -> do
+--     expr <- wrapCxxExpr =<< [CU.exp| Halide::Expr* { new Halide::Expr{$(Halide::Internal::Parameter* ptr)->scalar_expr()} } |]
+--     f expr
+
+-- mkParamFunc1 :: Param (Func n a) -> (Func n a -> IO b) -> IO b
+-- mkParamFunc1 x f = do
+--   bracket (toCxxParameter x) deleteCxxParameter $ \ptr -> do
+--     expr <- wrapCxxExpr =<< [CU.exp| Halide::Func* { new Halide::Func{$(Halide::Internal::Parameter* ptr)->scalar_expr()} } |]
+--     f expr
+
+-- instance IsHalideType a => TransformExprToParam (Expr a) where
+--   TransformedType (Expr a) =
+
+-- mkKernel :: (IO (Func n b)) ->
+--             IO (IsBufferType buffer n b => buffer -> IO ())
+-- mkKernel :: (Expr a -> IO (Func n b)) ->
+--             IO (IsBufferType buffer n b => a -> buffer -> IO ())
+
+-- mkKernel :: (args -> IO (Func n a))
