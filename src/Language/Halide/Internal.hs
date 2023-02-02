@@ -11,6 +11,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 module Language.Halide.Internal
   ( Expr (..),
@@ -42,14 +43,14 @@ module Language.Halide.Internal
 where
 
 import Control.Exception (bracket)
-import Control.Monad (forM_, unless, (>=>))
+import Control.Monad (forM_, (>=>))
 import Control.Monad.Primitive (touch)
 import Control.Monad.ST (RealWorld)
 import Data.Constraint
 import Data.IORef
 import Data.Int
 import Data.Kind (Type)
-import Data.Primitive.PrimArray (MutablePrimArray, PrimArray)
+import Data.Primitive.PrimArray (MutablePrimArray)
 import qualified Data.Primitive.PrimArray as P
 import qualified Data.Primitive.Ptr as P
 import Data.Primitive.Types (Prim)
@@ -66,10 +67,9 @@ import Foreign.ForeignPtr.Unsafe
 import Foreign.Marshal (with)
 import Foreign.Ptr (FunPtr, Ptr, castPtr)
 import Foreign.Storable
-import GHC.IO.Buffer (Buffer)
 import GHC.Stack (HasCallStack)
-import GHC.TypeLits (ErrorMessage ((:<>:)))
-import qualified GHC.TypeLits as GHC
+-- import GHC.TypeLits (ErrorMessage ((:<>:)))
+-- import qualified GHC.TypeLits as GHC
 import GHC.TypeNats
 import qualified Language.C.Inline as C
 import qualified Language.C.Inline.Cpp as C
@@ -77,7 +77,6 @@ import qualified Language.C.Inline.Unsafe as CU
 import Language.Halide.Buffer
 import Language.Halide.Type
 import System.IO.Unsafe (unsafePerformIO)
-import Text.Printf (FormatParse (fpChar))
 import Type.Reflection
 import qualified Unsafe.Coerce
 
@@ -603,21 +602,76 @@ instance UnCurry (x1 -> x2 -> x3 -> x4 -> Return b) where
   uncurry' f (x1 ::: x2 ::: x3 ::: x4 ::: Nil) = f x1 x2 x3 x4
 -}
 
+type family Curried f :: Type where
+  Curried (Arguments 5 '[x1, x2, x3, x4, x5] -> r) = x1 -> x2 -> x3 -> x4 -> x5 -> r
+  Curried (Arguments 4 '[x1, x2, x3, x4] -> r) = x1 -> x2 -> x3 -> x4 -> r
+  Curried (Arguments 3 '[x1, x2, x3] -> r) = x1 -> x2 -> x3 -> r
+  Curried (Arguments 2 '[x1, x2] -> r) = x1 -> x2 -> r
+  Curried (Arguments 1 '[x1] -> r) = x1 -> r
+  Curried (Arguments 0 '[] -> r) = r
+
+class Curry f where
+  curry' :: f -> Curried f
+
+instance Curry (Arguments 0 '[] -> r) where
+  curry' f = f Nil
+
+instance Curry (Arguments 1 '[x1] -> r) where
+  curry' f x1 = f (x1 ::: Nil)
+
+instance Curry (Arguments 2 '[x1, x2] -> r) where
+  curry' f x1 x2 = f (x1 ::: x2 ::: Nil)
+
+instance Curry (Arguments 3 '[x1, x2, x3] -> r) where
+  curry' f x1 x2 x3 = f (x1 ::: x2 ::: x3 ::: Nil)
+
+type family UnCurried f :: Type where
+  UnCurried (x1 -> x2 -> x3 -> x4 -> x5 -> r) = Arguments 5 '[x1, x2, x3, x4, x5] -> r
+  UnCurried (x1 -> x2 -> x3 -> x4 -> r) = Arguments 4 '[x1, x2, x3, x4] -> r
+  UnCurried (x1 -> x2 -> x3 -> r) = Arguments 3 '[x1, x2, x3] -> r
+  UnCurried (x1 -> x2 -> r) = Arguments 2 '[x1, x2] -> r
+  UnCurried (x1 -> r) = Arguments 1 '[x1] -> r
+  UnCurried r = Arguments 0 '[] -> r
+
+class UnCurry f where
+  uncurry' :: f -> UnCurried f
+
+instance UnCurry (IO b) where
+  uncurry' f Nil = f
+
+instance UnCurry (x1 -> IO b) where
+  uncurry' f (x1 ::: Nil) = f x1
+
+instance UnCurry (x1 -> x2 -> IO b) where
+  uncurry' f (x1 ::: x2 ::: Nil) = f x1 x2
+
+instance UnCurry (x1 -> x2 -> x3 -> IO b) where
+  uncurry' f (x1 ::: x2 ::: x3 ::: Nil) = f x1 x2 x3
+
+instance UnCurry (x1 -> x2 -> x3 -> x4 -> IO b) where
+  uncurry' f (x1 ::: x2 ::: x3 ::: x4 ::: Nil) = f x1 x2 x3 x4
+
 mkKernel ::
-  forall k ts n a.
+  forall f kernel k ts n a.
   ( KnownNat k,
     KnownNat (k + 1),
     KnownNat n,
     IsHalideType a,
     All ValidParameter ts,
     All ValidArgument (Lowered ts),
-    PrepareParameters k ts
+    PrepareParameters k ts,
+    UnCurried f ~ (Arguments k ts -> IO (Func n a)),
+    UnCurry f,
+    kernel ~ (Arguments k (Lowered ts) -> Ptr (HalideBuffer n a) -> IO ()),
+    Curry kernel
   ) =>
-  (Arguments k ts -> IO (Func n a)) ->
-  IO (Arguments k (Lowered ts) -> Ptr (HalideBuffer n a) -> IO ())
+  f ->
+  -- (Arguments k ts -> IO (Func n a)) ->
+  IO (Curried kernel)
+-- Arguments k (Lowered ts) -> Ptr (HalideBuffer n a) -> IO ())
 mkKernel buildFunc = do
   parameters <- prepareParameters @k @ts
-  func <- buildFunc parameters
+  func <- (uncurry' buildFunc) parameters
   -- withFunc func $ \f ->
   --   [CU.exp| void {
   --     $(Halide::Func* f)->trace_stores()
@@ -639,7 +693,8 @@ mkKernel buildFunc = do
   let argc = 1 + fromIntegral (natVal (Proxy @k)) + 1
   storage@(ArgvStorage argv scalarStorage) <- newArgvStorage (fromIntegral argc)
   -- putStrLn $ "argc = " <> show argc
-  let kernel args out =
+  let kernel :: kernel
+      kernel args out =
         withForeignPtr context $ \contextPtr ->
           withForeignPtr callable $ \callablePtr -> do
             setArgvStorage storage (contextPtr ::: args) (out ::: Nil)
@@ -651,7 +706,7 @@ mkKernel buildFunc = do
             -- } |]
             touch argv
             touch scalarStorage
-  pure kernel
+  pure (curry' kernel)
 
 prepareCxxArguments ::
   forall k ts b.

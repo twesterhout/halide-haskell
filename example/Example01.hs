@@ -22,19 +22,15 @@ main = do
   -- withHalideBuffer buffer $ \p ->
   --   kernel Nil p
   -- print =<< S.unsafeFreeze buffer
-  -- print "Compiling kernel ..."
-  let buildFunc :: Arguments 1 '[Expr Float] -> IO (Func 1 Float)
-      buildFunc (a ::: Nil) = do
-        -- setName a "a"
-        j <- mkVar "j"
-        func <- define "func" j $ print' a
-        -- printLoopNest func
-        pure func
-  kernel2 <- mkKernel $ buildFunc
-  (buffer2 :: SM.MVector RealWorld Float) <- SM.new 5
-  print "Invoking kernel ..."
-  withHalideBuffer buffer2 $ \p ->
-    kernel2 ((3 :: Float) ::: Nil) p
-  print =<< S.unsafeFreeze buffer2
+  kernel <- mkKernel $ \(a :: Expr Float) (g :: Func 1 Float) -> do
+    j <- mkVar "j"
+    define "func" j $ g ! j / a
+  (g :: SM.MVector RealWorld Float) <- SM.generate 5 fromIntegral
+  (out :: SM.MVector RealWorld Float) <- SM.new 5
+  withHalideBuffer g $ \gPtr ->
+    withHalideBuffer out $ \outPtr ->
+      kernel 3 gPtr outPtr
+  print =<< S.unsafeFreeze g
+  print =<< S.unsafeFreeze out
 
 -- testKernel2
