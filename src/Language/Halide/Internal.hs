@@ -77,6 +77,7 @@ import qualified Language.C.Inline.Unsafe as CU
 import Language.Halide.Buffer
 import Language.Halide.Type
 import System.IO.Unsafe (unsafePerformIO)
+import Text.Printf (FormatParse (fpChar))
 import Type.Reflection
 import qualified Unsafe.Coerce
 
@@ -117,19 +118,14 @@ wrapCxxExpr = fmap Expr . newForeignPtr deleteCxxExpr
 deleteCxxExpr :: FunPtr (Ptr CxxExpr -> IO ())
 deleteCxxExpr = [C.funPtr| void deleteExpr(Halide::Expr *x) { delete x; } |]
 
-withExpr :: IsHalideType a => Expr a -> (Ptr CxxExpr -> IO b) -> IO b
-withExpr x = withForeignPtr (exprToForeignPtr x)
-
 deleteCxxParameter :: FunPtr (Ptr CxxParameter -> IO ())
 deleteCxxParameter = [C.funPtr| void deleteParameter(Halide::Internal::Parameter *p) { delete p; } |]
 
-buildParameter ::
-  forall a.
-  IsHalideType a =>
-  Maybe Text ->
-  IORef (Maybe (ForeignPtr CxxParameter)) ->
-  IO (ForeignPtr CxxParameter)
-buildParameter maybeName r = do
+withExpr :: IsHalideType a => Expr a -> (Ptr CxxExpr -> IO b) -> IO b
+withExpr x = withForeignPtr (exprToForeignPtr x)
+
+mkScalarParameter :: forall a. IsHalideType a => Maybe Text -> IO (ForeignPtr CxxParameter)
+mkScalarParameter maybeName = do
   with (halideTypeFor (Proxy @a)) $ \t -> do
     let createWithoutName =
           [CU.exp| Halide::Internal::Parameter* {
@@ -143,14 +139,26 @@ buildParameter maybeName r = do
                   0,
                   std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}}
               } |]
-    fp <- newForeignPtr deleteCxxParameter =<< maybe createWithoutName createWithName maybeName
-    writeIORef r (Just fp)
-    pure fp
+    newForeignPtr deleteCxxParameter =<< maybe createWithoutName createWithName maybeName
+
+getScalarParameter ::
+  forall a.
+  IsHalideType a =>
+  Maybe Text ->
+  IORef (Maybe (ForeignPtr CxxParameter)) ->
+  IO (ForeignPtr CxxParameter)
+getScalarParameter name r = do
+  readIORef r >>= \case
+    Just fp -> pure fp
+    Nothing -> do
+      fp <- mkScalarParameter @a name
+      writeIORef r (Just fp)
+      pure fp
 
 forceExpr :: forall a. IsHalideType a => Expr a -> IO (Expr a)
 forceExpr x@(Expr _) = pure x
 forceExpr (ScalarParam r) = do
-  fp <- maybe (buildParameter @a Nothing r) pure =<< readIORef r
+  fp <- getScalarParameter @a Nothing r
   withForeignPtr fp $ \p ->
     wrapCxxExpr
       =<< [CU.exp| Halide::Expr* {
@@ -162,7 +170,7 @@ forceExpr (ScalarParam r) = do
 
 withScalarParam :: forall a b. IsHalideType a => Expr a -> (Ptr CxxParameter -> IO b) -> IO b
 withScalarParam (ScalarParam r) action = do
-  fp <- maybe (buildParameter @a Nothing r) pure =<< readIORef r
+  fp <- getScalarParameter @a Nothing r
   withForeignPtr fp action
 withScalarParam (Expr _) _ = error "withScalarParam called on Expr"
 
@@ -260,23 +268,35 @@ data Func (n :: Nat) (a :: Type)
 deleteCxxImageParam :: FunPtr (Ptr CxxImageParam -> IO ())
 deleteCxxImageParam = [C.funPtr| void deleteImageParam(Halide::ImageParam* p) { delete p; } |]
 
-buildBufferParameter :: forall n a. (KnownNat n, IsHalideType a) => Maybe Text -> IO (ForeignPtr CxxImageParam)
-buildBufferParameter maybeName = do
-  let d = fromIntegral $ natVal (Proxy @n)
-  with (halideTypeFor (Proxy @a)) $ \t ->
-    case maybeName of
-      Nothing ->
-        newForeignPtr deleteCxxImageParam
-          =<< [CU.exp| Halide::ImageParam* {
-                  new Halide::ImageParam{Halide::Type{*$(halide_type_t* t)}, $(int d)} } |]
-      Just name -> do
-        let s = T.encodeUtf8 name
-        newForeignPtr deleteCxxImageParam
-          =<< [CU.exp| Halide::ImageParam* {
-                  new Halide::ImageParam{
-                        Halide::Type{*$(halide_type_t* t)},
-                        $(int d),
-                        std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}} } |]
+mkBufferParameter :: forall n a. (KnownNat n, IsHalideType a) => Maybe Text -> IO (ForeignPtr CxxImageParam)
+mkBufferParameter maybeName = do
+  with (halideTypeFor (Proxy @a)) $ \t -> do
+    let d = fromIntegral $ natVal (Proxy @n)
+        createWithoutName =
+          [CU.exp| Halide::ImageParam* {
+            new Halide::ImageParam{Halide::Type{*$(halide_type_t* t)}, $(int d)} } |]
+        createWithName name =
+          let s = T.encodeUtf8 name
+           in [CU.exp| Halide::ImageParam* {
+                new Halide::ImageParam{
+                      Halide::Type{*$(halide_type_t* t)},
+                      $(int d),
+                      std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}} } |]
+    newForeignPtr deleteCxxImageParam =<< maybe createWithoutName createWithName maybeName
+
+getBufferParameter ::
+  forall n a.
+  (KnownNat n, IsHalideType a) =>
+  Maybe Text ->
+  IORef (Maybe (ForeignPtr CxxImageParam)) ->
+  IO (ForeignPtr CxxImageParam)
+getBufferParameter name r =
+  readIORef r >>= \case
+    Just fp -> pure fp
+    Nothing -> do
+      fp <- mkBufferParameter @n @a name
+      writeIORef r (Just fp)
+      pure fp
 
 withBufferParam ::
   forall n a b.
@@ -285,13 +305,7 @@ withBufferParam ::
   (Ptr CxxImageParam -> IO b) ->
   IO b
 withBufferParam (BufferParam r) action = do
-  maybeParameter <- readIORef r
-  fp <- case maybeParameter of
-    Nothing -> do
-      p <- buildBufferParameter @n @a Nothing
-      writeIORef r (Just p)
-      pure p
-    Just p -> pure p
+  fp <- getBufferParameter @n @a Nothing r
   withForeignPtr fp action
 withBufferParam (Func _) _ = error "withBufferParam called on Func"
 
@@ -304,8 +318,8 @@ instance IsHalideType a => Named (Expr a) where
   setName (ScalarParam r) name = do
     _ <-
       maybe
-        (buildParameter @a (Just name) r)
-        (error "the name of this parameter has already been set")
+        (mkScalarParameter @a (Just name))
+        (error "the name of this Expr has already been set")
         =<< readIORef r
     pure ()
 
@@ -313,12 +327,12 @@ instance (KnownNat n, IsHalideType a) => Named (Func n a) where
   setName :: Func n a -> Text -> IO ()
   setName (Func _) _ = error "the name of this Func has already been set"
   setName (BufferParam r) name = do
-    maybeParameter <- readIORef r
-    case maybeParameter of
-      Just _ -> error "the name of this Func has already been set"
-      Nothing -> do
-        p <- buildBufferParameter @n @a (Just name)
-        writeIORef r (Just p)
+    _ <-
+      maybe
+        (mkBufferParameter @n @a (Just name))
+        (error "the name of this Func has already been set")
+        =<< readIORef r
+    pure ()
 
 deleteCxxFunc :: FunPtr (Ptr CxxFunc -> IO ())
 deleteCxxFunc = [C.funPtr| void deleteFunc(Halide::Func *x) { delete x; } |]
@@ -332,13 +346,7 @@ wrapCxxFunc = fmap Func . newForeignPtr deleteCxxFunc
 forceFunc :: forall n a. (KnownNat n, IsHalideType a) => Func n a -> IO (Func n a)
 forceFunc x@(Func _) = pure x
 forceFunc (BufferParam r) = do
-  maybeParameter <- readIORef r
-  fp <- case maybeParameter of
-    Nothing -> do
-      p <- buildBufferParameter @n @a Nothing
-      writeIORef r (Just p)
-      pure p
-    Just p -> pure p
+  fp <- getBufferParameter @n @a Nothing r
   withForeignPtr fp $ \p ->
     wrapCxxFunc
       =<< [CU.exp| Halide::Func* {
@@ -423,49 +431,6 @@ realize1D func size = do
           Halide::Pipeline::RealizationArg{$(halide_buffer_t* b)}) } |]
   S.unsafeFreeze buffer
 
-data Param f
-
---   ScalarParam :: IsHalideType a => Text -> Param (Expr a)
---   BufferParam :: (KnownNat n, IsHalideType a) => Text -> Param (Func n a)
-
-{-
-mkScalarParam :: forall a. IsHalideType a => Text -> IO (Expr a)
-mkScalarParam name = do
-  let s = T.encodeUtf8 name
-  with (halideTypeFor (Proxy @a)) $ \tp ->
-    wrapCxxExpr
-      =<< [CU.exp| Halide::Expr* {
-        new Halide::Expr{
-          Halide::Internal::Parameter{
-            Halide::Type{*$(halide_type_t* tp)},
-            false,
-            0,
-            std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}
-          }.scalar_expr()}
-      } |]
-
-mkBufferParam :: forall n a. (KnownNat n, IsHalideType a) => Text -> IO (Func n a)
-mkBufferParam name = do
-  let s = T.encodeUtf8 name
-      d = fromIntegral $ natVal (Proxy @n)
-  with (halideTypeFor (Proxy @a)) $ \tp ->
-    wrapCxxFunc
-      =<< [CU.exp| Halide::Func* {
-        new Halide::Func{static_cast<Halide::Func>(
-          Halide::ImageParam{
-            Halide::Type{*$(halide_type_t* tp)},
-            $(int d),
-            std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}
-          })}
-      } |]
-
-declareScalarParam :: forall a n b. IsHalideType a => Text -> (Expr a -> IO (Func n b)) -> a -> IO b
-declareScalarParam name mkFunc value = do
-  x <- mkScalarParam @a name
-  f <- mkFunc x
-  undefined
--}
-
 infixr 5 :::
 
 data Arguments (n :: Nat) (k :: [Type]) where
@@ -484,18 +449,17 @@ data ArgvStorage s
 newArgvStorage :: Int -> IO (ArgvStorage RealWorld)
 newArgvStorage n = ArgvStorage <$> P.newPinnedPrimArray n <*> P.newPinnedPrimArray n
 
-setArgvStorage :: forall n ts out. (All ValidArgument ts, KnownNat n, ValidArgument out) => ArgvStorage RealWorld -> Arguments n ts -> out -> IO ()
-setArgvStorage (ArgvStorage argv scalarStorage) args out = do
+setArgvStorage ::
+  (All ValidArgument inputs, All ValidArgument outputs) =>
+  ArgvStorage RealWorld ->
+  Arguments n inputs ->
+  Arguments m outputs ->
+  IO ()
+setArgvStorage (ArgvStorage argv scalarStorage) inputs outputs = do
   let argvPtr = P.mutablePrimArrayContents argv
       scalarStoragePtr = P.mutablePrimArrayContents scalarStorage
       go :: All ValidArgument ts' => Int -> Arguments n' ts' -> IO Int
-      go i Nil = do
-        putStrLn $ "Filling slot " <> show i
-        fillSlot
-          (castPtr $ argvPtr `P.advancePtr` i)
-          (castPtr $ scalarStoragePtr `P.advancePtr` i)
-          out
-        pure (i + 1)
+      go i Nil = pure i
       go i ((x :: t) ::: xs) = do
         putStrLn $ "Filling slot " <> show i
         fillSlot
@@ -503,10 +467,8 @@ setArgvStorage (ArgvStorage argv scalarStorage) args out = do
           (castPtr $ scalarStoragePtr `P.advancePtr` i)
           x
         go (i + 1) xs
-  i <- go 0 args
-  unless (i == fromIntegral (natVal (Proxy @n) + 1)) $
-    error $
-      show i <> " != " <> show (natVal (Proxy @n) + 1)
+  i <- go 0 inputs
+  _ <- go i outputs
   touch argv
   touch scalarStorage
 
@@ -514,32 +476,30 @@ class ValidArgument (t :: Type) where
   fillSlot :: Ptr () -> Ptr () -> t -> IO ()
 
 instance (Prim t, IsHalideType t) => ValidArgument t where
+  fillSlot :: Ptr () -> Ptr () -> t -> IO ()
   fillSlot argv scalarStorage x = do
     P.writeOffPtr (castPtr scalarStorage :: Ptr t) 0 x
     print =<< P.readOffPtr (castPtr scalarStorage :: Ptr Float) 0
     P.writeOffPtr (castPtr argv :: Ptr (Ptr ())) 0 scalarStorage
 
 instance {-# OVERLAPPING #-} ValidArgument (Ptr CxxUserContext) where
+  fillSlot :: Ptr () -> Ptr () -> Ptr CxxUserContext -> IO ()
   fillSlot argv scalarStorage x = do
     P.writeOffPtr (castPtr scalarStorage :: Ptr (Ptr CxxUserContext)) 0 x
     print =<< P.readOffPtr (castPtr scalarStorage :: Ptr CUIntPtr) 0
     P.writeOffPtr (castPtr argv :: Ptr (Ptr ())) 0 scalarStorage
 
 instance {-# OVERLAPPING #-} ValidArgument (Ptr (HalideBuffer n a)) where
+  fillSlot :: Ptr () -> Ptr () -> Ptr (HalideBuffer n a) -> IO ()
   fillSlot argv _ x = do
     P.writeOffPtr (castPtr argv :: Ptr (Ptr (HalideBuffer n a))) 0 x
-
-class IsParam t
-
-instance IsHalideType a => IsParam (Param (Expr a))
-
-instance (KnownNat n, IsHalideType a) => IsParam (Param (Func n a))
 
 class ValidParameter (t :: Type) where
   appendToArgList :: Ptr (CxxVector CxxArgument) -> t -> IO ()
   prepareParameter :: IO t
 
 instance IsHalideType a => ValidParameter (Expr a) where
+  appendToArgList :: Ptr (CxxVector CxxArgument) -> Expr a -> IO ()
   appendToArgList v expr =
     withScalarParam expr $ \p ->
       [CU.exp| void { $(std::vector<Halide::Argument>* v)->emplace_back(
@@ -548,31 +508,33 @@ instance IsHalideType a => ValidParameter (Expr a) where
         $(Halide::Internal::Parameter const* p)->type(),
         $(Halide::Internal::Parameter const* p)->dimensions(),
         $(Halide::Internal::Parameter const* p)->get_argument_estimates()) } |]
+  prepareParameter :: IO (Expr a)
   prepareParameter = ScalarParam <$> newIORef Nothing
 
 instance (KnownNat n, IsHalideType a) => ValidParameter (Func n a) where
+  appendToArgList :: Ptr (CxxVector CxxArgument) -> Func n a -> IO ()
   appendToArgList v func =
     withBufferParam func $ \p ->
       [CU.exp| void { $(std::vector<Halide::Argument>* v)->push_back(*$(Halide::ImageParam const* p)) } |]
+  prepareParameter :: IO (Func n a)
   prepareParameter = BufferParam <$> newIORef Nothing
 
 class PrepareParameters k ts where
   prepareParameters :: IO (Arguments k ts)
 
 instance PrepareParameters 0 '[] where
+  prepareParameters :: IO (Arguments 0 '[])
   prepareParameters = pure Nil
 
 instance (ValidParameter t, PrepareParameters (k - 1) ts, KnownNat k, KnownNat (k - 1)) => PrepareParameters k (t ': ts) where
+  prepareParameters :: IO (Arguments k (t : ts))
   prepareParameters = do
     t <- prepareParameter @t
     ts <- prepareParameters @(k - 1) @ts
-    case (Unsafe.Coerce.unsafeCoerce (Refl :: Int :~: Int) :: k :~: ((k - 1) + 1)) of
+    let proof :: k :~: ((k - 1) + 1)
+        proof = Unsafe.Coerce.unsafeCoerce (Refl :: Int :~: Int)
+    case proof of
       Refl -> pure $ t ::: ts
-
--- instance IsHalideType a => ValidParameter (Expr a) where
---   appendToArgList :: Ptr (CxxVector CxxArgument) -> Expr a -> IO ()
---   appendToArgList v expr =
---     withExpr expr $ \e -> [CU.expr| void { $(std::vector<Halide::Argument>* v)->emplace_back() } |]
 
 deleteCxxUserContext :: FunPtr (Ptr CxxUserContext -> IO ())
 deleteCxxUserContext = [C.funPtr| void deleteUserContext(Halide::JITUserContext* p) { delete p; } |]
@@ -593,11 +555,9 @@ wrapCxxCallable = newForeignPtr deleteCxxCallable
 type family Lowered (t :: [Type]) :: [Type] where
   Lowered '[] = '[]
   Lowered (Expr a ': ts) = (a ': Lowered ts)
-  Lowered (Func n (a1, a2) ': ts) = (Ptr (HalideBuffer n a1) ': Ptr (HalideBuffer n a2) ': Lowered ts)
   Lowered (Func n a ': ts) = (Ptr (HalideBuffer n a) ': Lowered ts)
-  Lowered ((Func n1 a1, Func n2 a2) ': ts) = Lowered (Func n1 a2 ': Func n2 a2 ': ts)
-  Lowered (Param t ': ts) = Lowered (t ': ts)
 
+{-
 type family FunctionArgumentTypes (f :: Type) :: [Type] where
   FunctionArgumentTypes (a -> b) = a ': FunctionArgumentTypes b
   FunctionArgumentTypes r = '[]
@@ -641,38 +601,51 @@ instance UnCurry (x1 -> x2 -> x3 -> Return b) where
 
 instance UnCurry (x1 -> x2 -> x3 -> x4 -> Return b) where
   uncurry' f (x1 ::: x2 ::: x3 ::: x4 ::: Nil) = f x1 x2 x3 x4
+-}
 
 mkKernel ::
   forall k ts n a.
-  (KnownNat k, KnownNat (k + 1), KnownNat n, All ValidParameter ts, All ValidArgument (Lowered ts), IsHalideType a, PrepareParameters k ts) =>
+  ( KnownNat k,
+    KnownNat (k + 1),
+    KnownNat n,
+    IsHalideType a,
+    All ValidParameter ts,
+    All ValidArgument (Lowered ts),
+    PrepareParameters k ts
+  ) =>
   (Arguments k ts -> IO (Func n a)) ->
   IO (Arguments k (Lowered ts) -> Ptr (HalideBuffer n a) -> IO ())
 mkKernel buildFunc = do
   parameters <- prepareParameters @k @ts
   func <- buildFunc parameters
-  withFunc func $ \f ->
-    [CU.exp| void { 
-      $(Halide::Func* f)->trace_stores()
-    } |]
+  -- withFunc func $ \f ->
+  --   [CU.exp| void {
+  --     $(Halide::Func* f)->trace_stores()
+  --   } |]
   callable <-
     prepareCxxArguments parameters $ \v ->
       withFunc func $ \f -> do
         wrapCxxCallable
-          =<< [CU.exp| Halide::Callable* { new Halide::Callable{
-                $(Halide::Func* f)->compile_to_callable(*$(const std::vector<Halide::Argument>* v))
-              } } |]
+          =<< [CU.block| Halide::Callable* {
+                try {
+                  Halide::Callable c = $(Halide::Func* f)->compile_to_callable(*$(const std::vector<Halide::Argument>* v));
+                  return new Halide::Callable{std::move(c)};
+                } catch (Halide::CompileError& e) {
+                  fprintf(stderr, "error: %s\n", e.what());
+                  throw e;
+                }
+              } |]
   context <- newEmptyCxxUserContext
   let argc = 1 + fromIntegral (natVal (Proxy @k)) + 1
   storage@(ArgvStorage argv scalarStorage) <- newArgvStorage (fromIntegral argc)
-  putStrLn $ "argc = " <> show argc
+  -- putStrLn $ "argc = " <> show argc
   let kernel args out =
         withForeignPtr context $ \contextPtr ->
           withForeignPtr callable $ \callablePtr -> do
-            setArgvStorage storage (contextPtr ::: args) out
+            setArgvStorage storage (contextPtr ::: args) (out ::: Nil)
             let argvPtr = P.mutablePrimArrayContents argv
-            [CU.exp| void {
-              $(Halide::Callable* callablePtr)->call_argv_fast($(int argc), $(const void* const* argvPtr))
-            } |]
+            [CU.exp| void { $(Halide::Callable* callablePtr)->call_argv_fast(
+              $(int argc), $(const void* const* argvPtr)) } |]
             -- [CU.exp| void {
             --   $(Halide::Callable* callablePtr)->operator()($(halide_buffer_t* p))
             -- } |]
@@ -696,13 +669,13 @@ prepareCxxArguments args action = do
       } |]
       destroy p = [CU.exp| void { delete $(std::vector<Halide::Argument>* p) } |]
   bracket allocate destroy $ \v -> do
-    let go :: (KnownNat k2, All ValidParameter ts2) => Arguments k2 ts2 -> IO ()
+    let go :: All ValidParameter ts' => Arguments k' ts' -> IO ()
         go Nil = pure ()
         go (x ::: xs) = appendToArgList v x >> go xs
     go args
-    [CU.block| void {
-      printf("v.size() = %ul\n", $(std::vector<Halide::Argument>* v)->size());
-    } |]
+    -- [CU.block| void {
+    --   printf("v.size() = %ul\n", $(std::vector<Halide::Argument>* v)->size());
+    -- } |]
     action v
 
 -- uncurry' :: f -> Arguments (FunctionArgumentCount f) (FunctionArgumentTypes f) -> FunctionReturnType f
@@ -846,7 +819,7 @@ testKernel1 = do
   let kernel args@Nil p =
         withForeignPtr context $ \contextPtr ->
           withForeignPtr callable $ \callablePtr -> do
-            setArgvStorage storage (contextPtr ::: args) p
+            setArgvStorage storage (contextPtr ::: args) (p ::: Nil)
             let argvPtr = P.mutablePrimArrayContents argv
             [CU.exp| void {
                 $(Halide::Callable* callablePtr)->call_argv_fast(2, $(const void* const* argvPtr))
