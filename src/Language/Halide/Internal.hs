@@ -519,6 +519,28 @@ instance (ValidParameter t, PrepareParameters ts, KnownNat (Length ts), KnownNat
     ts <- prepareParameters @ts
     pure $ t ::: ts
 
+prepareCxxArguments ::
+  forall k ts b.
+  (KnownNat k, All ValidParameter ts) =>
+  Arguments k ts ->
+  (Ptr (CxxVector CxxArgument) -> IO b) ->
+  IO b
+prepareCxxArguments args action = do
+  let count = fromIntegral (natVal (Proxy @k))
+      allocate =
+        [CU.block| std::vector<Halide::Argument>* {
+        auto p = new std::vector<Halide::Argument>{};
+        p->reserve($(size_t count));
+        return p;
+      } |]
+      destroy p = [CU.exp| void { delete $(std::vector<Halide::Argument>* p) } |]
+  bracket allocate destroy $ \v -> do
+    let go :: All ValidParameter ts' => Arguments k' ts' -> IO ()
+        go Nil = pure ()
+        go (x ::: xs) = appendToArgList v x >> go xs
+    go args
+    action v
+
 deleteCxxUserContext :: FunPtr (Ptr CxxUserContext -> IO ())
 deleteCxxUserContext = [C.funPtr| void deleteUserContext(Halide::JITUserContext* p) { delete p; } |]
 
@@ -670,7 +692,8 @@ mkKernel buildFunc = do
         wrapCxxCallable
           =<< [CU.block| Halide::Callable* {
                 try {
-                  Halide::Callable c = $(Halide::Func* f)->compile_to_callable(*$(const std::vector<Halide::Argument>* v));
+                  Halide::Callable c = $(Halide::Func* f)->compile_to_callable(
+                    *$(const std::vector<Halide::Argument>* v));
                   return new Halide::Callable{std::move(c)};
                 } catch (Halide::CompileError& e) {
                   fprintf(stderr, "error: %s\n", e.what());
@@ -681,35 +704,15 @@ mkKernel buildFunc = do
   let argc = 1 + fromIntegral (natVal (Proxy @k)) + 1
   storage@(ArgvStorage argv scalarStorage) <- newArgvStorage (fromIntegral argc)
   let argvPtr = P.mutablePrimArrayContents argv
+      contextPtr = unsafeForeignPtrToPtr context
+      callablePtr = unsafeForeignPtrToPtr callable
       kernel :: kernel
-      kernel args out =
-        withForeignPtr context $ \contextPtr ->
-          withForeignPtr callable $ \callablePtr -> do
-            setArgvStorage storage (contextPtr ::: args) (out ::: Nil)
-            [CU.exp| void { $(Halide::Callable* callablePtr)->call_argv_fast(
+      kernel args out = do
+        setArgvStorage storage (contextPtr ::: args) (out ::: Nil)
+        [CU.exp| void { $(Halide::Callable* callablePtr)->call_argv_fast(
               $(int argc), $(const void* const* argvPtr)) } |]
-            touch argv
-            touch scalarStorage
+        touch argv
+        touch scalarStorage
+        touch context
+        touch callable
   pure (curry' kernel)
-
-prepareCxxArguments ::
-  forall k ts b.
-  (KnownNat k, All ValidParameter ts) =>
-  Arguments k ts ->
-  (Ptr (CxxVector CxxArgument) -> IO b) ->
-  IO b
-prepareCxxArguments args action = do
-  let count = fromIntegral (natVal (Proxy @k))
-      allocate =
-        [CU.block| std::vector<Halide::Argument>* {
-        auto p = new std::vector<Halide::Argument>{};
-        p->reserve($(size_t count));
-        return p;
-      } |]
-      destroy p = [CU.exp| void { delete $(std::vector<Halide::Argument>* p) } |]
-  bracket allocate destroy $ \v -> do
-    let go :: All ValidParameter ts' => Arguments k' ts' -> IO ()
-        go Nil = pure ()
-        go (x ::: xs) = appendToArgList v x >> go xs
-    go args
-    action v
