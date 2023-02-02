@@ -17,28 +17,14 @@ module Language.Halide.Internal
   ( Expr (..),
     mkVar,
     cast,
+    printed,
     Func (..),
     define,
     (!),
     printLoopNest,
     realize1D,
-    testKernel1,
-    testKernel2,
-    Arguments (..),
     setName,
     mkKernel,
-    print',
-    -- mkFunc,
-    -- applyFunc,
-    -- defineFunc,
-    -- printLoopNest,
-    -- realizeOnBuffer,
-    -- Typed interface
-    -- TypedExpr (..),
-    -- TypedFunc (..),
-    -- define,
-    -- (!),
-    -- realizeTypedOnBuffer1D,
   )
 where
 
@@ -77,13 +63,6 @@ import qualified Language.C.Inline.Unsafe as CU
 import Language.Halide.Buffer
 import Language.Halide.Type
 import System.IO.Unsafe (unsafePerformIO)
-import Type.Reflection
-import qualified Unsafe.Coerce
-
--- import qualified Language.C.Inline.Context as CC
--- import qualified Language.C.Types as CT
--- import qualified Language.C.Inline.Cpp.Exception as C
--- import qualified Language.C.Inline.Cpp.Exceptions as Legacy
 
 C.context $
   C.cppCtx
@@ -260,6 +239,9 @@ instance (Castable a Double, Floating a) => Floating (Expr a) where
 cast :: forall to from. Castable to from => Expr from -> Expr to
 cast x = unsafePerformIO $! withExpr x $ castImpl (Proxy @to) (Proxy @from) >=> wrapCxxExpr
 
+printed :: IsHalideType a => Expr a -> Expr a
+printed = unaryOp $ \e -> [CU.exp| Halide::Expr* { new Halide::Expr{print(*$(Halide::Expr* e))} } |]
+
 data Func (n :: Nat) (a :: Type)
   = Func (ForeignPtr CxxFunc)
   | BufferParam (IORef (Maybe (ForeignPtr CxxImageParam)))
@@ -434,7 +416,7 @@ infixr 5 :::
 
 data Arguments (n :: Nat) (k :: [Type]) where
   Nil :: Arguments 0 '[]
-  (:::) :: (KnownNat n, KnownNat (n + 1)) => !t -> !(Arguments n ts) -> Arguments (n + 1) (t ': ts)
+  (:::) :: (KnownNat n, KnownNat (1 + n)) => !t -> !(Arguments n ts) -> Arguments (1 + n) (t ': ts)
 
 type family All (c :: Type -> Constraint) (ts :: [Type]) :: Constraint where
   All c '[] = ()
@@ -514,26 +496,28 @@ instance (KnownNat n, IsHalideType a) => ValidParameter (Func n a) where
   appendToArgList :: Ptr (CxxVector CxxArgument) -> Func n a -> IO ()
   appendToArgList v func =
     withBufferParam func $ \p ->
-      [CU.exp| void { $(std::vector<Halide::Argument>* v)->push_back(*$(Halide::ImageParam const* p)) } |]
+      [CU.exp| void { $(std::vector<Halide::Argument>* v)->push_back(
+        *$(Halide::ImageParam const* p)) } |]
   prepareParameter :: IO (Func n a)
   prepareParameter = BufferParam <$> newIORef Nothing
 
-class PrepareParameters k ts where
-  prepareParameters :: IO (Arguments k ts)
+type family Length (ts :: [Type]) :: Nat where
+  Length '[] = 0
+  Length (t ': ts) = 1 + Length ts
 
-instance PrepareParameters 0 '[] where
+class PrepareParameters ts where
+  prepareParameters :: IO (Arguments (Length ts) ts)
+
+instance PrepareParameters '[] where
   prepareParameters :: IO (Arguments 0 '[])
   prepareParameters = pure Nil
 
-instance (ValidParameter t, PrepareParameters (k - 1) ts, KnownNat k, KnownNat (k - 1)) => PrepareParameters k (t ': ts) where
-  prepareParameters :: IO (Arguments k (t : ts))
+instance (ValidParameter t, PrepareParameters ts, KnownNat (Length ts), KnownNat (1 + Length ts)) => PrepareParameters (t ': ts) where
+  prepareParameters :: IO (Arguments (1 + Length ts) (t : ts))
   prepareParameters = do
     t <- prepareParameter @t
-    ts <- prepareParameters @(k - 1) @ts
-    let proof :: k :~: ((k - 1) + 1)
-        proof = Unsafe.Coerce.unsafeCoerce (Refl :: Int :~: Int)
-    case proof of
-      Refl -> pure $ t ::: ts
+    ts <- prepareParameters @ts
+    pure $ t ::: ts
 
 deleteCxxUserContext :: FunPtr (Ptr CxxUserContext -> IO ())
 deleteCxxUserContext = [C.funPtr| void deleteUserContext(Halide::JITUserContext* p) { delete p; } |]
@@ -625,6 +609,12 @@ instance Curry (Arguments 2 '[x1, x2] -> r) where
 instance Curry (Arguments 3 '[x1, x2, x3] -> r) where
   curry' f x1 x2 x3 = f (x1 ::: x2 ::: x3 ::: Nil)
 
+instance Curry (Arguments 4 '[x1, x2, x3, x4] -> r) where
+  curry' f x1 x2 x3 x4 = f (x1 ::: x2 ::: x3 ::: x4 ::: Nil)
+
+instance Curry (Arguments 5 '[x1, x2, x3, x4, x5] -> r) where
+  curry' f x1 x2 x3 x4 x5 = f (x1 ::: x2 ::: x3 ::: x4 ::: x5 ::: Nil)
+
 type family UnCurried f :: Type where
   UnCurried (x1 -> x2 -> x3 -> x4 -> x5 -> r) = Arguments 5 '[x1, x2, x3, x4, x5] -> r
   UnCurried (x1 -> x2 -> x3 -> x4 -> r) = Arguments 4 '[x1, x2, x3, x4] -> r
@@ -651,31 +641,29 @@ instance UnCurry (x1 -> x2 -> x3 -> IO b) where
 instance UnCurry (x1 -> x2 -> x3 -> x4 -> IO b) where
   uncurry' f (x1 ::: x2 ::: x3 ::: x4 ::: Nil) = f x1 x2 x3 x4
 
+instance UnCurry (x1 -> x2 -> x3 -> x4 -> x5 -> IO b) where
+  uncurry' f (x1 ::: x2 ::: x3 ::: x4 ::: x5 ::: Nil) = f x1 x2 x3 x4 x5
+
 mkKernel ::
   forall f kernel k ts n a.
-  ( KnownNat k,
-    KnownNat (k + 1),
+  ( UnCurry f,
+    UnCurried f ~ (Arguments k ts -> IO (Func n a)),
     KnownNat n,
     IsHalideType a,
+    k ~ Length ts,
+    KnownNat k,
+    KnownNat (1 + k),
+    PrepareParameters ts,
     All ValidParameter ts,
-    All ValidArgument (Lowered ts),
-    PrepareParameters k ts,
-    UnCurried f ~ (Arguments k ts -> IO (Func n a)),
-    UnCurry f,
+    Curry kernel,
     kernel ~ (Arguments k (Lowered ts) -> Ptr (HalideBuffer n a) -> IO ()),
-    Curry kernel
+    All ValidArgument (Lowered ts)
   ) =>
   f ->
-  -- (Arguments k ts -> IO (Func n a)) ->
   IO (Curried kernel)
--- Arguments k (Lowered ts) -> Ptr (HalideBuffer n a) -> IO ())
 mkKernel buildFunc = do
-  parameters <- prepareParameters @k @ts
-  func <- (uncurry' buildFunc) parameters
-  -- withFunc func $ \f ->
-  --   [CU.exp| void {
-  --     $(Halide::Func* f)->trace_stores()
-  --   } |]
+  parameters <- prepareParameters @ts
+  func <- uncurry' buildFunc parameters
   callable <-
     prepareCxxArguments parameters $ \v ->
       withFunc func $ \f -> do
@@ -692,18 +680,14 @@ mkKernel buildFunc = do
   context <- newEmptyCxxUserContext
   let argc = 1 + fromIntegral (natVal (Proxy @k)) + 1
   storage@(ArgvStorage argv scalarStorage) <- newArgvStorage (fromIntegral argc)
-  -- putStrLn $ "argc = " <> show argc
-  let kernel :: kernel
+  let argvPtr = P.mutablePrimArrayContents argv
+      kernel :: kernel
       kernel args out =
         withForeignPtr context $ \contextPtr ->
           withForeignPtr callable $ \callablePtr -> do
             setArgvStorage storage (contextPtr ::: args) (out ::: Nil)
-            let argvPtr = P.mutablePrimArrayContents argv
             [CU.exp| void { $(Halide::Callable* callablePtr)->call_argv_fast(
               $(int argc), $(const void* const* argvPtr)) } |]
-            -- [CU.exp| void {
-            --   $(Halide::Callable* callablePtr)->operator()($(halide_buffer_t* p))
-            -- } |]
             touch argv
             touch scalarStorage
   pure (curry' kernel)
@@ -728,226 +712,4 @@ prepareCxxArguments args action = do
         go Nil = pure ()
         go (x ::: xs) = appendToArgList v x >> go xs
     go args
-    -- [CU.block| void {
-    --   printf("v.size() = %ul\n", $(std::vector<Halide::Argument>* v)->size());
-    -- } |]
     action v
-
--- uncurry' :: f -> Arguments (FunctionArgumentCount f) (FunctionArgumentTypes f) -> FunctionReturnType f
--- uncurry' f Nil = f
--- uncurry' f (x ::: xs) = uncurry (f x) xs
-
---
---
--- instance UnCurry (x1 -> x2 -> r) (Arguments 2 '[x1, x2] -> r) where
---   uncurry f (x1 ::: x2 ::: Nil) = f x1 x2
-
--- Expr ~ Halide::Expr
---        Halide::Param<T> or Halide::ImageParam<T, N>
---                            ------------------------
---           Scalar                Buffer halide_buffer_t
---
--- Param<float> scale{"scale"};
---
--- Halide::Func::compile_to_callable(std::vector<Halide::Argument>, ...)
---
--- define "f" i
-
--- mkKernel $ \(x :: Expr Float) (y :: Func 1 Float) -> do
---   ...
---   -- return Func 2 Float
-
--- hehe!!!
---
--- declare :: Text -> (t -> IO (Arguments n ts, Func n a)) -> IO (Arguments (n + 1) (Param t : ts), Func n a)
---
--- declare :: Text -> (t -> IO (Func n a)) -> IO (Arguments 1 [Param t], Func n a)
---
--- mkKernel $ do
---   declare "x" $ \(x :: Expr a) -> do
---     ...
---
--- declare "x" $ \(x :: Func 1 Float) ->
---   declare "y" $ \(y :: Func 1 Float) -> do
---     ...
---
---
--- do
---   x <- ...
---   y <- ...
---   pure ()
---
--- do
---   x <- ...
---   pure ()
---
--- withCxxArguments :: All IsParam ts =>
---                     Arguments k ts -> (Ptr (CxxVector CxxArgument) -> IO a) -> IO a
---
---
--- data Expr
--- data P (t :: String) (a :: Type)
---
--- mkKernel $ \(a' :: P "a" Float) (b' :: P "b" Float) -> do
---   let a = Expr a'
---       b = Expr b'
-
--- data Expr a where
---  Expr :: ForeignPtr CxxExpr -> Expr a
---  Param :: IORef Text -> Expr a
---
--- forceExpr :: Expr a -> IO (Expr a)
--- forceExpr x@(Expr _) = pure x
--- forceExpr (Param name) = do
---   name' <- deRef name
---   constructExprFromParam name'
---
--- mkKernel $ \a b c -> do
---  rename a "a"
---  rename b "b"
---  rename c "c"
---  a <- forceExpr a
---  b <- forceExpr b
---  c <- forceExpr c
---  i <- mkVar "i"
---  j <- mkVar "j"
---  define "out" i j $
---      bool (i == j)
---          (c * (a ! i + b ! i) / d)
---          0
---
---
--- identityMatrix <-
---  mkKernel $
---    declare "a" $ \a ->
---      declare "b" $ \b ->
---        declare "c" $ \c ->
---          declare "d" $ \d -> do
---    $(declareParams ["a", "b", "c", "d"]) do
---      i <- mkVar "i"
---      j <- mkVar "j"
---      define "out" i j $
---          bool (i == j)
---              (c * (a ! i + b ! i) / d)
---              0
--- out <- SM.new (10, 10)
--- identityMatrix (a, b, 1, 2) out
--- print =<< SM.unsafeFreeze out
-
--- toCallable :: All IsParam ts =>
---               Arguments k ts ->
---               Func n a ->
---               IO (Ptr CxxUserContext -> Arguments n (Lowered ts') -> Ptr (HalideBuffer n a) -> IO ())
---
--- class Callable a b | a -> b
---   curry :: a -> b
---
--- instance Callable (Ptr CxxUserContext -> Arguments 1 '[t] -> a -> IO ()) (Ptr CxxUserContext -> t -> a -> IO ()) where
---   curry f x1 x2 x3 = f x1 (x2 ::: Nil) x3
---
--- instance Callable (Ptr CxxUserContext -> Arguments 2 '[t1, t2] -> a -> IO ()) (Ptr CxxUserContext -> t1 -> t2 -> a -> IO ()) where
---   curry f x1 x2 x3 x4 = f x1 (x2 ::: x3 ::: Nil) x4
---
--- data family GetFirstArg f where
---  GetFirstArg (a -> b) = a
---  GetFirstArg b = TypeError ...
---
--- f
--- (Expr a1 -> Expr a2 -> Expr a3 -> IO b) -> (Arguments 3 [Expr a1, Expr a2, Expr a3] -> IO b)
-
-cxxCompileToCallable :: (KnownNat n, IsHalideType a) => Func n a -> IO (ForeignPtr CxxCallable)
-cxxCompileToCallable func =
-  withFunc func $ \f -> do
-    wrapCxxCallable
-      -- NOTE: we're cheating here and compiling a function without arguments
-      =<< [CU.exp| Halide::Callable* { new Halide::Callable{
-            $(Halide::Func* f)->compile_to_callable({})
-          } } |]
-
-testKernel1 :: IO (Arguments 0 '[] -> Ptr (HalideBuffer 1 Float) -> IO ())
-testKernel1 = do
-  i <- mkVar "i"
-  f <- define "f" i $ 2 * cast @Float i
-  callable <- cxxCompileToCallable f
-  storage@(ArgvStorage argv scalarStorage) <- newArgvStorage 2
-  context <- newEmptyCxxUserContext
-  let kernel args@Nil p =
-        withForeignPtr context $ \contextPtr ->
-          withForeignPtr callable $ \callablePtr -> do
-            setArgvStorage storage (contextPtr ::: args) (p ::: Nil)
-            let argvPtr = P.mutablePrimArrayContents argv
-            [CU.exp| void {
-                $(Halide::Callable* callablePtr)->call_argv_fast(2, $(const void* const* argvPtr))
-              } |]
-            -- [CU.exp| void {
-            --   $(Halide::Callable* callablePtr)->operator()($(halide_buffer_t* p))
-            -- } |]
-            touch argv
-            touch scalarStorage
-  pure kernel
-
-print' :: IsHalideType a => Expr a -> Expr a
-print' = unaryOp $ \e -> [CU.exp| Halide::Expr* { new Halide::Expr{print(*$(Halide::Expr* e))} } |]
-
-testKernel2 :: IO ()
-testKernel2 = do
-  [CU.block| void {
-    using namespace Halide;
-    Buffer<float> output(10);
-
-    auto c = []() {
-      Param<float> a{"a"};
-      Func func{"func"};
-      Var j{"j"};
-
-      Expr e = a;
-      func(j) = e;
-
-      return func.compile_to_callable({a});
-    }();
-
-    void* argv[3];
-    void* scalar_storage[3];
-
-    JITUserContext empty_context;
-    *(JITUserContext**)(scalar_storage + 0) = &empty_context;
-    argv[0] = &scalar_storage[0];
-
-    *(float*)(scalar_storage + 1) = 3.0f;
-    argv[1] = &scalar_storage[1];
-
-    argv[2] = output.raw_buffer();
-
-    // c(3.0f, output);
-    c.call_argv_fast(3, argv);
-    for (auto i = 0; i < 10; ++i) {
-      printf("%f, ", output(i));
-    }
-    printf("\n");
-  } |]
-
--- toCxxParameter :: Param f -> IO (Ptr CxxParameter)
--- toCxxParameter = undefined
---
---
--- mkParamExpr1 :: Param (Expr a) -> (Expr a -> IO b) -> IO b
--- mkParamExpr1 x f = do
---   bracket (toCxxParameter x) deleteCxxParameter $ \ptr -> do
---     expr <- wrapCxxExpr =<< [CU.exp| Halide::Expr* { new Halide::Expr{$(Halide::Internal::Parameter* ptr)->scalar_expr()} } |]
---     f expr
-
--- mkParamFunc1 :: Param (Func n a) -> (Func n a -> IO b) -> IO b
--- mkParamFunc1 x f = do
---   bracket (toCxxParameter x) deleteCxxParameter $ \ptr -> do
---     expr <- wrapCxxExpr =<< [CU.exp| Halide::Func* { new Halide::Func{$(Halide::Internal::Parameter* ptr)->scalar_expr()} } |]
---     f expr
-
--- instance IsHalideType a => TransformExprToParam (Expr a) where
---   TransformedType (Expr a) =
-
--- mkKernel :: (IO (Func n b)) ->
---             IO (IsBufferType buffer n b => buffer -> IO ())
--- mkKernel :: (Expr a -> IO (Func n b)) ->
---             IO (IsBufferType buffer n b => a -> buffer -> IO ())
-
--- mkKernel :: (args -> IO (Func n a))
