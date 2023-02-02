@@ -6,6 +6,7 @@
 -- See README for more info
 module Language.Halide.Buffer
   ( HalideBuffer (..),
+    RawHalideBuffer (..),
     bufferFromPtrShape,
     bufferFromPtrShapeStrides,
     HalideDimension (..),
@@ -13,9 +14,12 @@ module Language.Halide.Buffer
   )
 where
 
+import Control.Monad (unless)
 import Control.Monad.ST (RealWorld)
 import Data.Bits
+import Data.Coerce
 import Data.Int
+import Data.Kind (Type)
 import Data.Proxy
 import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Storable.Mutable as SM
@@ -25,6 +29,7 @@ import Foreign.Marshal.Utils
 import Foreign.Ptr (Ptr, castPtr, nullPtr)
 import Foreign.Storable
 import GHC.Stack (HasCallStack)
+import GHC.TypeNats
 import Language.Halide.Type
 
 data HalideDimension = HalideDimension
@@ -71,7 +76,7 @@ rowMajorStrides = drop 1 . scanr (*) 1
 
 data HalideDeviceInterface
 
-data HalideBuffer = HalideBuffer
+data RawHalideBuffer = RawHalideBuffer
   { halideBufferDevice :: !Word64,
     halideBufferDeviceInterface :: !(Ptr HalideDeviceInterface),
     halideBufferHost :: !(Ptr Word8),
@@ -83,11 +88,14 @@ data HalideBuffer = HalideBuffer
   }
   deriving stock (Show, Eq)
 
-instance Storable HalideBuffer where
+newtype HalideBuffer (n :: Nat) (a :: Type) = HalideBuffer {unHalideBuffer :: RawHalideBuffer}
+  deriving stock (Show, Eq)
+
+instance Storable RawHalideBuffer where
   sizeOf _ = 56
   alignment _ = 8
   peek p =
-    HalideBuffer
+    RawHalideBuffer
       <$> peekByteOff p 0 -- device
       <*> peekByteOff p 8 -- interface
       <*> peekByteOff p 16 -- host
@@ -107,17 +115,24 @@ instance Storable HalideBuffer where
     pokeByteOff p 48 (halideBufferPadding x)
 
 bufferFromPtrShapeStrides ::
-  forall a b.
-  IsHalideType a =>
+  forall n a b.
+  (KnownNat n, IsHalideType a, Coercible (HalideBuffer n a) RawHalideBuffer) =>
   Ptr a ->
   [Int] ->
   [Int] ->
-  (Ptr HalideBuffer -> IO b) ->
+  (Ptr (HalideBuffer n a) -> IO b) ->
   IO b
 bufferFromPtrShapeStrides p shape stride action =
   withArrayLen (zipWith simpleDimension shape stride) $ \n dim -> do
+    unless (n == fromIntegral (natVal (Proxy @n))) $
+      error $
+        "specified wrong number of dimensions: "
+          <> show n
+          <> "; expected "
+          <> show (natVal (Proxy @n))
+          <> " from the type declaration"
     let !buffer =
-          HalideBuffer
+          RawHalideBuffer
             { halideBufferDevice = 0,
               halideBufferDeviceInterface = nullPtr,
               halideBufferHost = castPtr p,
@@ -127,26 +142,29 @@ bufferFromPtrShapeStrides p shape stride action =
               halideBufferDim = dim,
               halideBufferPadding = nullPtr
             }
-    with buffer action
+    with buffer (action . castPtr)
 
 bufferFromPtrShape ::
-  forall a b.
-  IsHalideType a =>
+  forall n a b.
+  (KnownNat n, IsHalideType a) =>
   Ptr a ->
   [Int] ->
-  (Ptr HalideBuffer -> IO b) ->
+  (Ptr (HalideBuffer n a) -> IO b) ->
   IO b
 bufferFromPtrShape p shape = bufferFromPtrShapeStrides p shape (rowMajorStrides shape)
 
-class IsHalideBuffer a where
-  withHalideBuffer :: a -> (Ptr HalideBuffer -> IO b) -> IO b
+class (KnownNat n, IsHalideType a) => IsHalideBuffer t n a | t -> n, t -> a where
+  withHalideBuffer :: t -> (Ptr (HalideBuffer n a) -> IO b) -> IO b
 
-instance (IsHalideType a, Storable a) => IsHalideBuffer (S.Vector a) where
+-- withRawHalideBuffer :: forall n a t b. IsHalideBuffer t n a => t -> (Ptr RawHalideBuffer -> IO b) -> IO b
+-- withRawHalideBuffer x f = withHalideBuffer x $ \(HalideBuffer raw) -> with raw f
+
+instance (IsHalideType a, Storable a) => IsHalideBuffer (S.Vector a) 1 a where
   withHalideBuffer v f =
     S.unsafeWith v $ \dataPtr ->
       bufferFromPtrShape dataPtr [S.length v] f
 
-instance (IsHalideType a, Storable a) => IsHalideBuffer (S.MVector RealWorld a) where
+instance (IsHalideType a, Storable a) => IsHalideBuffer (S.MVector RealWorld a) 1 a where
   withHalideBuffer v f =
     SM.unsafeWith v $ \dataPtr ->
       bufferFromPtrShape dataPtr [SM.length v] f

@@ -13,6 +13,8 @@ module Language.Halide.Type
     CxxFunc,
     CxxParam,
     CxxParameter,
+    CxxArgument,
+    CxxImageParam,
     CxxVector,
     CxxUserContext,
     CxxCallable,
@@ -37,6 +39,10 @@ data CxxExpr
 data CxxParam a
 
 data CxxParameter
+
+data CxxArgument
+
+data CxxImageParam
 
 data CxxFunc
 
