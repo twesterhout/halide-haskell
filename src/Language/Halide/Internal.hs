@@ -28,7 +28,6 @@ module Language.Halide.Internal
     mkKernel,
     evaluate,
     --
-    printTest,
     Arguments (..),
   )
 where
