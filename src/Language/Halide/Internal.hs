@@ -27,6 +27,9 @@ module Language.Halide.Internal
     setName,
     mkKernel,
     evaluate,
+    --
+    printTest,
+    Arguments (..),
   )
 where
 
@@ -66,6 +69,7 @@ import qualified Language.C.Inline.Cpp.Exception as C
 import qualified Language.C.Inline.Unsafe as CU
 import Language.Halide.Buffer
 import Language.Halide.Type
+import Language.Haskell.TH (runQ)
 import System.IO.Unsafe (unsafePerformIO)
 
 C.context $
@@ -111,6 +115,20 @@ C.verbatim
 defineIsHalideTypeInstances
 
 defineCastableInstances
+
+defineCurriedTypeFamily
+
+class Curry f where
+  curry' :: f -> Curried f
+
+defineCurryInstances
+
+defineUnCurriedTypeFamily
+
+class UnCurry f where
+  uncurry' :: f -> UnCurried f
+
+defineUnCurryInstances
 
 data Expr a
   = Expr (ForeignPtr CxxExpr)
@@ -468,12 +486,6 @@ realize1D func size = do
           Halide::Pipeline::RealizationArg{$(halide_buffer_t* b)}) } |]
   S.unsafeFreeze buffer
 
-infixr 5 :::
-
-data Arguments (n :: Nat) (k :: [Type]) where
-  Nil :: Arguments 0 '[]
-  (:::) :: (KnownNat n, KnownNat (1 + n)) => !t -> !(Arguments n ts) -> Arguments (1 + n) (t ': ts)
-
 type family All (c :: Type -> Constraint) (ts :: [Type]) :: Constraint where
   All c '[] = ()
   All c (t ': ts) = (c t, All c ts)
@@ -618,109 +630,34 @@ type family Lowered (t :: [Type]) :: [Type] where
   Lowered (Expr a ': ts) = (a ': Lowered ts)
   Lowered (Func n a ': ts) = (Ptr (HalideBuffer n a) ': Lowered ts)
 
-{-
-type family FunctionArgumentTypes (f :: Type) :: [Type] where
-  FunctionArgumentTypes (a -> b) = a ': FunctionArgumentTypes b
-  FunctionArgumentTypes r = '[]
+-- type family UnCurried f :: Type where
+--   UnCurried (x1 -> x2 -> x3 -> x4 -> x5 -> r) = Arguments 5 '[x1, x2, x3, x4, x5] -> r
+--   UnCurried (x1 -> x2 -> x3 -> x4 -> r) = Arguments 4 '[x1, x2, x3, x4] -> r
+--   UnCurried (x1 -> x2 -> x3 -> r) = Arguments 3 '[x1, x2, x3] -> r
+--   UnCurried (x1 -> x2 -> r) = Arguments 2 '[x1, x2] -> r
+--   UnCurried (x1 -> r) = Arguments 1 '[x1] -> r
+--   UnCurried r = Arguments 0 '[] -> r
 
-type family FunctionArgumentCount (f :: Type) :: Nat where
-  FunctionArgumentCount (a -> b) = 1 + FunctionArgumentCount b
-  FunctionArgumentCount r = 0
-
-type family FunctionReturnType (f :: Type) :: Type where
-  FunctionReturnType (a -> b) = FunctionReturnType b
-  FunctionReturnType r = r
-
-type family UnCurried f :: Type where
-  UnCurried (x1 -> x2 -> x3 -> x4 -> x5 -> r) = Arguments 5 '[x1, x2, x3, x4, x5] -> r
-  UnCurried (x1 -> x2 -> x3 -> x4 -> r) = Arguments 4 '[x1, x2, x3, x4] -> r
-  UnCurried (x1 -> x2 -> x3 -> r) = Arguments 3 '[x1, x2, x3] -> r
-  UnCurried (x1 -> x2 -> r) = Arguments 2 '[x1, x2] -> r
-  UnCurried (x1 -> r) = Arguments 1 '[x1] -> r
-  UnCurried r = Arguments 0 '[] -> r
-
--- (UnCurried f ~ (Arguments (FunctionArgumentCount f) (FunctionArgumentTypes f) -> FunctionReturnType f)) =>
-class UnCurry f where
-  uncurry' :: f -> UnCurried f
-
-class Curry f where
-  curry' :: UnCurried f -> f
-
-newtype Return b = Return b
-
-instance UnCurry (Return b) where
-  uncurry' f Nil = f
-
-instance UnCurry (x1 -> Return b) where
-  uncurry' f (x1 ::: Nil) = f x1
-
-instance UnCurry (x1 -> x2 -> Return b) where
-  uncurry' f (x1 ::: x2 ::: Nil) = f x1 x2
-
-instance UnCurry (x1 -> x2 -> x3 -> Return b) where
-  uncurry' f (x1 ::: x2 ::: x3 ::: Nil) = f x1 x2 x3
-
-instance UnCurry (x1 -> x2 -> x3 -> x4 -> Return b) where
-  uncurry' f (x1 ::: x2 ::: x3 ::: x4 ::: Nil) = f x1 x2 x3 x4
--}
-
-type family Curried f :: Type where
-  Curried (Arguments 5 '[x1, x2, x3, x4, x5] -> r) = x1 -> x2 -> x3 -> x4 -> x5 -> r
-  Curried (Arguments 4 '[x1, x2, x3, x4] -> r) = x1 -> x2 -> x3 -> x4 -> r
-  Curried (Arguments 3 '[x1, x2, x3] -> r) = x1 -> x2 -> x3 -> r
-  Curried (Arguments 2 '[x1, x2] -> r) = x1 -> x2 -> r
-  Curried (Arguments 1 '[x1] -> r) = x1 -> r
-  Curried (Arguments 0 '[] -> r) = r
-
-class Curry f where
-  curry' :: f -> Curried f
-
-instance Curry (Arguments 0 '[] -> r) where
-  curry' f = f Nil
-
-instance Curry (Arguments 1 '[x1] -> r) where
-  curry' f x1 = f (x1 ::: Nil)
-
-instance Curry (Arguments 2 '[x1, x2] -> r) where
-  curry' f x1 x2 = f (x1 ::: x2 ::: Nil)
-
-instance Curry (Arguments 3 '[x1, x2, x3] -> r) where
-  curry' f x1 x2 x3 = f (x1 ::: x2 ::: x3 ::: Nil)
-
-instance Curry (Arguments 4 '[x1, x2, x3, x4] -> r) where
-  curry' f x1 x2 x3 x4 = f (x1 ::: x2 ::: x3 ::: x4 ::: Nil)
-
-instance Curry (Arguments 5 '[x1, x2, x3, x4, x5] -> r) where
-  curry' f x1 x2 x3 x4 x5 = f (x1 ::: x2 ::: x3 ::: x4 ::: x5 ::: Nil)
-
-type family UnCurried f :: Type where
-  UnCurried (x1 -> x2 -> x3 -> x4 -> x5 -> r) = Arguments 5 '[x1, x2, x3, x4, x5] -> r
-  UnCurried (x1 -> x2 -> x3 -> x4 -> r) = Arguments 4 '[x1, x2, x3, x4] -> r
-  UnCurried (x1 -> x2 -> x3 -> r) = Arguments 3 '[x1, x2, x3] -> r
-  UnCurried (x1 -> x2 -> r) = Arguments 2 '[x1, x2] -> r
-  UnCurried (x1 -> r) = Arguments 1 '[x1] -> r
-  UnCurried r = Arguments 0 '[] -> r
-
-class UnCurry f where
-  uncurry' :: f -> UnCurried f
-
-instance UnCurry (IO b) where
-  uncurry' f Nil = f
-
-instance UnCurry (x1 -> IO b) where
-  uncurry' f (x1 ::: Nil) = f x1
-
-instance UnCurry (x1 -> x2 -> IO b) where
-  uncurry' f (x1 ::: x2 ::: Nil) = f x1 x2
-
-instance UnCurry (x1 -> x2 -> x3 -> IO b) where
-  uncurry' f (x1 ::: x2 ::: x3 ::: Nil) = f x1 x2 x3
-
-instance UnCurry (x1 -> x2 -> x3 -> x4 -> IO b) where
-  uncurry' f (x1 ::: x2 ::: x3 ::: x4 ::: Nil) = f x1 x2 x3 x4
-
-instance UnCurry (x1 -> x2 -> x3 -> x4 -> x5 -> IO b) where
-  uncurry' f (x1 ::: x2 ::: x3 ::: x4 ::: x5 ::: Nil) = f x1 x2 x3 x4 x5
+-- class UnCurry f where
+--   uncurry' :: f -> UnCurried f
+--
+-- instance UnCurry (IO b) where
+--   uncurry' f Nil = f
+--
+-- instance UnCurry (x1 -> IO b) where
+--   uncurry' f (x1 ::: Nil) = f x1
+--
+-- instance UnCurry (x1 -> x2 -> IO b) where
+--   uncurry' f (x1 ::: x2 ::: Nil) = f x1 x2
+--
+-- instance UnCurry (x1 -> x2 -> x3 -> IO b) where
+--   uncurry' f (x1 ::: x2 ::: x3 ::: Nil) = f x1 x2 x3
+--
+-- instance UnCurry (x1 -> x2 -> x3 -> x4 -> IO b) where
+--   uncurry' f (x1 ::: x2 ::: x3 ::: x4 ::: Nil) = f x1 x2 x3 x4
+--
+-- instance UnCurry (x1 -> x2 -> x3 -> x4 -> x5 -> IO b) where
+--   uncurry' f (x1 ::: x2 ::: x3 ::: x4 ::: x5 ::: Nil) = f x1 x2 x3 x4 x5
 
 mkKernel ::
   forall f kernel k ts n a.

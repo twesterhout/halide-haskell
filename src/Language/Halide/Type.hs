@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveLift #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
@@ -19,19 +20,26 @@ module Language.Halide.Type
     CxxVector,
     CxxUserContext,
     CxxCallable,
+    Arguments (..),
     defineIsHalideTypeInstances,
     defineCastableInstances,
+    defineCurriedTypeFamily,
+    defineUnCurriedTypeFamily,
+    defineCurryInstances,
+    defineUnCurryInstances,
   )
 where
 
 import Data.Coerce
 import Data.Int
+import Data.Kind (Type)
 import Data.Primitive.Types (Prim)
 import Data.Word
 import Foreign.C.Types
 import Foreign.ForeignPtr
 import Foreign.Ptr
 import Foreign.Storable
+import GHC.TypeLits
 import qualified Language.C.Inline as C
 import qualified Language.C.Inline.Unsafe as CU
 import qualified Language.Haskell.TH as TH
@@ -171,3 +179,78 @@ defineCastableInstances =
           toType /= fromType
       ]
       <> [instanceCastable (toType, toHsType, toHsType) | (toType, toHsType, _) <- halideTypes]
+
+infixr 5 :::
+
+data Arguments (n :: Nat) (k :: [Type]) where
+  Nil :: Arguments 0 '[]
+  (:::) :: (KnownNat n, KnownNat (1 + n)) => !t -> !(Arguments n ts) -> Arguments (1 + n) (t ': ts)
+
+defineCurriedTypeFamily :: TH.DecsQ
+defineCurriedTypeFamily = do
+  familyEqns <- mapM defineEqn [0 .. 20]
+  pure [TH.ClosedTypeFamilyD familyHead familyEqns]
+  where
+    name = TH.mkName "Curried"
+    f = TH.mkName "f"
+    familyHead = TH.TypeFamilyHead name [TH.PlainTV f ()] (TH.KindSig TH.StarT) Nothing
+    defineEqn :: Int -> TH.TySynEqnQ
+    defineEqn n = do
+      let xs = TH.VarT <$> [TH.mkName ("x" <> show i) | i <- [1 .. n]]
+          r = TH.VarT . TH.mkName $ "r"
+          argc = pure . TH.LitT . TH.NumTyLit . fromIntegral $ n
+          types = foldr (\x g -> [t|$x ': $g|]) [t|'[]|] $ fmap pure xs
+          func = foldr (TH.AppT . TH.AppT TH.ArrowT) r xs
+      args <- [t|Arguments $argc $types -> $(pure r)|]
+      pure $ TH.TySynEqn Nothing (TH.AppT (TH.ConT name) args) func
+
+defineUnCurriedTypeFamily :: TH.DecsQ
+defineUnCurriedTypeFamily = do
+  familyEqns <- mapM defineEqn (enumFromThenTo 20 19 0)
+  pure [TH.ClosedTypeFamilyD familyHead familyEqns]
+  where
+    name = TH.mkName "UnCurried"
+    f = TH.mkName "f"
+    familyHead = TH.TypeFamilyHead name [TH.PlainTV f ()] (TH.KindSig TH.StarT) Nothing
+    defineEqn :: Int -> TH.TySynEqnQ
+    defineEqn n = do
+      let xs = TH.VarT <$> [TH.mkName ("x" <> show i) | i <- [1 .. n]]
+          r = TH.VarT . TH.mkName $ "r"
+          argc = pure . TH.LitT . TH.NumTyLit . fromIntegral $ n
+          types = foldr (\x g -> [t|$x ': $g|]) [t|'[]|] $ fmap pure xs
+          func = foldr (TH.AppT . TH.AppT TH.ArrowT) r xs
+      TH.TySynEqn Nothing (TH.AppT (TH.ConT name) func)
+        <$> [t|Arguments $argc $types -> $(pure r)|]
+
+defineCurryInstance :: Int -> TH.DecsQ
+defineCurryInstance n = do
+  let xs = [TH.mkName ("x" <> show i) | i <- [1 .. n]]
+      f = TH.mkName "f"
+      r = pure . TH.VarT . TH.mkName $ "r"
+      args = foldr (\x g -> [e|$x ::: $g|]) [e|Nil|] $ fmap (pure . TH.VarE) xs
+      patterns = fmap TH.VarP $ f : xs
+      types :: TH.TypeQ
+      types = foldr (\x g -> [t|$x ': $g|]) [t|'[]|] $ fmap (pure . TH.VarT) xs
+      argc = pure . TH.LitT . TH.NumTyLit . fromIntegral $ n
+  body <- TH.NormalB <$> [e|$(pure (TH.VarE f)) $args|]
+  funcType <- [t|Arguments $argc $types -> $r|]
+  let func = TH.FunD (TH.mkName "curry'") [TH.Clause patterns body []]
+  pure $ [TH.InstanceD Nothing [] (TH.AppT (TH.ConT (TH.mkName "Curry")) funcType) [func]]
+
+defineCurryInstances :: TH.DecsQ
+defineCurryInstances = concat <$> mapM defineCurryInstance [0 .. 20]
+
+defineUnCurryInstance :: Int -> TH.DecsQ
+defineUnCurryInstance n = do
+  let xs = [TH.mkName ("x" <> show i) | i <- [1 .. n]]
+      f = TH.mkName "f"
+      r = TH.AppT (TH.ConT ''IO) . TH.VarT . TH.mkName $ "r"
+      args = foldl TH.AppE (TH.VarE f) $ fmap TH.VarE xs
+      funcType = foldr (TH.AppT . TH.AppT TH.ArrowT) r $ fmap TH.VarT xs
+      body = TH.NormalB args
+  patterns <- foldr (\x g -> [p|$x ::: $g|]) [p|Nil|] $ fmap (pure . TH.VarP) xs
+  let func = TH.FunD (TH.mkName "uncurry'") [TH.Clause [TH.VarP f, patterns] body []]
+  pure $ [TH.InstanceD Nothing [] (TH.AppT (TH.ConT (TH.mkName "UnCurry")) funcType) [func]]
+
+defineUnCurryInstances :: TH.DecsQ
+defineUnCurryInstances = concat <$> mapM defineUnCurryInstance [0 .. 20]
