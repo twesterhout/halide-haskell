@@ -11,6 +11,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 module Language.Halide.Internal
@@ -25,6 +26,7 @@ module Language.Halide.Internal
     realize1D,
     setName,
     mkKernel,
+    evaluate,
   )
 where
 
@@ -32,6 +34,7 @@ import Control.Exception (bracket)
 import Control.Monad (forM_, (>=>))
 import Control.Monad.Primitive (touch)
 import Control.Monad.ST (RealWorld)
+import Data.Coerce
 import Data.Constraint
 import Data.IORef
 import Data.Int
@@ -39,15 +42,15 @@ import Data.Kind (Type)
 import Data.Primitive.PrimArray (MutablePrimArray)
 import qualified Data.Primitive.PrimArray as P
 import qualified Data.Primitive.Ptr as P
-import Data.Primitive.Types (Prim)
 import Data.Proxy
 import Data.Ratio (denominator, numerator)
 import Data.Text (Text)
+import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Vector.Storable (Vector)
 import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Storable.Mutable as SM
-import Foreign.C.Types (CUIntPtr (..))
+import Foreign.C.Types (CDouble, CFloat, CUIntPtr (..))
 import Foreign.ForeignPtr
 import Foreign.ForeignPtr.Unsafe
 import Foreign.Marshal (with)
@@ -59,6 +62,7 @@ import GHC.Stack (HasCallStack)
 import GHC.TypeNats
 import qualified Language.C.Inline as C
 import qualified Language.C.Inline.Cpp as C
+import qualified Language.C.Inline.Cpp.Exception as C
 import qualified Language.C.Inline.Unsafe as CU
 import Language.Halide.Buffer
 import Language.Halide.Type
@@ -85,6 +89,28 @@ C.context $
 C.include "<Halide.h>"
 C.include "<math.h>"
 C.include "<stdio.h>"
+
+C.verbatim
+  "\
+  \template <class Func>                               \n\
+  \auto handle_halide_exceptions(Func&& func) {        \n\
+  \  try {                                             \n\
+  \    return func();                                  \n\
+  \  } catch(Halide::RuntimeError& e) {                \n\
+  \    throw std::runtime_error{e.what()};             \n\
+  \  } catch(Halide::CompileError& e) {                \n\
+  \    throw std::runtime_error{e.what()};             \n\
+  \  } catch(Halide::InternalError& e) {               \n\
+  \    throw std::runtime_error{e.what()};             \n\
+  \  } catch(Halide::Error& e) {                       \n\
+  \    throw std::runtime_error{e.what()};             \n\
+  \  }                                                 \n\
+  \}                                                   \n\
+  \"
+
+defineIsHalideTypeInstances
+
+defineCastableInstances
 
 data Expr a
   = Expr (ForeignPtr CxxExpr)
@@ -177,7 +203,7 @@ unaryOp f a = unsafePerformIO $! withExpr a f >>= wrapCxxExpr
 binaryOp :: IsHalideType a => (Ptr CxxExpr -> Ptr CxxExpr -> IO (Ptr CxxExpr)) -> Expr a -> Expr a -> Expr a
 binaryOp f a b = unsafePerformIO $! withExpr2 a b $ \aPtr bPtr -> f aPtr bPtr >>= wrapCxxExpr
 
-instance (IsHalideType a, Num a) => Num (Expr a) where
+instance (IsHalideType a, Castable a a, Num a) => Num (Expr a) where
   fromInteger :: Integer -> Expr a
   fromInteger x = unsafePerformIO $! wrapCxxExpr =<< toCxxExpr (fromInteger x :: a)
   (+) :: Expr a -> Expr a -> Expr a
@@ -186,22 +212,27 @@ instance (IsHalideType a, Num a) => Num (Expr a) where
   (-) = binaryOp $ \a b -> [CU.exp| Halide::Expr* { new Halide::Expr{*$(Halide::Expr* a) - *$(Halide::Expr* b)} } |]
   (*) :: Expr a -> Expr a -> Expr a
   (*) = binaryOp $ \a b -> [CU.exp| Halide::Expr* { new Halide::Expr{*$(Halide::Expr* a) * *$(Halide::Expr* b)} } |]
+
+  -- In Halide, unlike in C, abs of a signed integer returns an unsigned integer of the same bit width.
+  -- So here, we insert an additional cast to force the resulting type to be the same as the input type.
   abs :: Expr a -> Expr a
-  abs = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::abs(*$(Halide::Expr* a))} } |]
+  abs =
+    cast @a
+      . unaryOp (\a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::abs(*$(Halide::Expr* a))} } |])
   negate :: Expr a -> Expr a
   negate = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{ -(*$(Halide::Expr* a))} } |]
   signum :: Expr a -> Expr a
   signum = error "Num instance of (Expr a) does not implement signum"
 
-instance (IsHalideType a, Fractional a) => Fractional (Expr a) where
+instance (IsHalideType a, Castable a a, Fractional a) => Fractional (Expr a) where
   (/) :: Expr a -> Expr a -> Expr a
   (/) = binaryOp $ \a b -> [CU.exp| Halide::Expr* { new Halide::Expr{*$(Halide::Expr* a) / *$(Halide::Expr* b)} } |]
   fromRational :: Rational -> Expr a
   fromRational r = fromInteger (numerator r) / fromInteger (denominator r)
 
-instance (Castable a Double, Floating a) => Floating (Expr a) where
+instance (Castable a CDouble, Castable a a, Floating a) => Floating (Expr a) where
   pi :: Expr a
-  pi = cast @a @Double . unsafePerformIO $! wrapCxxExpr =<< [CU.exp| Halide::Expr* { new Halide::Expr{M_PI} } |]
+  pi = cast @a @CDouble . unsafePerformIO $! wrapCxxExpr =<< [CU.exp| Halide::Expr* { new Halide::Expr{M_PI} } |]
   exp :: Expr a -> Expr a
   exp = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::exp(*$(Halide::Expr* a))} } |]
   log :: Expr a -> Expr a
@@ -241,6 +272,31 @@ cast x = unsafePerformIO $! withExpr x $ castImpl (Proxy @to) (Proxy @from) >=> 
 
 printed :: IsHalideType a => Expr a -> Expr a
 printed = unaryOp $ \e -> [CU.exp| Halide::Expr* { new Halide::Expr{print(*$(Halide::Expr* e))} } |]
+
+handleHalideExceptions :: HasCallStack => Either C.CppException a -> IO a
+handleHalideExceptions (Right x) = pure x
+handleHalideExceptions (Left (C.CppStdException _ msg _)) = error $ T.unpack (T.decodeUtf8 msg)
+handleHalideExceptions (Left err) = error $ "Halide error: " <> show err
+
+handleHalideExceptionsM :: HasCallStack => IO (Either C.CppException a) -> IO a
+handleHalideExceptionsM action = action >>= handleHalideExceptions
+
+evaluate :: forall a. (HasCallStack, IsHalideType a) => Expr a -> IO a
+evaluate expr =
+  withExpr expr $ \e -> do
+    out <- SM.new 1
+    handleHalideExceptionsM $
+      withHalideBuffer out $ \buffer ->
+        let b = castPtr (buffer :: Ptr (HalideBuffer 1 a))
+         in [C.tryBlock| void {
+              handle_halide_exceptions([=]() {
+                Halide::Func f;
+                Halide::Var i;
+                f(i) = *$(Halide::Expr* e);
+                f.realize(Halide::Pipeline::RealizationArg{$(halide_buffer_t* b)});
+              });
+            } |]
+    SM.read out 0
 
 data Func (n :: Nat) (a :: Type)
   = Func (ForeignPtr CxxFunc)
@@ -456,7 +512,7 @@ setArgvStorage (ArgvStorage argv scalarStorage) inputs outputs = do
 class ValidArgument (t :: Type) where
   fillSlot :: Ptr () -> Ptr () -> t -> IO ()
 
-instance (Prim t, IsHalideType t) => ValidArgument t where
+instance IsHalideType t => ValidArgument t where
   fillSlot :: Ptr () -> Ptr () -> t -> IO ()
   fillSlot argv scalarStorage x = do
     P.writeOffPtr (castPtr scalarStorage :: Ptr t) 0 x

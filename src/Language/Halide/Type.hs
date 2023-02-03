@@ -1,7 +1,9 @@
+{-# LANGUAGE DeriveLift #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Language.Halide.Type
   ( HalideTypeCode (..),
@@ -17,21 +19,23 @@ module Language.Halide.Type
     CxxVector,
     CxxUserContext,
     CxxCallable,
+    defineIsHalideTypeInstances,
+    defineCastableInstances,
   )
 where
 
--- import Control.Monad (when)
 import Data.Coerce
 import Data.Int
-import Data.Kind (Type)
-import Data.Proxy
+import Data.Primitive.Types (Prim)
 import Data.Word
 import Foreign.C.Types
+import Foreign.ForeignPtr
 import Foreign.Ptr
 import Foreign.Storable
 import qualified Language.C.Inline as C
-import qualified Language.C.Inline.Cpp as C
 import qualified Language.C.Inline.Unsafe as CU
+import qualified Language.Haskell.TH as TH
+import Language.Haskell.TH.Syntax (Lift)
 
 data CxxExpr
 
@@ -57,7 +61,7 @@ data HalideTypeCode
   | HalideTypeFloat
   | HalideTypeHandle
   | HalideTypeBfloat
-  deriving stock (Read, Show, Eq)
+  deriving stock (Read, Show, Eq, Lift)
 
 instance Enum HalideTypeCode where
   fromEnum :: HalideTypeCode -> Int
@@ -100,148 +104,70 @@ instance Storable HalideType where
     pokeByteOff p 1 bits
     pokeByteOff p 2 lanes
 
-C.context $
-  C.cppCtx
-    <> C.fptrCtx
-    <> C.bsCtx
-    <> C.cppTypePairs
-      [ ("Halide::Expr", [t|CxxExpr|]),
-        ("Halide::Param", [t|CxxParam|]),
-        ("halide_type_t", [t|HalideType|])
-      ]
-
-C.include "<Halide.h>"
-
-class IsHalideType a where
-  type CxxType a :: Type
+class (Prim a, Storable a) => IsHalideType a where
   halideTypeFor :: proxy a -> HalideType
   toCxxExpr :: a -> IO (Ptr CxxExpr)
-  toCxxParam :: a -> IO (Ptr (CxxParam (CxxType a)))
+
+optionallyCast :: String -> TH.TypeQ -> TH.ExpQ
+optionallyCast cType hsType' = do
+  hsType <- hsType'
+  hsTargetType <- C.getHaskellType False cType
+  if hsType == hsTargetType then [e|id|] else [e|coerce|]
+
+instanceIsHalideType :: (String, TH.TypeQ, HalideTypeCode) -> TH.DecsQ
+instanceIsHalideType (cType, hsType, typeCode) =
+  C.substitute
+    [("T", \x -> "$(" <> cType <> " " <> x <> ")")]
+    [d|
+      instance IsHalideType $hsType where
+        halideTypeFor _ = HalideType typeCode bits 1
+          where
+            bits = fromIntegral $ 8 * sizeOf (undefined :: $hsType)
+        toCxxExpr y = [CU.exp| Halide::Expr* { new Halide::Expr{@T(x)} } |]
+          where
+            x = $(optionallyCast cType hsType) y
+      |]
+
+defineIsHalideTypeInstances :: TH.DecsQ
+defineIsHalideTypeInstances = concat <$> mapM instanceIsHalideType halideTypes
 
 class (IsHalideType to, IsHalideType from) => Castable to from where
   castImpl :: proxy to -> proxy from -> Ptr CxxExpr -> IO (Ptr CxxExpr)
 
-instance IsHalideType CFloat where
-  type CxxType CFloat = CFloat
-  halideTypeFor :: proxy CFloat -> HalideType
-  halideTypeFor _ = HalideType HalideTypeFloat 32 1
-  toCxxExpr :: CFloat -> IO (Ptr CxxExpr)
-  toCxxExpr x = [CU.exp| Halide::Expr* { new Halide::Expr{$(float x)} } |]
-  toCxxParam :: CFloat -> IO (Ptr (CxxParam CFloat))
-  toCxxParam x = [CU.exp| Halide::Param<float>* { new Halide::Param<float>{$(float x)} } |]
+instanceCastable :: (String, TH.TypeQ, TH.TypeQ) -> TH.DecsQ
+instanceCastable (toType, toHsType, fromHsType) =
+  C.substitute
+    [("To", const toType)]
+    [d|
+      instance Castable $toHsType $fromHsType where
+        castImpl _ _ x =
+          [CU.exp| Halide::Expr* {
+            new Halide::Expr{Halide::cast<@To()>(*$(Halide::Expr* x))} } |]
+      |]
 
-instance IsHalideType Float where
-  type CxxType Float = CFloat
-  halideTypeFor :: proxy Float -> HalideType
-  halideTypeFor _ = halideTypeFor (Proxy :: Proxy CFloat)
-  toCxxExpr :: Float -> IO (Ptr CxxExpr)
-  toCxxExpr x = toCxxExpr (coerce x :: CFloat)
-  toCxxParam :: Float -> IO (Ptr (CxxParam CFloat))
-  toCxxParam x = toCxxParam (coerce x :: CFloat)
+halideTypes :: [(String, TH.TypeQ, HalideTypeCode)]
+halideTypes =
+  [ ("float", [t|Float|], HalideTypeFloat),
+    ("float", [t|CFloat|], HalideTypeFloat),
+    ("double", [t|Double|], HalideTypeFloat),
+    ("double", [t|CDouble|], HalideTypeFloat),
+    ("int8_t", [t|Int8|], HalideTypeInt),
+    ("int16_t", [t|Int16|], HalideTypeInt),
+    ("int32_t", [t|Int32|], HalideTypeInt),
+    ("int64_t", [t|Int64|], HalideTypeInt),
+    ("uint8_t", [t|Word8|], HalideTypeUInt),
+    ("uint16_t", [t|Word16|], HalideTypeUInt),
+    ("uint32_t", [t|Word32|], HalideTypeUInt),
+    ("uint64_t", [t|Word64|], HalideTypeUInt)
+  ]
 
-instance IsHalideType CDouble where
-  type CxxType CDouble = CDouble
-  halideTypeFor :: proxy CDouble -> HalideType
-  halideTypeFor _ = HalideType HalideTypeFloat 64 1
-  toCxxExpr :: CDouble -> IO (Ptr CxxExpr)
-  toCxxExpr x = [CU.exp| Halide::Expr* { new Halide::Expr{$(double x)} } |]
-  toCxxParam :: CDouble -> IO (Ptr (CxxParam CDouble))
-  toCxxParam x = [CU.exp| Halide::Param<double>* { new Halide::Param<double>{$(double x)} } |]
-
-instance IsHalideType Double where
-  type CxxType Double = CDouble
-  halideTypeFor :: proxy Double -> HalideType
-  halideTypeFor _ = halideTypeFor (Proxy :: Proxy CDouble)
-  toCxxExpr :: Double -> IO (Ptr CxxExpr)
-  toCxxExpr x = toCxxExpr (coerce x :: CDouble)
-  toCxxParam :: Double -> IO (Ptr (CxxParam CDouble))
-  toCxxParam x = toCxxParam (coerce x :: CDouble)
-
--- instance IsHalideType Bool where
---   type CxxType Bool = CBool
---   halideTypeFor :: proxy Bool -> HalideType
---   halideTypeFor _ = HalideType HalideTypeUInt 1 1
---   toCxxExpr :: Bool -> IO (Ptr CxxExpr)
---   toCxxExpr x = [CU.exp| Halide::Expr* { new Halide::Expr{$(bool c_x)} } |]
---     where
---       c_x = fromIntegral $ fromEnum x
-
-instance IsHalideType Word8 where
-  type CxxType Word8 = Word8
-  halideTypeFor :: proxy Word8 -> HalideType
-  halideTypeFor _ = HalideType HalideTypeUInt 8 1
-  toCxxExpr :: Word8 -> IO (Ptr CxxExpr)
-  toCxxExpr x = [CU.exp| Halide::Expr* { new Halide::Expr{$(uint8_t x)} } |]
-  toCxxParam :: Word8 -> IO (Ptr (CxxParam Word8))
-  toCxxParam x = [CU.exp| Halide::Param<uint8_t>* { new Halide::Param<uint8_t>{$(uint8_t x)} } |]
-
-instance IsHalideType Word16 where
-  type CxxType Word16 = Word16
-  halideTypeFor :: proxy Word16 -> HalideType
-  halideTypeFor _ = HalideType HalideTypeUInt 16 1
-  toCxxExpr :: Word16 -> IO (Ptr CxxExpr)
-  toCxxExpr x = [CU.exp| Halide::Expr* { new Halide::Expr{$(uint16_t x)} } |]
-  toCxxParam :: Word16 -> IO (Ptr (CxxParam Word16))
-  toCxxParam x = [CU.exp| Halide::Param<uint16_t>* { new Halide::Param<uint16_t>{$(uint16_t x)} } |]
-
-instance IsHalideType Word32 where
-  type CxxType Word32 = Word32
-  halideTypeFor :: proxy Word32 -> HalideType
-  halideTypeFor _ = HalideType HalideTypeUInt 32 1
-  toCxxExpr :: Word32 -> IO (Ptr CxxExpr)
-  toCxxExpr x = [CU.exp| Halide::Expr* { new Halide::Expr{$(uint32_t x)} } |]
-  toCxxParam :: Word32 -> IO (Ptr (CxxParam Word32))
-  toCxxParam x = [CU.exp| Halide::Param<uint32_t>* { new Halide::Param<uint32_t>{$(uint32_t x)} } |]
-
-instance IsHalideType Word64 where
-  type CxxType Word64 = Word64
-  halideTypeFor :: proxy Word64 -> HalideType
-  halideTypeFor _ = HalideType HalideTypeUInt 64 1
-  toCxxExpr :: Word64 -> IO (Ptr CxxExpr)
-  toCxxExpr x = [CU.exp| Halide::Expr* { new Halide::Expr{$(uint64_t x)} } |]
-  toCxxParam :: Word64 -> IO (Ptr (CxxParam Word64))
-  toCxxParam x = [CU.exp| Halide::Param<uint64_t>* { new Halide::Param<uint64_t>{$(uint64_t x)} } |]
-
-instance IsHalideType Int8 where
-  type CxxType Int8 = Int8
-  halideTypeFor :: proxy Int8 -> HalideType
-  halideTypeFor _ = HalideType HalideTypeInt 8 1
-  toCxxExpr :: Int8 -> IO (Ptr CxxExpr)
-  toCxxExpr x = [CU.exp| Halide::Expr* { new Halide::Expr{$(int8_t x)} } |]
-  toCxxParam :: Int8 -> IO (Ptr (CxxParam Int8))
-  toCxxParam x = [CU.exp| Halide::Param<int8_t>* { new Halide::Param<int8_t>{$(int8_t x)} } |]
-
-instance IsHalideType Int16 where
-  type CxxType Int16 = Int16
-  halideTypeFor :: proxy Int16 -> HalideType
-  halideTypeFor _ = HalideType HalideTypeInt 16 1
-  toCxxExpr :: Int16 -> IO (Ptr CxxExpr)
-  toCxxExpr x = [CU.exp| Halide::Expr* { new Halide::Expr{$(int16_t x)} } |]
-  toCxxParam :: Int16 -> IO (Ptr (CxxParam Int16))
-  toCxxParam x = [CU.exp| Halide::Param<int16_t>* { new Halide::Param<int16_t>{$(int16_t x)} } |]
-
-instance IsHalideType Int32 where
-  type CxxType Int32 = Int32
-  halideTypeFor :: proxy Int32 -> HalideType
-  halideTypeFor _ = HalideType HalideTypeInt 32 1
-  toCxxExpr :: Int32 -> IO (Ptr CxxExpr)
-  toCxxExpr x = [CU.exp| Halide::Expr* { new Halide::Expr{$(int32_t x)} } |]
-  toCxxParam :: Int32 -> IO (Ptr (CxxParam Int32))
-  toCxxParam x = [CU.exp| Halide::Param<int32_t>* { new Halide::Param<int32_t>{$(int32_t x)} } |]
-
-instance IsHalideType Int64 where
-  type CxxType Int64 = Int64
-  halideTypeFor :: proxy Int64 -> HalideType
-  halideTypeFor _ = HalideType HalideTypeInt 64 1
-  toCxxExpr :: Int64 -> IO (Ptr CxxExpr)
-  toCxxExpr x = [CU.exp| Halide::Expr* { new Halide::Expr{$(int64_t x)} } |]
-  toCxxParam :: Int64 -> IO (Ptr (CxxParam Int64))
-  toCxxParam x = [CU.exp| Halide::Param<int64_t>* { new Halide::Param<int64_t>{$(int64_t x)} } |]
-
-instance Castable Float Int32 where
-  castImpl :: proxy Float -> proxy Int32 -> Ptr CxxExpr -> IO (Ptr CxxExpr)
-  castImpl _ _ x = [CU.exp| Halide::Expr* { new Halide::Expr{Halide::cast<int32_t>(*$(Halide::Expr* x))} } |]
-
-instance Castable Double Int32 where
-  castImpl :: proxy Double -> proxy Int32 -> Ptr CxxExpr -> IO (Ptr CxxExpr)
-  castImpl _ _ x = [CU.exp| Halide::Expr* { new Halide::Expr{Halide::cast<int32_t>(*$(Halide::Expr* x))} } |]
+defineCastableInstances :: TH.DecsQ
+defineCastableInstances =
+  fmap concat
+    <$> sequence
+    $ [ instanceCastable (toType, toHsType, fromHsType)
+        | (toType, toHsType, _) <- halideTypes,
+          (fromType, fromHsType, _) <- halideTypes,
+          toType /= fromType
+      ]
+      <> [instanceCastable (toType, toHsType, toHsType) | (toType, toHsType, _) <- halideTypes]
