@@ -729,8 +729,12 @@ mkKernel buildFunc = do
       kernel :: kernel
       kernel args out = do
         setArgvStorage storage (contextPtr ::: args) (out ::: Nil)
-        [CU.exp| void { $(Halide::Callable* callablePtr)->call_argv_fast(
-              $(int argc), $(const void* const* argvPtr)) } |]
+        [CU.exp| void {
+          handle_halide_exceptions([=]() {
+            return $(Halide::Callable* callablePtr)->call_argv_fast(
+              $(int argc), $(const void* const* argvPtr));
+          })
+        } |]
         touch argv
         touch scalarStorage
         touch context
