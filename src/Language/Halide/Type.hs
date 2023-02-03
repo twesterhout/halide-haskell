@@ -10,7 +10,6 @@ module Language.Halide.Type
   ( HalideTypeCode (..),
     HalideType (..),
     IsHalideType (..),
-    Castable (..),
     CxxExpr,
     CxxFunc,
     CxxParam,
@@ -22,7 +21,7 @@ module Language.Halide.Type
     CxxCallable,
     Arguments (..),
     defineIsHalideTypeInstances,
-    defineCastableInstances,
+    -- defineCastableInstances,
     defineCurriedTypeFamily,
     defineUnCurriedTypeFamily,
     defineCurryInstances,
@@ -112,7 +111,7 @@ instance Storable HalideType where
     pokeByteOff p 1 bits
     pokeByteOff p 2 lanes
 
-class (Prim a, Storable a) => IsHalideType a where
+class Storable a => IsHalideType a where
   halideTypeFor :: proxy a -> HalideType
   toCxxExpr :: a -> IO (Ptr CxxExpr)
 
@@ -139,19 +138,19 @@ instanceIsHalideType (cType, hsType, typeCode) =
 defineIsHalideTypeInstances :: TH.DecsQ
 defineIsHalideTypeInstances = concat <$> mapM instanceIsHalideType halideTypes
 
-class (IsHalideType to, IsHalideType from) => Castable to from where
-  castImpl :: proxy to -> proxy from -> Ptr CxxExpr -> IO (Ptr CxxExpr)
-
-instanceCastable :: (String, TH.TypeQ, TH.TypeQ) -> TH.DecsQ
-instanceCastable (toType, toHsType, fromHsType) =
-  C.substitute
-    [("To", const toType)]
-    [d|
-      instance Castable $toHsType $fromHsType where
-        castImpl _ _ x =
-          [CU.exp| Halide::Expr* {
-            new Halide::Expr{Halide::cast<@To()>(*$(Halide::Expr* x))} } |]
-      |]
+-- class Castable to from where
+--   castImpl :: proxy to -> proxy from -> Ptr CxxExpr -> IO (Ptr CxxExpr)
+--
+-- instanceCastable :: (String, TH.TypeQ, TH.TypeQ) -> TH.DecsQ
+-- instanceCastable (toType, toHsType, fromHsType) =
+--   C.substitute
+--     [("To", const toType)]
+--     [d|
+--       instance Castable $toHsType $fromHsType where
+--         castImpl _ _ x =
+--           [CU.exp| Halide::Expr* {
+--             new Halide::Expr{Halide::cast<@To()>(*$(Halide::Expr* x))} } |]
+--       |]
 
 halideTypes :: [(String, TH.TypeQ, HalideTypeCode)]
 halideTypes =
@@ -169,16 +168,16 @@ halideTypes =
     ("uint64_t", [t|Word64|], HalideTypeUInt)
   ]
 
-defineCastableInstances :: TH.DecsQ
-defineCastableInstances =
-  fmap concat
-    <$> sequence
-    $ [ instanceCastable (toType, toHsType, fromHsType)
-        | (toType, toHsType, _) <- halideTypes,
-          (fromType, fromHsType, _) <- halideTypes,
-          toType /= fromType
-      ]
-      <> [instanceCastable (toType, toHsType, toHsType) | (toType, toHsType, _) <- halideTypes]
+-- defineCastableInstances :: TH.DecsQ
+-- defineCastableInstances =
+--   fmap concat
+--     <$> sequence
+--     $ [ instanceCastable (toType, toHsType, fromHsType)
+--         | (toType, toHsType, _) <- halideTypes,
+--           (fromType, fromHsType, _) <- halideTypes,
+--           toType /= fromType
+--       ]
+--       <> [instanceCastable (toType, toHsType, toHsType) | (toType, toHsType, _) <- halideTypes]
 
 infixr 5 :::
 

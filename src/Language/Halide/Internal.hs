@@ -16,6 +16,7 @@
 
 module Language.Halide.Internal
   ( Expr (..),
+    mkExpr,
     mkVar,
     cast,
     printed,
@@ -29,6 +30,8 @@ module Language.Halide.Internal
     evaluate,
     --
     Arguments (..),
+    equal,
+    bool,
   )
 where
 
@@ -111,9 +114,17 @@ C.verbatim
   \}                                                   \n\
   \"
 
+-- defineCastableInstances
 defineIsHalideTypeInstances
 
-defineCastableInstances
+-- instance Castable Bool Bool where
+--   castImpl _ _ p = [CU.exp| Halide::Expr* { new Halide::Expr{Halide::cast(Halide::UInt(1), *$(Halide::Expr* p))} } |]
+
+instance IsHalideType Bool where
+  halideTypeFor _ = HalideType HalideTypeUInt 1 1
+  toCxxExpr x = [CU.exp| Halide::Expr* { new Halide::Expr{cast(Halide::UInt(1), Halide::Expr{$(int b)})} } |]
+    where
+      b = fromIntegral (fromEnum x)
 
 defineCurriedTypeFamily
 
@@ -220,7 +231,10 @@ unaryOp f a = unsafePerformIO $! withExpr a f >>= wrapCxxExpr
 binaryOp :: IsHalideType a => (Ptr CxxExpr -> Ptr CxxExpr -> IO (Ptr CxxExpr)) -> Expr a -> Expr a -> Expr a
 binaryOp f a b = unsafePerformIO $! withExpr2 a b $ \aPtr bPtr -> f aPtr bPtr >>= wrapCxxExpr
 
-instance (IsHalideType a, Castable a a, Num a) => Num (Expr a) where
+mkExpr :: IsHalideType a => a -> Expr a
+mkExpr x = unsafePerformIO $! wrapCxxExpr =<< toCxxExpr x
+
+instance (IsHalideType a, Num a) => Num (Expr a) where
   fromInteger :: Integer -> Expr a
   fromInteger x = unsafePerformIO $! wrapCxxExpr =<< toCxxExpr (fromInteger x :: a)
   (+) :: Expr a -> Expr a -> Expr a
@@ -241,13 +255,13 @@ instance (IsHalideType a, Castable a a, Num a) => Num (Expr a) where
   signum :: Expr a -> Expr a
   signum = error "Num instance of (Expr a) does not implement signum"
 
-instance (IsHalideType a, Castable a a, Fractional a) => Fractional (Expr a) where
+instance (IsHalideType a, Fractional a) => Fractional (Expr a) where
   (/) :: Expr a -> Expr a -> Expr a
   (/) = binaryOp $ \a b -> [CU.exp| Halide::Expr* { new Halide::Expr{*$(Halide::Expr* a) / *$(Halide::Expr* b)} } |]
   fromRational :: Rational -> Expr a
   fromRational r = fromInteger (numerator r) / fromInteger (denominator r)
 
-instance (Castable a CDouble, Castable a a, Floating a) => Floating (Expr a) where
+instance (IsHalideType a, Floating a) => Floating (Expr a) where
   pi :: Expr a
   pi = cast @a @CDouble . unsafePerformIO $! wrapCxxExpr =<< [CU.exp| Halide::Expr* { new Halide::Expr{M_PI} } |]
   exp :: Expr a -> Expr a
@@ -284,11 +298,28 @@ instance (Castable a CDouble, Castable a a, Floating a) => Floating (Expr a) whe
   atanh :: Expr a -> Expr a
   atanh = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::atanh(*$(Halide::Expr* a))} } |]
 
-cast :: forall to from. Castable to from => Expr from -> Expr to
-cast x = unsafePerformIO $! withExpr x $ castImpl (Proxy @to) (Proxy @from) >=> wrapCxxExpr
+cast :: forall to from. (IsHalideType to, IsHalideType from) => Expr from -> Expr to
+cast expr = unsafePerformIO $!
+  withExpr expr $ \e ->
+    with (halideTypeFor (Proxy @to)) $ \t ->
+      wrapCxxExpr
+        =<< [CU.exp| Halide::Expr* { new Halide::Expr{
+              Halide::cast(Halide::Type{*$(halide_type_t* t)}, *$(Halide::Expr* e))} } |]
 
 printed :: IsHalideType a => Expr a -> Expr a
 printed = unaryOp $ \e -> [CU.exp| Halide::Expr* { new Halide::Expr{print(*$(Halide::Expr* e))} } |]
+
+equal :: IsHalideType a => Expr a -> Expr a -> Expr Bool
+equal a' b' = unsafePerformIO $!
+  withExpr2 a' b' $ \a b ->
+    wrapCxxExpr =<< [CU.exp| Halide::Expr* { new Halide::Expr{(*$(Halide::Expr* a)) == (*$(Halide::Expr* b))} } |]
+
+bool :: IsHalideType a => Expr Bool -> Expr a -> Expr a -> Expr a
+bool condExpr trueExpr falseExpr = unsafePerformIO $!
+  withExpr condExpr $ \p ->
+    withExpr2 trueExpr falseExpr $ \t f ->
+      wrapCxxExpr
+        =<< [CU.exp| Halide::Expr* { new Halide::Expr{Halide::select(*$(Halide::Expr* p), *$(Halide::Expr* t), *$(Halide::Expr* f))} } |]
 
 handleHalideExceptions :: HasCallStack => Either C.CppException a -> IO a
 handleHalideExceptions (Right x) = pure x
@@ -302,17 +333,17 @@ evaluate :: forall a. (HasCallStack, IsHalideType a) => Expr a -> IO a
 evaluate expr =
   withExpr expr $ \e -> do
     out <- SM.new 1
-    handleHalideExceptionsM $
-      withHalideBuffer out $ \buffer ->
-        let b = castPtr (buffer :: Ptr (HalideBuffer 1 a))
-         in [C.tryBlock| void {
-              handle_halide_exceptions([=]() {
-                Halide::Func f;
-                Halide::Var i;
-                f(i) = *$(Halide::Expr* e);
-                f.realize(Halide::Pipeline::RealizationArg{$(halide_buffer_t* b)});
-              });
-            } |]
+    -- handleHalideExceptionsM $
+    withHalideBuffer out $ \buffer ->
+      let b = castPtr (buffer :: Ptr (HalideBuffer 1 a))
+       in [CU.block| void {
+            handle_halide_exceptions([=]() {
+              Halide::Func f;
+              Halide::Var i;
+              f(i) = *$(Halide::Expr* e);
+              f.realize(Halide::Pipeline::RealizationArg{$(halide_buffer_t* b)});
+            });
+          } |]
     SM.read out 0
 
 data Func (n :: Nat) (a :: Type)
@@ -509,7 +540,6 @@ setArgvStorage (ArgvStorage argv scalarStorage) inputs outputs = do
       go :: All ValidArgument ts' => Int -> Arguments n' ts' -> IO Int
       go i Nil = pure i
       go i ((x :: t) ::: xs) = do
-        putStrLn $ "Filling slot " <> show i
         fillSlot
           (castPtr $ argvPtr `P.advancePtr` i)
           (castPtr $ scalarStoragePtr `P.advancePtr` i)
@@ -526,21 +556,19 @@ class ValidArgument (t :: Type) where
 instance IsHalideType t => ValidArgument t where
   fillSlot :: Ptr () -> Ptr () -> t -> IO ()
   fillSlot argv scalarStorage x = do
-    P.writeOffPtr (castPtr scalarStorage :: Ptr t) 0 x
-    print =<< P.readOffPtr (castPtr scalarStorage :: Ptr Float) 0
-    P.writeOffPtr (castPtr argv :: Ptr (Ptr ())) 0 scalarStorage
+    poke (castPtr scalarStorage :: Ptr t) x
+    poke (castPtr argv :: Ptr (Ptr ())) scalarStorage
 
 instance {-# OVERLAPPING #-} ValidArgument (Ptr CxxUserContext) where
   fillSlot :: Ptr () -> Ptr () -> Ptr CxxUserContext -> IO ()
   fillSlot argv scalarStorage x = do
-    P.writeOffPtr (castPtr scalarStorage :: Ptr (Ptr CxxUserContext)) 0 x
-    print =<< P.readOffPtr (castPtr scalarStorage :: Ptr CUIntPtr) 0
-    P.writeOffPtr (castPtr argv :: Ptr (Ptr ())) 0 scalarStorage
+    poke (castPtr scalarStorage :: Ptr (Ptr CxxUserContext)) x
+    poke (castPtr argv :: Ptr (Ptr ())) scalarStorage
 
 instance {-# OVERLAPPING #-} ValidArgument (Ptr (HalideBuffer n a)) where
   fillSlot :: Ptr () -> Ptr () -> Ptr (HalideBuffer n a) -> IO ()
   fillSlot argv _ x = do
-    P.writeOffPtr (castPtr argv :: Ptr (Ptr (HalideBuffer n a))) 0 x
+    poke (castPtr argv :: Ptr (Ptr (HalideBuffer n a))) x
 
 class ValidParameter (t :: Type) where
   appendToArgList :: Ptr (CxxVector CxxArgument) -> t -> IO ()
