@@ -2,6 +2,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -20,6 +21,13 @@ module Language.Halide.Type
     CxxUserContext,
     CxxCallable,
     Arguments (..),
+    Length (..),
+    Append (..),
+    argumentsAppend,
+    FunctionArguments (..),
+    FunctionReturn (..),
+    UnCurry' (..),
+    Curry' (..),
     defineIsHalideTypeInstances,
     -- defineCastableInstances,
     defineCurriedTypeFamily,
@@ -181,9 +189,50 @@ halideTypes =
 
 infixr 5 :::
 
-data Arguments (n :: Nat) (k :: [Type]) where
-  Nil :: Arguments 0 '[]
-  (:::) :: (KnownNat n, KnownNat (1 + n)) => !t -> !(Arguments n ts) -> Arguments (1 + n) (t ': ts)
+data Arguments (k :: [Type]) where
+  Nil :: Arguments '[]
+  (:::) :: !t -> !(Arguments ts) -> Arguments (t ': ts)
+
+type family Length (xs :: [k]) :: Nat where
+  Length '[] = 0
+  Length (x ': xs) = 1 + Length xs
+
+type family Append (xs :: [k]) (y :: k) :: [k] where
+  Append '[] y = '[y]
+  Append (x ': xs) y = x ': Append xs y
+
+argumentsAppend :: Arguments xs -> t -> Arguments (Append xs t)
+argumentsAppend = go
+  where
+    go :: forall xs t. Arguments xs -> t -> Arguments (Append xs t)
+    go Nil y = y ::: Nil
+    go (x ::: xs) y = x ::: go xs y
+
+type family FunctionArguments (f :: Type) :: [Type] where
+  FunctionArguments (a -> b) = a ': FunctionArguments b
+  FunctionArguments a = '[]
+
+type family FunctionReturn (f :: Type) :: Type where
+  FunctionReturn (a -> b) = FunctionReturn b
+  FunctionReturn a = a
+
+class UnCurry' (f :: Type) (args :: [Type]) (r :: Type) | args r -> f where
+  uncurry'' :: f -> Arguments args -> r
+
+instance (FunctionArguments f ~ '[], FunctionReturn f ~ r, f ~ r) => UnCurry' f '[] r where
+  uncurry'' f Nil = f
+
+instance (UnCurry' f args r) => UnCurry' (a -> f) (a ': args) r where
+  uncurry'' f (a ::: args) = uncurry'' (f a) args
+
+class Curry' (args :: [Type]) (r :: Type) (f :: Type) | args r -> f where
+  curry'' :: (Arguments args -> r) -> f
+
+instance Curry' '[] r r where
+  curry'' f = f Nil
+
+instance Curry' args r f => Curry' (a ': args) r (a -> f) where
+  curry'' f a = curry'' (\args -> f (a ::: args))
 
 defineCurriedTypeFamily :: TH.DecsQ
 defineCurriedTypeFamily = do
@@ -197,10 +246,10 @@ defineCurriedTypeFamily = do
     defineEqn n = do
       let xs = TH.VarT <$> [TH.mkName ("x" <> show i) | i <- [1 .. n]]
           r = TH.VarT . TH.mkName $ "r"
-          argc = pure . TH.LitT . TH.NumTyLit . fromIntegral $ n
+          -- argc = pure . TH.LitT . TH.NumTyLit . fromIntegral $ n
           types = foldr (\x g -> [t|$x ': $g|]) [t|'[]|] $ fmap pure xs
           func = foldr (TH.AppT . TH.AppT TH.ArrowT) r xs
-      args <- [t|Arguments $argc $types -> $(pure r)|]
+      args <- [t|Arguments $types -> $(pure r)|]
       pure $ TH.TySynEqn Nothing (TH.AppT (TH.ConT name) args) func
 
 defineUnCurriedTypeFamily :: TH.DecsQ
@@ -215,11 +264,11 @@ defineUnCurriedTypeFamily = do
     defineEqn n = do
       let xs = TH.VarT <$> [TH.mkName ("x" <> show i) | i <- [1 .. n]]
           r = TH.VarT . TH.mkName $ "r"
-          argc = pure . TH.LitT . TH.NumTyLit . fromIntegral $ n
+          -- argc = pure . TH.LitT . TH.NumTyLit . fromIntegral $ n
           types = foldr (\x g -> [t|$x ': $g|]) [t|'[]|] $ fmap pure xs
           func = foldr (TH.AppT . TH.AppT TH.ArrowT) r xs
       TH.TySynEqn Nothing (TH.AppT (TH.ConT name) func)
-        <$> [t|Arguments $argc $types -> $(pure r)|]
+        <$> [t|Arguments $types -> $(pure r)|]
 
 defineCurryInstance :: Int -> TH.DecsQ
 defineCurryInstance n = do
@@ -230,9 +279,9 @@ defineCurryInstance n = do
       patterns = fmap TH.VarP $ f : xs
       types :: TH.TypeQ
       types = foldr (\x g -> [t|$x ': $g|]) [t|'[]|] $ fmap (pure . TH.VarT) xs
-      argc = pure . TH.LitT . TH.NumTyLit . fromIntegral $ n
+  -- argc = pure . TH.LitT . TH.NumTyLit . fromIntegral $ n
   body <- TH.NormalB <$> [e|$(pure (TH.VarE f)) $args|]
-  funcType <- [t|Arguments $argc $types -> $r|]
+  funcType <- [t|Arguments $types -> $r|]
   let func = TH.FunD (TH.mkName "curry'") [TH.Clause patterns body []]
   pure $ [TH.InstanceD Nothing [] (TH.AppT (TH.ConT (TH.mkName "Curry")) funcType) [func]]
 

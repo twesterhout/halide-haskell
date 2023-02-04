@@ -126,19 +126,19 @@ instance IsHalideType Bool where
     where
       b = fromIntegral (fromEnum x)
 
-defineCurriedTypeFamily
+-- defineCurriedTypeFamily
 
-class Curry f where
-  curry' :: f -> Curried f
+-- class Curry f where
+--   curry' :: f -> Curried f
 
-defineCurryInstances
+-- defineCurryInstances
 
-defineUnCurriedTypeFamily
+-- defineUnCurriedTypeFamily
 
-class UnCurry f where
-  uncurry' :: f -> UnCurried f
+-- class UnCurry f where
+--   uncurry' :: f -> UnCurried f
 
-defineUnCurryInstances
+-- defineUnCurryInstances
 
 data Expr a
   = Expr (ForeignPtr CxxExpr)
@@ -531,13 +531,13 @@ newArgvStorage n = ArgvStorage <$> P.newPinnedPrimArray n <*> P.newPinnedPrimArr
 setArgvStorage ::
   (All ValidArgument inputs, All ValidArgument outputs) =>
   ArgvStorage RealWorld ->
-  Arguments n inputs ->
-  Arguments m outputs ->
+  Arguments inputs ->
+  Arguments outputs ->
   IO ()
 setArgvStorage (ArgvStorage argv scalarStorage) inputs outputs = do
   let argvPtr = P.mutablePrimArrayContents argv
       scalarStoragePtr = P.mutablePrimArrayContents scalarStorage
-      go :: All ValidArgument ts' => Int -> Arguments n' ts' -> IO Int
+      go :: All ValidArgument ts' => Int -> Arguments ts' -> IO Int
       go i Nil = pure i
       go i ((x :: t) ::: xs) = do
         fillSlot
@@ -596,32 +596,28 @@ instance (KnownNat n, IsHalideType a) => ValidParameter (Func n a) where
   prepareParameter :: IO (Func n a)
   prepareParameter = BufferParam <$> newIORef Nothing
 
-type family Length (ts :: [Type]) :: Nat where
-  Length '[] = 0
-  Length (t ': ts) = 1 + Length ts
-
 class PrepareParameters ts where
-  prepareParameters :: IO (Arguments (Length ts) ts)
+  prepareParameters :: IO (Arguments ts)
 
 instance PrepareParameters '[] where
-  prepareParameters :: IO (Arguments 0 '[])
+  prepareParameters :: IO (Arguments '[])
   prepareParameters = pure Nil
 
-instance (ValidParameter t, PrepareParameters ts, KnownNat (Length ts), KnownNat (1 + Length ts)) => PrepareParameters (t ': ts) where
-  prepareParameters :: IO (Arguments (1 + Length ts) (t : ts))
+instance (ValidParameter t, PrepareParameters ts) => PrepareParameters (t ': ts) where
+  prepareParameters :: IO (Arguments (t : ts))
   prepareParameters = do
     t <- prepareParameter @t
     ts <- prepareParameters @ts
     pure $ t ::: ts
 
 prepareCxxArguments ::
-  forall k ts b.
-  (KnownNat k, All ValidParameter ts) =>
-  Arguments k ts ->
+  forall ts b.
+  (All ValidParameter ts, KnownNat (Length ts)) =>
+  Arguments ts ->
   (Ptr (CxxVector CxxArgument) -> IO b) ->
   IO b
 prepareCxxArguments args action = do
-  let count = fromIntegral (natVal (Proxy @k))
+  let count = fromIntegral (natVal (Proxy @(Length ts)))
       allocate =
         [CU.block| std::vector<Halide::Argument>* {
         auto p = new std::vector<Halide::Argument>{};
@@ -630,7 +626,7 @@ prepareCxxArguments args action = do
       } |]
       destroy p = [CU.exp| void { delete $(std::vector<Halide::Argument>* p) } |]
   bracket allocate destroy $ \v -> do
-    let go :: All ValidParameter ts' => Arguments k' ts' -> IO ()
+    let go :: All ValidParameter ts' => Arguments ts' -> IO ()
         go Nil = pure ()
         go (x ::: xs) = appendToArgList v x >> go xs
     go args
@@ -688,8 +684,9 @@ type family Lowered (t :: [Type]) :: [Type] where
 
 mkKernel ::
   forall f kernel k ts n a.
-  ( UnCurry f,
-    UnCurried f ~ (Arguments k ts -> IO (Func n a)),
+  ( FunctionArguments f ~ ts,
+    FunctionReturn f ~ IO (Func n a),
+    UnCurry' f ts (IO (Func n a)),
     KnownNat n,
     IsHalideType a,
     k ~ Length ts,
@@ -697,15 +694,16 @@ mkKernel ::
     KnownNat (1 + k),
     PrepareParameters ts,
     All ValidParameter ts,
-    Curry kernel,
-    kernel ~ (Arguments k (Lowered ts) -> Ptr (HalideBuffer n a) -> IO ()),
+    Curry' (Lowered ts) (Ptr (HalideBuffer n a) -> IO ()) kernel,
+    -- Curry kernel,
+    -- kernel ~ (Arguments (Lowered ts) -> Ptr (HalideBuffer n a) -> IO ()),
     All ValidArgument (Lowered ts)
   ) =>
   f ->
-  IO (Curried kernel)
+  IO kernel
 mkKernel buildFunc = do
   parameters <- prepareParameters @ts
-  func <- uncurry' buildFunc parameters
+  func <- uncurry'' @f @ts @(IO (Func n a)) buildFunc parameters
   callable <-
     prepareCxxArguments parameters $ \v ->
       withFunc func $ \f -> do
@@ -726,7 +724,7 @@ mkKernel buildFunc = do
   let argvPtr = P.mutablePrimArrayContents argv
       contextPtr = unsafeForeignPtrToPtr context
       callablePtr = unsafeForeignPtrToPtr callable
-      kernel :: kernel
+      kernel :: Arguments (Lowered ts) -> Ptr (HalideBuffer n a) -> IO ()
       kernel args out = do
         setArgvStorage storage (contextPtr ::: args) (out ::: Nil)
         [CU.exp| void {
@@ -739,4 +737,4 @@ mkKernel buildFunc = do
         touch scalarStorage
         touch context
         touch callable
-  pure (curry' kernel)
+  pure (curry'' kernel)
