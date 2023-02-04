@@ -27,6 +27,7 @@ module Language.Halide.Internal
     realize1D,
     setName,
     mkKernel,
+    mkKernel',
     evaluate,
     --
     Arguments (..),
@@ -682,41 +683,31 @@ type family Lowered (t :: [Type]) :: [Type] where
 -- instance UnCurry (x1 -> x2 -> x3 -> x4 -> x5 -> IO b) where
 --   uncurry' f (x1 ::: x2 ::: x3 ::: x4 ::: x5 ::: Nil) = f x1 x2 x3 x4 x5
 
-mkKernel ::
-  forall f kernel k ts n a.
-  ( FunctionArguments f ~ ts,
-    FunctionReturn f ~ IO (Func n a),
-    UnCurry' f ts (IO (Func n a)),
-    KnownNat n,
+mkKernel' ::
+  forall ts n a k.
+  ( KnownNat n,
     IsHalideType a,
-    k ~ Length ts,
+    Length ts ~ k,
     KnownNat k,
     KnownNat (1 + k),
     PrepareParameters ts,
     All ValidParameter ts,
-    Curry' (Lowered ts) (Ptr (HalideBuffer n a) -> IO ()) kernel,
-    -- Curry kernel,
-    -- kernel ~ (Arguments (Lowered ts) -> Ptr (HalideBuffer n a) -> IO ()),
     All ValidArgument (Lowered ts)
   ) =>
-  f ->
-  IO kernel
-mkKernel buildFunc = do
+  (Arguments ts -> IO (Func n a)) ->
+  IO (Arguments (Lowered ts) -> Ptr (HalideBuffer n a) -> IO ())
+mkKernel' buildFunc = do
   parameters <- prepareParameters @ts
-  func <- uncurry'' @f @ts @(IO (Func n a)) buildFunc parameters
+  func <- buildFunc parameters
   callable <-
     prepareCxxArguments parameters $ \v ->
       withFunc func $ \f -> do
         wrapCxxCallable
-          =<< [CU.block| Halide::Callable* {
-                try {
-                  Halide::Callable c = $(Halide::Func* f)->compile_to_callable(
-                    *$(const std::vector<Halide::Argument>* v));
-                  return new Halide::Callable{std::move(c)};
-                } catch (Halide::CompileError& e) {
-                  fprintf(stderr, "error: %s\n", e.what());
-                  throw e;
-                }
+          =<< [CU.exp| Halide::Callable* {
+                handle_halide_exceptions([=]() {
+                  return new Halide::Callable{$(Halide::Func* f)->compile_to_callable(
+                    *$(const std::vector<Halide::Argument>* v))};
+                })
               } |]
   context <- newEmptyCxxUserContext
   let argc = 1 + fromIntegral (natVal (Proxy @k)) + 1
@@ -724,7 +715,6 @@ mkKernel buildFunc = do
   let argvPtr = P.mutablePrimArrayContents argv
       contextPtr = unsafeForeignPtrToPtr context
       callablePtr = unsafeForeignPtrToPtr callable
-      kernel :: Arguments (Lowered ts) -> Ptr (HalideBuffer n a) -> IO ()
       kernel args out = do
         setArgvStorage storage (contextPtr ::: args) (out ::: Nil)
         [CU.exp| void {
@@ -737,4 +727,26 @@ mkKernel buildFunc = do
         touch scalarStorage
         touch context
         touch callable
+  pure kernel
+
+mkKernel ::
+  forall f kernel k ts n a r.
+  ( FunctionArguments f ~ ts,
+    FunctionReturn f ~ r,
+    UnCurry' f ts r,
+    r ~ IO (Func n a),
+    KnownNat n,
+    IsHalideType a,
+    Length ts ~ k,
+    KnownNat k,
+    KnownNat (1 + k),
+    PrepareParameters ts,
+    All ValidParameter ts,
+    All ValidArgument (Lowered ts),
+    Curry' (Lowered ts) (Ptr (HalideBuffer n a) -> IO ()) kernel
+  ) =>
+  f ->
+  IO kernel
+mkKernel buildFunc = do
+  kernel <- mkKernel' (uncurry'' @f @ts @(IO (Func n a)) buildFunc)
   pure (curry'' kernel)
