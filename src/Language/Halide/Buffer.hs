@@ -17,7 +17,6 @@ where
 import Control.Monad (unless)
 import Control.Monad.ST (RealWorld)
 import Data.Bits
-import Data.Coerce
 import Data.Int
 import Data.Kind (Type)
 import Data.Proxy
@@ -116,7 +115,7 @@ instance Storable RawHalideBuffer where
 
 bufferFromPtrShapeStrides ::
   forall n a b.
-  (KnownNat n, IsHalideType a, Coercible (HalideBuffer n a) RawHalideBuffer) =>
+  (KnownNat n, IsHalideType a) =>
   Ptr a ->
   [Int] ->
   [Int] ->
@@ -159,12 +158,12 @@ class (KnownNat n, IsHalideType a) => IsHalideBuffer t n a | t -> n, t -> a wher
 -- withRawHalideBuffer :: forall n a t b. IsHalideBuffer t n a => t -> (Ptr RawHalideBuffer -> IO b) -> IO b
 -- withRawHalideBuffer x f = withHalideBuffer x $ \(HalideBuffer raw) -> with raw f
 
-instance (IsHalideType a, Storable a) => IsHalideBuffer (S.Vector a) 1 a where
+instance IsHalideType a => IsHalideBuffer (S.Vector a) 1 a where
   withHalideBuffer v f =
     S.unsafeWith v $ \dataPtr ->
       bufferFromPtrShape dataPtr [S.length v] f
 
-instance (IsHalideType a, Storable a) => IsHalideBuffer (S.MVector RealWorld a) 1 a where
+instance IsHalideType a => IsHalideBuffer (S.MVector RealWorld a) 1 a where
   withHalideBuffer v f =
     SM.unsafeWith v $ \dataPtr ->
       bufferFromPtrShape dataPtr [SM.length v] f

@@ -37,10 +37,9 @@ module Language.Halide.Internal
 where
 
 import Control.Exception (bracket)
-import Control.Monad (forM_, (>=>))
+import Control.Monad (forM_)
 import Control.Monad.Primitive (touch)
 import Control.Monad.ST (RealWorld)
-import Data.Coerce
 import Data.Constraint
 import Data.IORef
 import Data.Int
@@ -56,7 +55,7 @@ import qualified Data.Text.Encoding as T
 import Data.Vector.Storable (Vector)
 import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Storable.Mutable as SM
-import Foreign.C.Types (CDouble, CFloat, CUIntPtr (..))
+import Foreign.C.Types (CDouble, CUIntPtr (..))
 import Foreign.ForeignPtr
 import Foreign.ForeignPtr.Unsafe
 import Foreign.Marshal (with)
@@ -73,7 +72,6 @@ import qualified Language.C.Inline.Cpp.Exception as CU
 import qualified Language.C.Inline.Unsafe as CU
 import Language.Halide.Buffer
 import Language.Halide.Type
-import Language.Haskell.TH (runQ)
 import System.IO.Unsafe (unsafePerformIO)
 
 C.context $
@@ -735,7 +733,7 @@ mkKernel ::
   forall f kernel k ts n a r.
   ( FunctionArguments f ~ ts,
     FunctionReturn f ~ r,
-    UnCurry' f ts r,
+    UnCurry f ts r,
     r ~ IO (Func n a),
     KnownNat n,
     IsHalideType a,
@@ -745,10 +743,10 @@ mkKernel ::
     PrepareParameters ts,
     All ValidParameter ts,
     All ValidArgument (Lowered ts),
-    Curry' (Lowered ts) (Ptr (HalideBuffer n a) -> IO ()) kernel
+    Curry (Lowered ts) (Ptr (HalideBuffer n a) -> IO ()) kernel
   ) =>
   f ->
   IO kernel
 mkKernel buildFunc = do
-  kernel <- mkKernel' (uncurry'' @f @ts @(IO (Func n a)) buildFunc)
-  pure (curry'' kernel)
+  kernel <- mkKernel' (uncurryG @f @ts @r buildFunc)
+  pure (curryG kernel)

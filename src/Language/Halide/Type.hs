@@ -6,6 +6,7 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# OPTIONS_GHC -Wno-unused-local-binds #-}
 
 module Language.Halide.Type
   ( HalideTypeCode (..),
@@ -21,29 +22,27 @@ module Language.Halide.Type
     CxxUserContext,
     CxxCallable,
     Arguments (..),
-    Length (..),
-    Append (..),
+    Length,
+    Append,
     argumentsAppend,
-    FunctionArguments (..),
-    FunctionReturn (..),
-    UnCurry' (..),
-    Curry' (..),
+    FunctionArguments,
+    FunctionReturn,
+    UnCurry (..),
+    Curry (..),
     defineIsHalideTypeInstances,
     -- defineCastableInstances,
-    defineCurriedTypeFamily,
-    defineUnCurriedTypeFamily,
-    defineCurryInstances,
-    defineUnCurryInstances,
+    -- defineCurriedTypeFamily,
+    -- defineUnCurriedTypeFamily,
+    -- defineCurryInstances,
+    -- defineUnCurryInstances,
   )
 where
 
 import Data.Coerce
 import Data.Int
 import Data.Kind (Type)
-import Data.Primitive.Types (Prim)
 import Data.Word
 import Foreign.C.Types
-import Foreign.ForeignPtr
 import Foreign.Ptr
 import Foreign.Storable
 import GHC.TypeLits
@@ -216,24 +215,28 @@ type family FunctionReturn (f :: Type) :: Type where
   FunctionReturn (a -> b) = FunctionReturn b
   FunctionReturn a = a
 
-class UnCurry' (f :: Type) (args :: [Type]) (r :: Type) | args r -> f where
-  uncurry'' :: f -> Arguments args -> r
+class UnCurry (f :: Type) (args :: [Type]) (r :: Type) | args r -> f where
+  uncurryG :: f -> Arguments args -> r
 
-instance (FunctionArguments f ~ '[], FunctionReturn f ~ r, f ~ r) => UnCurry' f '[] r where
-  uncurry'' f Nil = f
+instance (FunctionArguments f ~ '[], FunctionReturn f ~ r, f ~ r) => UnCurry f '[] r where
+  uncurryG f Nil = f
+  {-# INLINE uncurryG #-}
 
-instance (UnCurry' f args r) => UnCurry' (a -> f) (a ': args) r where
-  uncurry'' f (a ::: args) = uncurry'' (f a) args
+instance (UnCurry f args r) => UnCurry (a -> f) (a ': args) r where
+  uncurryG f (a ::: args) = uncurryG (f a) args
+  {-# INLINE uncurryG #-}
 
-class Curry' (args :: [Type]) (r :: Type) (f :: Type) | args r -> f where
-  curry'' :: (Arguments args -> r) -> f
+class Curry (args :: [Type]) (r :: Type) (f :: Type) | args r -> f where
+  curryG :: (Arguments args -> r) -> f
 
-instance Curry' '[] r r where
-  curry'' f = f Nil
+instance Curry '[] r r where
+  curryG f = f Nil
+  {-# INLINE curryG #-}
 
-instance Curry' args r f => Curry' (a ': args) r (a -> f) where
-  curry'' f a = curry'' (\args -> f (a ::: args))
+instance Curry args r f => Curry (a ': args) r (a -> f) where
+  curryG f a = curryG (\args -> f (a ::: args))
 
+{-
 defineCurriedTypeFamily :: TH.DecsQ
 defineCurriedTypeFamily = do
   familyEqns <- mapM defineEqn [0 .. 20]
@@ -251,7 +254,9 @@ defineCurriedTypeFamily = do
           func = foldr (TH.AppT . TH.AppT TH.ArrowT) r xs
       args <- [t|Arguments $types -> $(pure r)|]
       pure $ TH.TySynEqn Nothing (TH.AppT (TH.ConT name) args) func
+-}
 
+{-
 defineUnCurriedTypeFamily :: TH.DecsQ
 defineUnCurriedTypeFamily = do
   familyEqns <- mapM defineEqn (enumFromThenTo 20 19 0)
@@ -269,7 +274,9 @@ defineUnCurriedTypeFamily = do
           func = foldr (TH.AppT . TH.AppT TH.ArrowT) r xs
       TH.TySynEqn Nothing (TH.AppT (TH.ConT name) func)
         <$> [t|Arguments $types -> $(pure r)|]
+-}
 
+{-
 defineCurryInstance :: Int -> TH.DecsQ
 defineCurryInstance n = do
   let xs = [TH.mkName ("x" <> show i) | i <- [1 .. n]]
@@ -287,7 +294,9 @@ defineCurryInstance n = do
 
 defineCurryInstances :: TH.DecsQ
 defineCurryInstances = concat <$> mapM defineCurryInstance [0 .. 20]
+-}
 
+{-
 defineUnCurryInstance :: Int -> TH.DecsQ
 defineUnCurryInstance n = do
   let xs = [TH.mkName ("x" <> show i) | i <- [1 .. n]]
@@ -302,3 +311,4 @@ defineUnCurryInstance n = do
 
 defineUnCurryInstances :: TH.DecsQ
 defineUnCurryInstances = concat <$> mapM defineUnCurryInstance [0 .. 20]
+-}

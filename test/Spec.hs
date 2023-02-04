@@ -3,14 +3,11 @@
 
 module Main (main) where
 
-import Control.Concurrent
-import Control.Exception (SomeException, catch)
 import Control.Monad.ST (RealWorld)
 import Data.Int
 import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Storable.Mutable as SM
 import Data.Word
-import Foreign (Storable)
 import Language.Halide.Buffer
 import Language.Halide.Internal
 import Language.Halide.Type
@@ -24,9 +21,9 @@ data Matrix v a = Matrix
     matrixCols :: !Int,
     matrixData :: !(v a)
   }
-  deriving (Show, Eq)
+  deriving stock (Show, Eq)
 
-instance (IsHalideType a, Storable a) => IsHalideBuffer (Matrix (SM.MVector RealWorld) a) 2 a where
+instance IsHalideType a => IsHalideBuffer (Matrix (SM.MVector RealWorld) a) 2 a where
   withHalideBuffer (Matrix n m v) f =
     SM.unsafeWith v $ \dataPtr ->
       bufferFromPtrShapeStrides dataPtr [n, m] [1, n] f
