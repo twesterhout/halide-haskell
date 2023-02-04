@@ -69,6 +69,7 @@ import GHC.TypeNats
 import qualified Language.C.Inline as C
 import qualified Language.C.Inline.Cpp as C
 import qualified Language.C.Inline.Cpp.Exception as C
+import qualified Language.C.Inline.Cpp.Exception as CU
 import qualified Language.C.Inline.Unsafe as CU
 import Language.Halide.Buffer
 import Language.Halide.Type
@@ -334,17 +335,17 @@ evaluate :: forall a. (HasCallStack, IsHalideType a) => Expr a -> IO a
 evaluate expr =
   withExpr expr $ \e -> do
     out <- SM.new 1
-    -- handleHalideExceptionsM $
-    withHalideBuffer out $ \buffer ->
-      let b = castPtr (buffer :: Ptr (HalideBuffer 1 a))
-       in [CU.block| void {
-            handle_halide_exceptions([=]() {
-              Halide::Func f;
-              Halide::Var i;
-              f(i) = *$(Halide::Expr* e);
-              f.realize(Halide::Pipeline::RealizationArg{$(halide_buffer_t* b)});
-            });
-          } |]
+    handleHalideExceptionsM $
+      withHalideBuffer out $ \buffer ->
+        let b = castPtr (buffer :: Ptr (HalideBuffer 1 a))
+         in [CU.tryBlock| void {
+              handle_halide_exceptions([=]() {
+                Halide::Func f;
+                Halide::Var i;
+                f(i) = *$(Halide::Expr* e);
+                f.realize(Halide::Pipeline::RealizationArg{$(halide_buffer_t* b)});
+              });
+            } |]
     SM.read out 0
 
 data Func (n :: Nat) (a :: Type)
@@ -703,11 +704,12 @@ mkKernel' buildFunc = do
     prepareCxxArguments parameters $ \v ->
       withFunc func $ \f -> do
         wrapCxxCallable
-          =<< [CU.exp| Halide::Callable* {
-                handle_halide_exceptions([=]() {
+          =<< handleHalideExceptions
+          =<< [CU.tryBlock| Halide::Callable* {
+                return handle_halide_exceptions([=]() {
                   return new Halide::Callable{$(Halide::Func* f)->compile_to_callable(
                     *$(const std::vector<Halide::Argument>* v))};
-                })
+                });
               } |]
   context <- newEmptyCxxUserContext
   let argc = 1 + fromIntegral (natVal (Proxy @k)) + 1
