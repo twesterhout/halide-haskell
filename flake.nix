@@ -26,7 +26,7 @@
         root = ./.;
         include = [
           "src"
-          "cbits"
+          "example"
           "test"
           "cabal.project"
           "cabal.project.local"
