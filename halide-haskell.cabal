@@ -64,7 +64,6 @@ library
                      , vector
                      , primitive
                      , constraints
-  cxx-sources:         cbits/test.cpp
   extra-libraries:     Halide
                        stdc++
 
