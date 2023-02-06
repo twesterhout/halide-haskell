@@ -31,9 +31,9 @@ module Language.Halide.Internal
     mkKernel',
     evaluate,
     --
-    Arguments (..),
     equal,
     bool,
+    IsHalideType,
   )
 where
 

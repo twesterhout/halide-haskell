@@ -67,6 +67,13 @@ library
   extra-libraries:     Halide
                        stdc++
 
+executable getting-started
+  import:              common-options
+  hs-source-dirs:      example
+  main-is:             GettingStarted.hs
+  build-depends:       halide-haskell
+                     , vector
+
 executable example01
   import:              common-options
   hs-source-dirs:      example
