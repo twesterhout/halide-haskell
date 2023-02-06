@@ -22,6 +22,7 @@ module Language.Halide.Internal
     printed,
     Func (..),
     define,
+    update,
     (!),
     printLoopNest,
     realize1D,
@@ -464,6 +465,19 @@ defineFunc name args expr = do
               return new Halide::Func{f};
             } |]
 
+updateFunc ::
+  ForeignPtr CxxFunc ->
+  [ForeignPtr CxxExpr] ->
+  ForeignPtr CxxExpr ->
+  IO ()
+updateFunc func args expr = do
+  withForeignPtr func $ \f ->
+    withExprMany args $ \x ->
+      withForeignPtr expr $ \y ->
+        [CU.block| void {
+          $(Halide::Func* f)->operator()(*$(std::vector<Halide::Expr>* x)) = *$(Halide::Expr* y);
+        } |]
+
 withExprMany :: [ForeignPtr CxxExpr] -> (Ptr (CxxVector CxxExpr) -> IO a) -> IO a
 withExprMany xs f = do
   let count = fromIntegral (length xs)
@@ -495,6 +509,9 @@ instance ValidIndex (Expr Int32, Expr Int32) 2 where
 
 define :: (ValidIndex i n, IsHalideType a) => Text -> i -> Expr a -> IO (Func n a)
 define name x y = Func <$> defineFunc name (toExprList x) (exprToForeignPtr y)
+
+update :: (ValidIndex i n, KnownNat n, IsHalideType a) => Func n a -> i -> Expr a -> IO ()
+update func x y = updateFunc (funcToForeignPtr func) (toExprList x) (exprToForeignPtr y)
 
 infix 9 !
 

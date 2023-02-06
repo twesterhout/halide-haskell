@@ -44,7 +44,7 @@ main = hspec $ do
             vectorPlus a' b' out'
       S.unsafeFreeze out `shouldReturn` S.zipWith (+) a b
 
-    it "compiles a kernel that generates a scaled diagonal matrix" $ do
+    it "compiles a kernel that generates a scaled diagonal matrix (uses bool)" $ do
       scaledDiagonal <- mkKernel $ \(scale :: Expr Double) v -> do
         i <- mkVar "i"
         j <- mkVar "j"
@@ -53,6 +53,20 @@ main = hspec $ do
             (i `equal` j)
             (v ! i / scale)
             0
+      let a = S.fromList [1.0, 2.0, 3.0]
+      out <- Matrix 3 3 <$> SM.replicate 9 0
+      withHalideBuffer a $ \a' ->
+        withHalideBuffer out $ \out' ->
+          scaledDiagonal 2 a' out'
+      S.unsafeFreeze (matrixData out) `shouldReturn` S.fromList [0.5, 0, 0, 0, 1, 0, 0, 0, 1.5]
+
+    it "compiles a kernel that generates a scaled diagonal matrix (uses update)" $ do
+      scaledDiagonal <- mkKernel $ \(scale :: Expr Double) v -> do
+        i <- mkVar "i"
+        j <- mkVar "j"
+        out <- define "out" (i, j) 0
+        update out (i, i) (v ! i / scale)
+        pure out
       let a = S.fromList [1.0, 2.0, 3.0]
       out <- Matrix 3 3 <$> SM.replicate 9 0
       withHalideBuffer a $ \a' ->

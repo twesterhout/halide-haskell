@@ -13,7 +13,7 @@ copyright:           2022 Tom Westerhout
 build-type:          Simple
 extra-doc-files:     README.md
                      CHANGELOG.md
-tested-with:         GHC == 9.0.2
+tested-with:         GHC == 9.2.4
 
 source-repository head
   type:                git
