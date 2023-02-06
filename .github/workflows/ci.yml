@@ -10,14 +10,14 @@ jobs:
   build:
     strategy:
       matrix:
-        ghc: ['92']
-        os: ['ubuntu-latest', 'macos-latest']
+        ghc: ['92', '94']
+        os: ['ubuntu-latest']
     runs-on: ${{ matrix.os }}
     name: Build with GHC ${{ matrix.ghc }} on ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v3
     - uses: cachix/install-nix-action@v18
       with:
-        nix_path: nixpkgs=channel:nixos-22.11
+        nix_path: nixpkgs=channel:nixos-unstable
     - name: Build
-      run: nix build -L .#halide-haskell.ghc${{ matrix.ghc }}
+      run: nix build --accept-flake-config -L .#halide-haskell.ghc${{ matrix.ghc }}
