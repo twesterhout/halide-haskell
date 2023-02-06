@@ -1,6 +1,12 @@
 {
   description = "twesterhout/halide-haskell: Running Halide pipelines from Haskell";
 
+  # We have a patched Halide version, so we need cachix such that users don't
+  # have to compile Halide locally
+  nixConfig.extra-experimental-features = "nix-command flakes";
+  nixConfig.extra-substituters = "https://halide-haskell.cachix.org";
+  nixConfig.extra-trusted-public-keys = "halide-haskell.cachix.org-1:cFPqtShCsH4aNjn2q4PHb39Omtd/FWRhrkTBcSrtNKQ=";
+
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     nixpkgs-stable.url = "github:nixos/nixpkgs/nixos-22.11";
