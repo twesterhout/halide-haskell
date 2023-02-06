@@ -64,6 +64,7 @@
           overrides = self: super: {
             halide = halideFor nixpkgs;
             halide-haskell = self.callCabal2nix "halide-haskell" ./. { Halide = halideFor nixpkgs; };
+            
           };
         };
 
