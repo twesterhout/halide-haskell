@@ -57,6 +57,8 @@ library
   exposed-modules:     Language.Halide.Buffer
                        Language.Halide.Type
                        Language.Halide.Internal
+                       Language.Halide.Context
+                       Language.Halide.Expr
   build-depends:       inline-c
                      , inline-c-cpp
                      , template-haskell

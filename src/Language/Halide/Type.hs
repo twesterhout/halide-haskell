@@ -30,6 +30,7 @@ module Language.Halide.Type
     UnCurry (..),
     Curry (..),
     defineIsHalideTypeInstances,
+    Named (..),
     -- defineCastableInstances,
     -- defineCurriedTypeFamily,
     -- defineUnCurriedTypeFamily,
@@ -41,10 +42,12 @@ where
 import Data.Coerce
 import Data.Int
 import Data.Kind (Type)
+import Data.Text (Text)
 import Data.Word
 import Foreign.C.Types
 import Foreign.Ptr
 import Foreign.Storable
+import GHC.Stack (HasCallStack)
 import GHC.TypeLits
 import qualified Language.C.Inline as C
 import qualified Language.C.Inline.Unsafe as CU
@@ -235,6 +238,9 @@ instance Curry '[] r r where
 
 instance Curry args r f => Curry (a ': args) r (a -> f) where
   curryG f a = curryG (\args -> f (a ::: args))
+
+class Named a where
+  setName :: HasCallStack => a -> Text -> IO ()
 
 {-
 defineCurriedTypeFamily :: TH.DecsQ

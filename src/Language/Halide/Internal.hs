@@ -72,48 +72,11 @@ import qualified Language.C.Inline.Cpp.Exception as C
 import qualified Language.C.Inline.Cpp.Exception as CU
 import qualified Language.C.Inline.Unsafe as CU
 import Language.Halide.Buffer
+import Language.Halide.Context
 import Language.Halide.Type
 import System.IO.Unsafe (unsafePerformIO)
 
-C.context $
-  C.cppCtx
-    <> C.fptrCtx
-    <> C.bsCtx
-    <> C.cppTypePairs
-      [ ("Halide::Expr", [t|CxxExpr|]),
-        ("Halide::Func", [t|CxxFunc|]),
-        ("Halide::Param", [t|CxxParam|]),
-        ("Halide::ImageParam", [t|CxxImageParam|]),
-        ("Halide::Callable", [t|CxxCallable|]),
-        ("Halide::JITUserContext", [t|CxxUserContext|]),
-        ("Halide::Internal::Parameter", [t|CxxParameter|]),
-        ("Halide::Argument", [t|CxxArgument|]),
-        ("std::vector", [t|CxxVector|]),
-        ("halide_buffer_t", [t|RawHalideBuffer|]),
-        ("halide_type_t", [t|HalideType|])
-      ]
-
-C.include "<Halide.h>"
-C.include "<math.h>"
-C.include "<stdio.h>"
-
-C.verbatim
-  "\
-  \template <class Func>                               \n\
-  \auto handle_halide_exceptions(Func&& func) {        \n\
-  \  try {                                             \n\
-  \    return func();                                  \n\
-  \  } catch(Halide::RuntimeError& e) {                \n\
-  \    throw std::runtime_error{e.what()};             \n\
-  \  } catch(Halide::CompileError& e) {                \n\
-  \    throw std::runtime_error{e.what()};             \n\
-  \  } catch(Halide::InternalError& e) {               \n\
-  \    throw std::runtime_error{e.what()};             \n\
-  \  } catch(Halide::Error& e) {                       \n\
-  \    throw std::runtime_error{e.what()};             \n\
-  \  }                                                 \n\
-  \}                                                   \n\
-  \"
+importHalide
 
 -- defineCastableInstances
 defineIsHalideTypeInstances
@@ -394,9 +357,6 @@ withBufferParam (BufferParam r) action = do
   fp <- getBufferParameter @n @a Nothing r
   withForeignPtr fp action
 withBufferParam (Func _) _ = error "withBufferParam called on Func"
-
-class Named a where
-  setName :: HasCallStack => a -> Text -> IO ()
 
 instance IsHalideType a => Named (Expr a) where
   setName :: Expr a -> Text -> IO ()
