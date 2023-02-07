@@ -1,11 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TypeApplications #-}
 
 import Control.Monad.ST (RealWorld)
 import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Storable.Mutable as SM
-import Language.Halide.Buffer
-import Language.Halide.Internal
+import Language.Halide
 
 main :: IO ()
 main = do

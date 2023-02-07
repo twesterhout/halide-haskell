@@ -2,8 +2,7 @@ module Main (main) where
 
 import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Storable.Mutable as SM
-import Language.Halide.Buffer
-import Language.Halide.Internal
+import Language.Halide
 import System.IO.Unsafe (unsafePerformIO)
 
 mkVectorPlus :: (IsHalideType a, Num a) => IO (S.Vector a -> S.Vector a -> S.Vector a)

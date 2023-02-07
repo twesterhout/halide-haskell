@@ -33,6 +33,17 @@ importHalide =
       ]
 
 -- | Convert Halide C++ exceptions into calls to 'error'.
+--
+-- Normally, you would use it like this:
+--
+-- > halideHandleExceptions
+-- >   =<< [C.tryBlock| void {
+-- >         handle_halide_exceptions([=]() {
+-- >           Halide::Func f;
+-- >           f() = *$(Halide::Expr* e);
+-- >           f.realize(Halide::Pipeline::RealizationArg{$(halide_buffer_t* b)});
+-- >         });
+-- >       } |]
 handleHalideExceptions :: HasCallStack => Either C.CppException a -> IO a
 handleHalideExceptions (Right x) = pure x
 handleHalideExceptions (Left (C.CppStdException _ msg _)) = error $ unpack (decodeUtf8 msg)

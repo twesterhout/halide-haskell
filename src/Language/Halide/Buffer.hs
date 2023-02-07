@@ -3,12 +3,19 @@
 -- Description : Buffers
 -- Copyright   : (c) Tom Westerhout, 2021-2023
 module Language.Halide.Buffer
-  ( HalideBuffer (..)
+  ( -- * Types
+    IsHalideBuffer (..)
+  , HalideBuffer (..)
   , RawHalideBuffer (..)
-  , bufferFromPtrShape
-  , bufferFromPtrShapeStrides
   , HalideDimension (..)
-  , IsHalideBuffer (..)
+  , HalideDeviceInterface
+
+    -- * Constructing
+
+    -- | We define helper functions to easily construct 'HalideBuffer's from CPU
+    -- pointers.
+  , bufferFromPtrShapeStrides
+  , bufferFromPtrShape
   )
 where
 
@@ -29,7 +36,7 @@ import GHC.Stack (HasCallStack)
 import GHC.TypeNats
 import Language.Halide.Type
 
--- | Haskell analogue of @halide_dimension_t@
+-- | Haskell analogue of [@halide_dimension_t@](https://halide-lang.org/docs/structhalide__dimension__t.html).
 data HalideDimension = HalideDimension
   { halideDimensionMin :: {-# UNPACK #-} !Int32
   , halideDimensionExtent :: {-# UNPACK #-} !Int32
@@ -72,10 +79,10 @@ simpleDimension extent stride = HalideDimension 0 (toInt32 extent) (toInt32 stri
 rowMajorStrides :: Integral a => [a] -> [a]
 rowMajorStrides = drop 1 . scanr (*) 1
 
--- | Haskell analogue of @halide_device_interface_t@.
+-- | Haskell analogue of [@halide_device_interface_t@](https://halide-lang.org/docs/structhalide__device__interface__t.html).
 data HalideDeviceInterface
 
--- | Haskell analogue of @halide_buffer_t@.
+-- | Haskell analogue of [@halide_buffer_t@](https://halide-lang.org/docs/structhalide__buffer__t.html).
 data RawHalideBuffer = RawHalideBuffer
   { halideBufferDevice :: !Word64
   , halideBufferDeviceInterface :: !(Ptr HalideDeviceInterface)
@@ -88,8 +95,10 @@ data RawHalideBuffer = RawHalideBuffer
   }
   deriving stock (Show, Eq)
 
--- | A wrapper around 'RawHalideBuffer' that ensures that Halide kernels
--- receive buffers of the right type and dimensionality.
+-- | An @n@-dimensional buffer of elements of type @a.
+--
+-- A wrapper around 'RawHalideBuffer' that ensures that Halide kernels receive
+-- buffers of the right type and dimensionality.
 newtype HalideBuffer (n :: Nat) (a :: Type) = HalideBuffer {unHalideBuffer :: RawHalideBuffer}
   deriving stock (Show, Eq)
 
@@ -125,9 +134,13 @@ bufferFromPtrShapeStrides
   :: forall n a b
    . (KnownNat n, IsHalideType a)
   => Ptr a
+  -- ^ CPU pointer to the data
   -> [Int]
+  -- ^ Extents (in number of elements, __not__ in bytes)
   -> [Int]
+  -- ^ Strides (in number of elements, __not__ in bytes)
   -> (Ptr (HalideBuffer n a) -> IO b)
+  -- ^ Action to run
   -> IO b
 bufferFromPtrShapeStrides p shape stride action =
   withArrayLen (zipWith simpleDimension shape stride) $ \n dim -> do
@@ -151,25 +164,30 @@ bufferFromPtrShapeStrides p shape stride action =
             }
     with buffer (action . castPtr)
 
--- | Similar to 'bufferFromPtrShapeStrides', but assumes row-major strides.
+-- | Similar to 'bufferFromPtrShapeStrides', but assumes row-major ordering of data.
 bufferFromPtrShape
   :: forall n a b
    . (KnownNat n, IsHalideType a)
   => Ptr a
+  -- ^ CPU pointer to the data
   -> [Int]
+  -- ^ Extents (in number of elements, __not__ in bytes)
   -> (Ptr (HalideBuffer n a) -> IO b)
   -> IO b
 bufferFromPtrShape p shape = bufferFromPtrShapeStrides p shape (rowMajorStrides shape)
 
--- | A typeclass for types that can be used as Halide buffers.
+-- | Specifies that a type @t@ can be used as an @n@-dimensional Halide buffer
+-- with elements of type @a@.
 class (KnownNat n, IsHalideType a) => IsHalideBuffer t n a | t -> n, t -> a where
   withHalideBuffer :: t -> (Ptr (HalideBuffer n a) -> IO b) -> IO b
 
+-- | Storable vectors are one-dimensional buffers.
 instance IsHalideType a => IsHalideBuffer (S.Vector a) 1 a where
   withHalideBuffer v f =
     S.unsafeWith v $ \dataPtr ->
       bufferFromPtrShape dataPtr [S.length v] f
 
+-- | Storable vectors are one-dimensional buffers.
 instance IsHalideType a => IsHalideBuffer (S.MVector RealWorld a) 1 a where
   withHalideBuffer v f =
     SM.unsafeWith v $ \dataPtr ->

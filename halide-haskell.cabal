@@ -54,11 +54,11 @@ common common-options
 library
   import:              common-options
   hs-source-dirs:      src
-  exposed-modules:     Language.Halide.Buffer
+  exposed-modules:     Language.Halide
+                       Language.Halide.Buffer
                        Language.Halide.Context
                        Language.Halide.Expr
                        Language.Halide.Func
-                       Language.Halide.Internal
                        Language.Halide.Kernel
                        Language.Halide.Type
   build-depends:       inline-c
