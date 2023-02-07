@@ -9,11 +9,11 @@ license:             BSD-3-Clause
 license-file:        LICENSE
 author:              Tom Westerhout
 maintainer:          Tom Westerhout <14264576+twesterhout@users.noreply.github.com>
-copyright:           2022 Tom Westerhout
+copyright:           2022-2023 Tom Westerhout
 build-type:          Simple
 extra-doc-files:     README.md
                      CHANGELOG.md
-tested-with:         GHC == 8.8.4, GHC == 8.10.7, GHC == 9.2.4, GHC == 9.4.4
+tested-with:         GHC == 9.0.2, GHC == 9.2.4, GHC == 9.4.4
 
 source-repository head
   type:                git
