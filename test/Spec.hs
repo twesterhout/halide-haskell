@@ -10,7 +10,6 @@ import qualified Data.Vector.Storable.Mutable as SM
 import Data.Word
 import Language.Halide.Buffer
 import Language.Halide.Internal
-import Language.Halide.Type
 import Test.Hspec
 import Test.Hspec.QuickCheck
 import Test.QuickCheck (Property)

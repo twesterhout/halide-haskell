@@ -5,9 +5,9 @@
 -- Description : Helpers to setup inline-c context for Halide
 -- Copyright   : (c) Tom Westerhout, 2023
 module Language.Halide.Context
-  ( importHalide,
-    defineExceptionHandler,
-    halideCxt,
+  ( importHalide
+  , defineExceptionHandler
+  , halideCxt
   )
 where
 
@@ -23,9 +23,9 @@ importHalide :: DecsQ
 importHalide =
   concat
     <$> sequence
-      [ C.context halideCxt,
-        C.include "<Halide.h>",
-        defineExceptionHandler
+      [ C.context halideCxt
+      , C.include "<Halide.h>"
+      , defineExceptionHandler
       ]
 
 -- | Define @inline-c@ context for Halide types.
@@ -35,16 +35,16 @@ halideCxt =
     <> C.fptrCtx
     <> C.bsCtx
     <> C.cppTypePairs
-      [ ("Halide::Expr", [t|CxxExpr|]),
-        ("Halide::Func", [t|CxxFunc|]),
-        ("Halide::Internal::Parameter", [t|CxxParameter|]),
-        ("Halide::ImageParam", [t|CxxImageParam|]),
-        ("Halide::Callable", [t|CxxCallable|]),
-        ("Halide::JITUserContext", [t|CxxUserContext|]),
-        ("Halide::Argument", [t|CxxArgument|]),
-        ("std::vector", [t|CxxVector|]),
-        ("halide_buffer_t", [t|RawHalideBuffer|]),
-        ("halide_type_t", [t|HalideType|])
+      [ ("Halide::Expr", [t|CxxExpr|])
+      , ("Halide::Func", [t|CxxFunc|])
+      , ("Halide::Internal::Parameter", [t|CxxParameter|])
+      , ("Halide::ImageParam", [t|CxxImageParam|])
+      , ("Halide::Callable", [t|CxxCallable|])
+      , ("Halide::JITUserContext", [t|CxxUserContext|])
+      , ("Halide::Argument", [t|CxxArgument|])
+      , ("std::vector", [t|CxxVector|])
+      , ("halide_buffer_t", [t|RawHalideBuffer|])
+      , ("halide_type_t", [t|HalideType|])
       ]
 
 -- | Define a C++ function @halide_handle_exception@ that converts Halide

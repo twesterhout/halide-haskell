@@ -59,6 +59,7 @@ library
                        Language.Halide.Internal
                        Language.Halide.Context
                        Language.Halide.Expr
+                       Language.Halide.Func
   build-depends:       inline-c
                      , inline-c-cpp
                      , template-haskell
