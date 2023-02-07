@@ -9,32 +9,32 @@
 {-# OPTIONS_GHC -Wno-unused-local-binds #-}
 
 module Language.Halide.Type
-  ( HalideTypeCode (..),
-    HalideType (..),
-    IsHalideType (..),
-    CxxExpr,
-    CxxFunc,
-    CxxParam,
-    CxxParameter,
-    CxxArgument,
-    CxxImageParam,
-    CxxVector,
-    CxxUserContext,
-    CxxCallable,
-    Arguments (..),
-    Length,
-    Append,
-    argumentsAppend,
-    FunctionArguments,
-    FunctionReturn,
-    UnCurry (..),
-    Curry (..),
-    defineIsHalideTypeInstances,
-    -- defineCastableInstances,
-    -- defineCurriedTypeFamily,
-    -- defineUnCurriedTypeFamily,
-    -- defineCurryInstances,
-    -- defineUnCurryInstances,
+  ( HalideTypeCode (..)
+  , HalideType (..)
+  , IsHalideType (..)
+  , CxxExpr
+  , CxxFunc
+  , CxxParam
+  , CxxParameter
+  , CxxArgument
+  , CxxImageParam
+  , CxxVector
+  , CxxUserContext
+  , CxxCallable
+  , Arguments (..)
+  , Length
+  , Append
+  , argumentsAppend
+  , FunctionArguments
+  , FunctionReturn
+  , UnCurry (..)
+  , Curry (..)
+  , defineIsHalideTypeInstances
+  -- defineCastableInstances,
+  -- defineCurriedTypeFamily,
+  -- defineUnCurriedTypeFamily,
+  -- defineCurryInstances,
+  -- defineUnCurryInstances,
   )
 where
 
@@ -95,9 +95,9 @@ instance Enum HalideTypeCode where
     _ -> error $ "invalid HalideTypeCode: " <> show x
 
 data HalideType = HalideType
-  { halideTypeCode :: !HalideTypeCode,
-    halideTypeBits :: {-# UNPACK #-} !Word8,
-    halideTypeLanes :: {-# UNPACK #-} !Word16
+  { halideTypeCode :: !HalideTypeCode
+  , halideTypeBits :: {-# UNPACK #-} !Word8
+  , halideTypeLanes :: {-# UNPACK #-} !Word16
   }
   deriving stock (Read, Show, Eq)
 
@@ -161,18 +161,18 @@ defineIsHalideTypeInstances = concat <$> mapM instanceIsHalideType halideTypes
 
 halideTypes :: [(String, TH.TypeQ, HalideTypeCode)]
 halideTypes =
-  [ ("float", [t|Float|], HalideTypeFloat),
-    ("float", [t|CFloat|], HalideTypeFloat),
-    ("double", [t|Double|], HalideTypeFloat),
-    ("double", [t|CDouble|], HalideTypeFloat),
-    ("int8_t", [t|Int8|], HalideTypeInt),
-    ("int16_t", [t|Int16|], HalideTypeInt),
-    ("int32_t", [t|Int32|], HalideTypeInt),
-    ("int64_t", [t|Int64|], HalideTypeInt),
-    ("uint8_t", [t|Word8|], HalideTypeUInt),
-    ("uint16_t", [t|Word16|], HalideTypeUInt),
-    ("uint32_t", [t|Word32|], HalideTypeUInt),
-    ("uint64_t", [t|Word64|], HalideTypeUInt)
+  [ ("float", [t|Float|], HalideTypeFloat)
+  , ("float", [t|CFloat|], HalideTypeFloat)
+  , ("double", [t|Double|], HalideTypeFloat)
+  , ("double", [t|CDouble|], HalideTypeFloat)
+  , ("int8_t", [t|Int8|], HalideTypeInt)
+  , ("int16_t", [t|Int16|], HalideTypeInt)
+  , ("int32_t", [t|Int32|], HalideTypeInt)
+  , ("int64_t", [t|Int64|], HalideTypeInt)
+  , ("uint8_t", [t|Word8|], HalideTypeUInt)
+  , ("uint16_t", [t|Word16|], HalideTypeUInt)
+  , ("uint32_t", [t|Word32|], HalideTypeUInt)
+  , ("uint64_t", [t|Word64|], HalideTypeUInt)
   ]
 
 -- defineCastableInstances :: TH.DecsQ

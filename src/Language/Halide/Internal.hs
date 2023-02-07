@@ -15,25 +15,25 @@
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 module Language.Halide.Internal
-  ( Expr (..),
-    mkExpr,
-    mkVar,
-    cast,
-    printed,
-    Func (..),
-    define,
-    update,
-    (!),
-    printLoopNest,
-    realize1D,
-    setName,
-    mkKernel,
-    mkKernel',
-    evaluate,
-    --
-    equal,
-    bool,
-    IsHalideType,
+  ( Expr (..)
+  , mkExpr
+  , mkVar
+  , cast
+  , printed
+  , Func (..)
+  , define
+  , update
+  , (!)
+  , printLoopNest
+  , realize1D
+  , setName
+  , mkKernel
+  , mkKernel'
+  , evaluate
+  --
+  , equal
+  , bool
+  , IsHalideType
   )
 where
 
@@ -63,6 +63,7 @@ import Foreign.Marshal (with)
 import Foreign.Ptr (FunPtr, Ptr, castPtr)
 import Foreign.Storable
 import GHC.Stack (HasCallStack)
+
 -- import GHC.TypeLits (ErrorMessage ((:<>:)))
 -- import qualified GHC.TypeLits as GHC
 import GHC.TypeNats
@@ -80,17 +81,17 @@ C.context $
     <> C.fptrCtx
     <> C.bsCtx
     <> C.cppTypePairs
-      [ ("Halide::Expr", [t|CxxExpr|]),
-        ("Halide::Func", [t|CxxFunc|]),
-        ("Halide::Param", [t|CxxParam|]),
-        ("Halide::ImageParam", [t|CxxImageParam|]),
-        ("Halide::Callable", [t|CxxCallable|]),
-        ("Halide::JITUserContext", [t|CxxUserContext|]),
-        ("Halide::Internal::Parameter", [t|CxxParameter|]),
-        ("Halide::Argument", [t|CxxArgument|]),
-        ("std::vector", [t|CxxVector|]),
-        ("halide_buffer_t", [t|RawHalideBuffer|]),
-        ("halide_type_t", [t|HalideType|])
+      [ ("Halide::Expr", [t|CxxExpr|])
+      , ("Halide::Func", [t|CxxFunc|])
+      , ("Halide::Param", [t|CxxParam|])
+      , ("Halide::ImageParam", [t|CxxImageParam|])
+      , ("Halide::Callable", [t|CxxCallable|])
+      , ("Halide::JITUserContext", [t|CxxUserContext|])
+      , ("Halide::Internal::Parameter", [t|CxxParameter|])
+      , ("Halide::Argument", [t|CxxArgument|])
+      , ("std::vector", [t|CxxVector|])
+      , ("halide_buffer_t", [t|RawHalideBuffer|])
+      , ("halide_type_t", [t|HalideType|])
       ]
 
 C.include "<Halide.h>"
@@ -174,12 +175,12 @@ mkScalarParameter maybeName = do
               } |]
     newForeignPtr deleteCxxParameter =<< maybe createWithoutName createWithName maybeName
 
-getScalarParameter ::
-  forall a.
-  IsHalideType a =>
-  Maybe Text ->
-  IORef (Maybe (ForeignPtr CxxParameter)) ->
-  IO (ForeignPtr CxxParameter)
+getScalarParameter
+  :: forall a
+   . IsHalideType a
+  => Maybe Text
+  -> IORef (Maybe (ForeignPtr CxxParameter))
+  -> IO (ForeignPtr CxxParameter)
 getScalarParameter name r = do
   readIORef r >>= \case
     Just fp -> pure fp
@@ -370,12 +371,12 @@ mkBufferParameter maybeName = do
                       std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}} } |]
     newForeignPtr deleteCxxImageParam =<< maybe createWithoutName createWithName maybeName
 
-getBufferParameter ::
-  forall n a.
-  (KnownNat n, IsHalideType a) =>
-  Maybe Text ->
-  IORef (Maybe (ForeignPtr CxxImageParam)) ->
-  IO (ForeignPtr CxxImageParam)
+getBufferParameter
+  :: forall n a
+   . (KnownNat n, IsHalideType a)
+  => Maybe Text
+  -> IORef (Maybe (ForeignPtr CxxImageParam))
+  -> IO (ForeignPtr CxxImageParam)
 getBufferParameter name r =
   readIORef r >>= \case
     Just fp -> pure fp
@@ -384,12 +385,12 @@ getBufferParameter name r =
       writeIORef r (Just fp)
       pure fp
 
-withBufferParam ::
-  forall n a b.
-  (KnownNat n, IsHalideType a) =>
-  Func n a ->
-  (Ptr CxxImageParam -> IO b) ->
-  IO b
+withBufferParam
+  :: forall n a b
+   . (KnownNat n, IsHalideType a)
+  => Func n a
+  -> (Ptr CxxImageParam -> IO b)
+  -> IO b
 withBufferParam (BufferParam r) action = do
   fp <- getBufferParameter @n @a Nothing r
   withForeignPtr fp action
@@ -465,11 +466,11 @@ defineFunc name args expr = do
               return new Halide::Func{f};
             } |]
 
-updateFunc ::
-  ForeignPtr CxxFunc ->
-  [ForeignPtr CxxExpr] ->
-  ForeignPtr CxxExpr ->
-  IO ()
+updateFunc
+  :: ForeignPtr CxxFunc
+  -> [ForeignPtr CxxExpr]
+  -> ForeignPtr CxxExpr
+  -> IO ()
 updateFunc func args expr = do
   withForeignPtr func $ \f ->
     withExprMany args $ \x ->
@@ -545,12 +546,12 @@ data ArgvStorage s
 newArgvStorage :: Int -> IO (ArgvStorage RealWorld)
 newArgvStorage n = ArgvStorage <$> P.newPinnedPrimArray n <*> P.newPinnedPrimArray n
 
-setArgvStorage ::
-  (All ValidArgument inputs, All ValidArgument outputs) =>
-  ArgvStorage RealWorld ->
-  Arguments inputs ->
-  Arguments outputs ->
-  IO ()
+setArgvStorage
+  :: (All ValidArgument inputs, All ValidArgument outputs)
+  => ArgvStorage RealWorld
+  -> Arguments inputs
+  -> Arguments outputs
+  -> IO ()
 setArgvStorage (ArgvStorage argv scalarStorage) inputs outputs = do
   let argvPtr = P.mutablePrimArrayContents argv
       scalarStoragePtr = P.mutablePrimArrayContents scalarStorage
@@ -627,12 +628,12 @@ instance (ValidParameter t, PrepareParameters ts) => PrepareParameters (t ': ts)
     ts <- prepareParameters @ts
     pure $ t ::: ts
 
-prepareCxxArguments ::
-  forall ts b.
-  (All ValidParameter ts, KnownNat (Length ts)) =>
-  Arguments ts ->
-  (Ptr (CxxVector CxxArgument) -> IO b) ->
-  IO b
+prepareCxxArguments
+  :: forall ts b
+   . (All ValidParameter ts, KnownNat (Length ts))
+  => Arguments ts
+  -> (Ptr (CxxVector CxxArgument) -> IO b)
+  -> IO b
 prepareCxxArguments args action = do
   let count = fromIntegral (natVal (Proxy @(Length ts)))
       allocate =
@@ -699,19 +700,19 @@ type family Lowered (t :: [Type]) :: [Type] where
 -- instance UnCurry (x1 -> x2 -> x3 -> x4 -> x5 -> IO b) where
 --   uncurry' f (x1 ::: x2 ::: x3 ::: x4 ::: x5 ::: Nil) = f x1 x2 x3 x4 x5
 
-mkKernel' ::
-  forall ts n a k.
-  ( KnownNat n,
-    IsHalideType a,
-    Length ts ~ k,
-    KnownNat k,
-    KnownNat (1 + k),
-    PrepareParameters ts,
-    All ValidParameter ts,
-    All ValidArgument (Lowered ts)
-  ) =>
-  (Arguments ts -> IO (Func n a)) ->
-  IO (Arguments (Lowered ts) -> Ptr (HalideBuffer n a) -> IO ())
+mkKernel'
+  :: forall ts n a k
+   . ( KnownNat n
+     , IsHalideType a
+     , Length ts ~ k
+     , KnownNat k
+     , KnownNat (1 + k)
+     , PrepareParameters ts
+     , All ValidParameter ts
+     , All ValidArgument (Lowered ts)
+     )
+  => (Arguments ts -> IO (Func n a))
+  -> IO (Arguments (Lowered ts) -> Ptr (HalideBuffer n a) -> IO ())
 mkKernel' buildFunc = do
   parameters <- prepareParameters @ts
   func <- buildFunc parameters
@@ -746,24 +747,24 @@ mkKernel' buildFunc = do
         touch callable
   pure kernel
 
-mkKernel ::
-  forall f kernel k ts n a r.
-  ( FunctionArguments f ~ ts,
-    FunctionReturn f ~ r,
-    UnCurry f ts r,
-    r ~ IO (Func n a),
-    KnownNat n,
-    IsHalideType a,
-    Length ts ~ k,
-    KnownNat k,
-    KnownNat (1 + k),
-    PrepareParameters ts,
-    All ValidParameter ts,
-    All ValidArgument (Lowered ts),
-    Curry (Lowered ts) (Ptr (HalideBuffer n a) -> IO ()) kernel
-  ) =>
-  f ->
-  IO kernel
+mkKernel
+  :: forall f kernel k ts n a r
+   . ( FunctionArguments f ~ ts
+     , FunctionReturn f ~ r
+     , UnCurry f ts r
+     , r ~ IO (Func n a)
+     , KnownNat n
+     , IsHalideType a
+     , Length ts ~ k
+     , KnownNat k
+     , KnownNat (1 + k)
+     , PrepareParameters ts
+     , All ValidParameter ts
+     , All ValidArgument (Lowered ts)
+     , Curry (Lowered ts) (Ptr (HalideBuffer n a) -> IO ()) kernel
+     )
+  => f
+  -> IO kernel
 mkKernel buildFunc = do
   kernel <- mkKernel' (uncurryG @f @ts @r buildFunc)
   pure (curryG kernel)

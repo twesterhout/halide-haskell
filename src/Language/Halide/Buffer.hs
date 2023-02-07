@@ -5,12 +5,12 @@
 --
 -- See README for more info
 module Language.Halide.Buffer
-  ( HalideBuffer (..),
-    RawHalideBuffer (..),
-    bufferFromPtrShape,
-    bufferFromPtrShapeStrides,
-    HalideDimension (..),
-    IsHalideBuffer (..),
+  ( HalideBuffer (..)
+  , RawHalideBuffer (..)
+  , bufferFromPtrShape
+  , bufferFromPtrShapeStrides
+  , HalideDimension (..)
+  , IsHalideBuffer (..)
   )
 where
 
@@ -32,10 +32,10 @@ import GHC.TypeNats
 import Language.Halide.Type
 
 data HalideDimension = HalideDimension
-  { halideDimensionMin :: {-# UNPACK #-} !Int32,
-    halideDimensionExtent :: {-# UNPACK #-} !Int32,
-    halideDimensionStride :: {-# UNPACK #-} !Int32,
-    halideDimensionFlags :: {-# UNPACK #-} !Word32
+  { halideDimensionMin :: {-# UNPACK #-} !Int32
+  , halideDimensionExtent :: {-# UNPACK #-} !Int32
+  , halideDimensionStride :: {-# UNPACK #-} !Int32
+  , halideDimensionFlags :: {-# UNPACK #-} !Word32
   }
   deriving stock (Read, Show, Eq)
 
@@ -76,14 +76,14 @@ rowMajorStrides = drop 1 . scanr (*) 1
 data HalideDeviceInterface
 
 data RawHalideBuffer = RawHalideBuffer
-  { halideBufferDevice :: !Word64,
-    halideBufferDeviceInterface :: !(Ptr HalideDeviceInterface),
-    halideBufferHost :: !(Ptr Word8),
-    halideBufferFlags :: !Word64,
-    halideBufferType :: !HalideType,
-    halideBufferDimensions :: !Int32,
-    halideBufferDim :: !(Ptr HalideDimension),
-    halideBufferPadding :: !(Ptr ())
+  { halideBufferDevice :: !Word64
+  , halideBufferDeviceInterface :: !(Ptr HalideDeviceInterface)
+  , halideBufferHost :: !(Ptr Word8)
+  , halideBufferFlags :: !Word64
+  , halideBufferType :: !HalideType
+  , halideBufferDimensions :: !Int32
+  , halideBufferDim :: !(Ptr HalideDimension)
+  , halideBufferPadding :: !(Ptr ())
   }
   deriving stock (Show, Eq)
 
@@ -113,14 +113,14 @@ instance Storable RawHalideBuffer where
     pokeByteOff p 40 (halideBufferDim x)
     pokeByteOff p 48 (halideBufferPadding x)
 
-bufferFromPtrShapeStrides ::
-  forall n a b.
-  (KnownNat n, IsHalideType a) =>
-  Ptr a ->
-  [Int] ->
-  [Int] ->
-  (Ptr (HalideBuffer n a) -> IO b) ->
-  IO b
+bufferFromPtrShapeStrides
+  :: forall n a b
+   . (KnownNat n, IsHalideType a)
+  => Ptr a
+  -> [Int]
+  -> [Int]
+  -> (Ptr (HalideBuffer n a) -> IO b)
+  -> IO b
 bufferFromPtrShapeStrides p shape stride action =
   withArrayLen (zipWith simpleDimension shape stride) $ \n dim -> do
     unless (n == fromIntegral (natVal (Proxy @n))) $
@@ -132,24 +132,24 @@ bufferFromPtrShapeStrides p shape stride action =
           <> " from the type declaration"
     let !buffer =
           RawHalideBuffer
-            { halideBufferDevice = 0,
-              halideBufferDeviceInterface = nullPtr,
-              halideBufferHost = castPtr p,
-              halideBufferFlags = 0,
-              halideBufferType = halideTypeFor (Proxy :: Proxy a),
-              halideBufferDimensions = toInt32 n,
-              halideBufferDim = dim,
-              halideBufferPadding = nullPtr
+            { halideBufferDevice = 0
+            , halideBufferDeviceInterface = nullPtr
+            , halideBufferHost = castPtr p
+            , halideBufferFlags = 0
+            , halideBufferType = halideTypeFor (Proxy :: Proxy a)
+            , halideBufferDimensions = toInt32 n
+            , halideBufferDim = dim
+            , halideBufferPadding = nullPtr
             }
     with buffer (action . castPtr)
 
-bufferFromPtrShape ::
-  forall n a b.
-  (KnownNat n, IsHalideType a) =>
-  Ptr a ->
-  [Int] ->
-  (Ptr (HalideBuffer n a) -> IO b) ->
-  IO b
+bufferFromPtrShape
+  :: forall n a b
+   . (KnownNat n, IsHalideType a)
+  => Ptr a
+  -> [Int]
+  -> (Ptr (HalideBuffer n a) -> IO b)
+  -> IO b
 bufferFromPtrShape p shape = bufferFromPtrShapeStrides p shape (rowMajorStrides shape)
 
 class (KnownNat n, IsHalideType a) => IsHalideBuffer t n a | t -> n, t -> a where
