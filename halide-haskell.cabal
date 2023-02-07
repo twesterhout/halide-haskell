@@ -13,7 +13,7 @@ copyright:           2022 Tom Westerhout
 build-type:          Simple
 extra-doc-files:     README.md
                      CHANGELOG.md
-tested-with:         GHC == 9.2.4
+tested-with:         GHC == 8.8.4, GHC == 8.10.7, GHC == 9.2.4, GHC == 9.4.4
 
 source-repository head
   type:                git
@@ -59,6 +59,7 @@ library
                        Language.Halide.Internal
                        Language.Halide.Context
                        Language.Halide.Expr
+                       Language.Halide.Func
   build-depends:       inline-c
                      , inline-c-cpp
                      , template-haskell

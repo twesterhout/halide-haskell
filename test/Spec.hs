@@ -10,16 +10,15 @@ import qualified Data.Vector.Storable.Mutable as SM
 import Data.Word
 import Language.Halide.Buffer
 import Language.Halide.Internal
-import Language.Halide.Type
 import Test.Hspec
 import Test.Hspec.QuickCheck
 import Test.QuickCheck (Property)
 import Test.QuickCheck.Monadic (assert, monadicIO, run)
 
 data Matrix v a = Matrix
-  { matrixRows :: !Int,
-    matrixCols :: !Int,
-    matrixData :: !(v a)
+  { matrixRows :: !Int
+  , matrixCols :: !Int
+  , matrixData :: !(v a)
   }
   deriving stock (Show, Eq)
 

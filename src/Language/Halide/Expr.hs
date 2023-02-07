@@ -12,21 +12,21 @@
 -- Description : Scalar expressions
 -- Copyright   : (c) Tom Westerhout, 2023
 module Language.Halide.Expr
-  ( Expr (..),
-    mkExpr,
-    mkVar,
-    setName,
-    cast,
-    printed,
-    equal,
-    bool,
+  ( Expr (..)
+  , mkExpr
+  , mkVar
+  , setName
+  , cast
+  , printed
+  , equal
+  , bool
 
     -- * Internal
-    withExpr,
-    withExpr2,
-    withScalarParam,
-    binaryOp,
-    unaryOp,
+  , withExpr
+  , withExpr2
+  , withScalarParam
+  , binaryOp
+  , unaryOp
   )
 where
 
@@ -224,12 +224,12 @@ mkScalarParameter maybeName = do
               } |]
     newForeignPtr deleteCxxParameter =<< maybe createWithoutName createWithName maybeName
 
-getScalarParameter ::
-  forall a.
-  IsHalideType a =>
-  Maybe Text ->
-  IORef (Maybe (ForeignPtr CxxParameter)) ->
-  IO (ForeignPtr CxxParameter)
+getScalarParameter
+  :: forall a
+   . IsHalideType a
+  => Maybe Text
+  -> IORef (Maybe (ForeignPtr CxxParameter))
+  -> IO (ForeignPtr CxxParameter)
 getScalarParameter name r = do
   readIORef r >>= \case
     Just fp -> pure fp
