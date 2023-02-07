@@ -17,9 +17,9 @@ import Test.QuickCheck (Property)
 import Test.QuickCheck.Monadic (assert, monadicIO, run)
 
 data Matrix v a = Matrix
-  { matrixRows :: !Int,
-    matrixCols :: !Int,
-    matrixData :: !(v a)
+  { matrixRows :: !Int
+  , matrixCols :: !Int
+  , matrixData :: !(v a)
   }
   deriving stock (Show, Eq)
 
