@@ -6,13 +6,17 @@
 -- Copyright   : (c) Tom Westerhout, 2023
 module Language.Halide.Context
   ( importHalide
-  , defineExceptionHandler
-  , halideCxt
+  , handleHalideExceptions
+  , handleHalideExceptionsM
   )
 where
 
+import Data.Text (unpack)
+import Data.Text.Encoding (decodeUtf8)
+import GHC.Stack (HasCallStack)
 import qualified Language.C.Inline as C
 import qualified Language.C.Inline.Cpp as C
+import qualified Language.C.Inline.Cpp.Exception as C
 import Language.Halide.Buffer
 import Language.Halide.Type
 import Language.Haskell.TH (DecsQ)
@@ -27,6 +31,16 @@ importHalide =
       , C.include "<Halide.h>"
       , defineExceptionHandler
       ]
+
+-- | Convert Halide C++ exceptions into calls to 'error'.
+handleHalideExceptions :: HasCallStack => Either C.CppException a -> IO a
+handleHalideExceptions (Right x) = pure x
+handleHalideExceptions (Left (C.CppStdException _ msg _)) = error $ unpack (decodeUtf8 msg)
+handleHalideExceptions (Left err) = error $ "Halide error: " <> show err
+
+-- | Similar to 'handleHalideExceptions' but takes a monadic action.
+handleHalideExceptionsM :: HasCallStack => IO (Either C.CppException a) -> IO a
+handleHalideExceptionsM action = action >>= handleHalideExceptions
 
 -- | Define @inline-c@ context for Halide types.
 halideCxt :: C.Context

@@ -55,11 +55,12 @@ library
   import:              common-options
   hs-source-dirs:      src
   exposed-modules:     Language.Halide.Buffer
-                       Language.Halide.Type
-                       Language.Halide.Internal
                        Language.Halide.Context
                        Language.Halide.Expr
                        Language.Halide.Func
+                       Language.Halide.Internal
+                       Language.Halide.Kernel
+                       Language.Halide.Type
   build-depends:       inline-c
                      , inline-c-cpp
                      , template-haskell

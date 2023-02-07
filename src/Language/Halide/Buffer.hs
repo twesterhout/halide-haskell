@@ -1,9 +1,7 @@
 -- |
--- Copyright: (c) 2021 Tom Westerhout
--- SPDX-License-Identifier: BSD-3-Clause
--- Maintainer: Tom Westerhout <14264576+twesterhout@users.noreply.github.com>
---
--- See README for more info
+-- Module      : Language.Halide.Buffer
+-- Description : Buffers
+-- Copyright   : (c) Tom Westerhout, 2021-2023
 module Language.Halide.Buffer
   ( HalideBuffer (..)
   , RawHalideBuffer (..)
@@ -31,6 +29,7 @@ import GHC.Stack (HasCallStack)
 import GHC.TypeNats
 import Language.Halide.Type
 
+-- | Haskell analogue of @halide_dimension_t@
 data HalideDimension = HalideDimension
   { halideDimensionMin :: {-# UNPACK #-} !Int32
   , halideDimensionExtent :: {-# UNPACK #-} !Int32
@@ -73,8 +72,10 @@ simpleDimension extent stride = HalideDimension 0 (toInt32 extent) (toInt32 stri
 rowMajorStrides :: Integral a => [a] -> [a]
 rowMajorStrides = drop 1 . scanr (*) 1
 
+-- | Haskell analogue of @halide_device_interface_t@.
 data HalideDeviceInterface
 
+-- | Haskell analogue of @halide_buffer_t@.
 data RawHalideBuffer = RawHalideBuffer
   { halideBufferDevice :: !Word64
   , halideBufferDeviceInterface :: !(Ptr HalideDeviceInterface)
@@ -87,6 +88,8 @@ data RawHalideBuffer = RawHalideBuffer
   }
   deriving stock (Show, Eq)
 
+-- | A wrapper around 'RawHalideBuffer' that ensures that Halide kernels
+-- receive buffers of the right type and dimensionality.
 newtype HalideBuffer (n :: Nat) (a :: Type) = HalideBuffer {unHalideBuffer :: RawHalideBuffer}
   deriving stock (Show, Eq)
 
@@ -113,6 +116,11 @@ instance Storable RawHalideBuffer where
     pokeByteOff p 40 (halideBufferDim x)
     pokeByteOff p 48 (halideBufferPadding x)
 
+-- | Construct a 'HalideBuffer' from a pointer to the data, a list of extents,
+-- and a list of strides, and use it in an 'IO' action.
+--
+-- This function throws a runtime error if the number of dimensions does not
+-- match @n@.
 bufferFromPtrShapeStrides
   :: forall n a b
    . (KnownNat n, IsHalideType a)
@@ -143,6 +151,7 @@ bufferFromPtrShapeStrides p shape stride action =
             }
     with buffer (action . castPtr)
 
+-- | Similar to 'bufferFromPtrShapeStrides', but assumes row-major strides.
 bufferFromPtrShape
   :: forall n a b
    . (KnownNat n, IsHalideType a)
@@ -152,11 +161,9 @@ bufferFromPtrShape
   -> IO b
 bufferFromPtrShape p shape = bufferFromPtrShapeStrides p shape (rowMajorStrides shape)
 
+-- | A typeclass for types that can be used as Halide buffers.
 class (KnownNat n, IsHalideType a) => IsHalideBuffer t n a | t -> n, t -> a where
   withHalideBuffer :: t -> (Ptr (HalideBuffer n a) -> IO b) -> IO b
-
--- withRawHalideBuffer :: forall n a t b. IsHalideBuffer t n a => t -> (Ptr RawHalideBuffer -> IO b) -> IO b
--- withRawHalideBuffer x f = withHalideBuffer x $ \(HalideBuffer raw) -> with raw f
 
 instance IsHalideType a => IsHalideBuffer (S.Vector a) 1 a where
   withHalideBuffer v f =
