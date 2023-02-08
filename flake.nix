@@ -93,7 +93,7 @@
             ];
             shellHook = ''
               export PROMPT_COMMAND=""
-              export PS1='(nix) GHC ${ghcVersion} \w $ '
+              export PS1='(nix) GHC ${haskellPackages.ghc.version} \w $ '
               export HALIDE_PATH=${pkgs.halide}
               export LD_LIBRARY_PATH=$HALIDE_PATH/lib:$LD_LIBRARY_PATH
             '';
