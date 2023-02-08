@@ -17,6 +17,9 @@ module Language.Halide.Type
   , HalideType (..)
   , IsHalideType (..)
   , CxxExpr
+  , CxxVar
+  , CxxRVar
+  , CxxVarOrRVar
   , CxxFunc
   , CxxParameter
   , CxxArgument
@@ -61,6 +64,15 @@ import Language.Haskell.TH.Syntax (Lift)
 
 -- | Haskell counterpart of @Halide::Expr@.
 data CxxExpr
+
+-- | Haskell counterpart of @Halide::Var@.
+data CxxVar
+
+-- | Haskell counterpart of @Halide::RVar@.
+data CxxRVar
+
+-- | Haskell counterpart of @Halide::VarOrRVar@.
+data CxxVarOrRVar
 
 -- | Haskell counterpart of @Halide::Internal::Parameter@.
 data CxxParameter

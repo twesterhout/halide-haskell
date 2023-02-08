@@ -62,18 +62,20 @@
       # It will also affects all dependent libraries.
       # overrides allows us to patch existing Haskell packages, or introduce new ones
       # see here for specifics: https://nixos.wiki/wiki/Overlays
-      haskellPackagesOverride = ps: ps.override {
-        overrides = self: super: {
-          halide-haskell = self.callCabal2nix "halide-haskell" src {
-            Halide = pkgs.halide;
+      haskellPackagesOverride = ps:
+        trace "GHC version ${ps.ghc.version}"
+          ps.override
+          {
+            overrides = self: super: {
+              halide-haskell = self.callCabal2nix "halide-haskell" src {
+                Halide = pkgs.halide;
+              };
+            };
           };
-        };
-      };
 
       outputsFor =
         { haskellPackages
-        , ghcVersion ? removeDots haskellPackages.ghc.version
-        , name ? "ghc${ghcVersion}"
+        , name
         , package ? ""
         , ...
         }:
@@ -96,24 +98,16 @@
               export LD_LIBRARY_PATH=$HALIDE_PATH/lib:$LD_LIBRARY_PATH
             '';
           };
+          # The formatter to use for .nix files (but not .hs files)
+          # Allows us to run `nix fmt` to reformat nix files.
+          formatter = pkgs.nixpkgs-fmt;
         };
     in
-    foldl' (acc: conf: lib.recursiveUpdate acc (outputsFor conf))
-      {
-        # The formatter to use for .nix files (but not .hs files)
-        # Allows us to run `nix fmt` to reformat nix files.
-        formatter = pkgs.nixpkgs-fmt;
-      }
-      ((lib.pipe pkgs.haskell.packages [
-        attrValues
-        (filter (ps: ps ? ghc))
-        (map (ps: { haskellPackages = ps; }))
-      ]) ++ [
-        {
-          haskellPackages = pkgs.haskellPackages;
-          name = "default";
-          package = "halide-haskell";
-        }
-      ])
+    foldl' (acc: conf: lib.recursiveUpdate acc (outputsFor conf)) { }
+      (lib.mapAttrsToList (name: haskellPackages: { inherit name haskellPackages; }) pkgs.haskell.packages ++ [{
+        haskellPackages = pkgs.haskellPackages;
+        name = "default";
+        package = "halide-haskell";
+      }])
   );
 }

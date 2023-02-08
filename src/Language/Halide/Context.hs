@@ -61,6 +61,9 @@ halideCxt =
     <> C.bsCtx
     <> C.cppTypePairs
       [ ("Halide::Expr", [t|CxxExpr|])
+      , ("Halide::Var", [t|CxxVar|])
+      , ("Halide::RVar", [t|CxxRVar|])
+      , ("Halide::VarOrRVar", [t|CxxVarOrRVar|])
       , ("Halide::Func", [t|CxxFunc|])
       , ("Halide::Internal::Parameter", [t|CxxParameter|])
       , ("Halide::ImageParam", [t|CxxImageParam|])

@@ -60,6 +60,7 @@ library
                        Language.Halide.Expr
                        Language.Halide.Func
                        Language.Halide.Kernel
+                       Language.Halide.Target
                        Language.Halide.Type
   build-depends:       inline-c
                      , inline-c-cpp

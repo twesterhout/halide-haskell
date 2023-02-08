@@ -38,7 +38,7 @@ import Foreign.Ptr (FunPtr, Ptr, castPtr)
 import Foreign.Storable
 import GHC.TypeNats
 import qualified Language.C.Inline as C
-import qualified Language.C.Inline.Cpp.Exception as CU
+import qualified Language.C.Inline.Cpp.Exception as C
 import qualified Language.C.Inline.Unsafe as CU
 import Language.Halide.Buffer
 import Language.Halide.Context
@@ -106,7 +106,7 @@ class ValidParameter (t :: Type) where
 instance IsHalideType a => ValidParameter (Expr a) where
   appendToArgList :: Ptr (CxxVector CxxArgument) -> Expr a -> IO ()
   appendToArgList v expr =
-    withScalarParam expr $ \p ->
+    asScalarParam expr $ \p ->
       [CU.exp| void { $(std::vector<Halide::Argument>* v)->emplace_back(
         $(Halide::Internal::Parameter const* p)->name(),
         Halide::Argument::InputScalar,
@@ -202,7 +202,7 @@ mkKernel' buildFunc = do
       withFunc func $ \f -> do
         wrapCxxCallable
           =<< handleHalideExceptions
-          =<< [CU.tryBlock| Halide::Callable* {
+          =<< [C.tryBlock| Halide::Callable* {
                 return handle_halide_exceptions([=]() {
                   return new Halide::Callable{$(Halide::Func* f)->compile_to_callable(
                     *$(const std::vector<Halide::Argument>* v))};

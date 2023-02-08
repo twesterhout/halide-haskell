@@ -18,6 +18,8 @@ module Language.Halide.Func
   , (!)
   , printLoopNest
   , realize1D
+  , TailStrategy (..)
+  , vectorize
 
     -- ** Internal
   , ValidIndex (toExprList)
@@ -44,12 +46,14 @@ import Foreign.Ptr (FunPtr, Ptr, castPtr)
 import GHC.Stack (HasCallStack)
 import GHC.TypeLits
 import qualified Language.C.Inline as C
+import qualified Language.C.Inline.Cpp.Exception as C
 import qualified Language.C.Inline.Unsafe as CU
 import Language.Halide.Buffer
 import Language.Halide.Context
 import Language.Halide.Expr
 import Language.Halide.Type
 import System.IO.Unsafe (unsafePerformIO)
+import Prelude hiding (tail)
 
 importHalide
 
@@ -62,6 +66,152 @@ data Func (n :: Nat) (a :: Type)
   | -- | A buffer parameter to a function. See 'Expr' for more the reason, why
     -- we use IORef here.
     BufferParam (IORef (Maybe (ForeignPtr CxxImageParam)))
+
+-- | Different ways to handle a tail case in a split when the split factor does
+-- not provably divide the extent.
+--
+-- This is the Haskell counterpart of [@Halide::TailStrategy@](https://halide-lang.org/docs/namespace_halide.html#a6c6557df562bd7850664e70fdb8fea0f).
+data TailStrategy
+  = -- | Round up the extent to be a multiple of the split factor.
+    --
+    -- Not legal for RVars, as it would change the meaning of the algorithm.
+    --
+    -- * Pros: generates the simplest, fastest code.
+    -- * Cons: if used on a stage that reads from the input or writes to the
+    -- output, constrains the input or output size to be a multiple of the
+    -- split factor.
+    TailRoundUp
+  | -- | Guard the inner loop with an if statement that prevents evaluation
+    -- beyond the original extent.
+    --
+    -- Always legal. The if statement is treated like a boundary condition, and
+    -- factored out into a loop epilogue if possible.
+    --
+    -- * Pros: no redundant re-evaluation; does not constrain input our output sizes.
+    -- * Cons: increases code size due to separate tail-case handling;
+    -- vectorization will scalarize in the tail case to handle the if
+    -- statement.
+    TailGuardWithIf
+  | -- | Guard the loads and stores in the loop with an if statement that
+    -- prevents evaluation beyond the original extent.
+    --
+    -- Always legal. The if statement is treated like a boundary condition, and
+    -- factored out into a loop epilogue if possible.
+    -- * Pros: no redundant re-evaluation; does not constrain input or output
+    -- sizes.
+    -- * Cons: increases code size due to separate tail-case handling.
+    TailPredicate
+  | -- | Guard the loads in the loop with an if statement that prevents
+    -- evaluation beyond the original extent.
+    --
+    -- Only legal for innermost splits. Not legal for RVars, as it would change
+    -- the meaning of the algorithm. The if statement is treated like a
+    -- boundary condition, and factored out into a loop epilogue if possible.
+    -- * Pros: does not constrain input sizes, output size constraints are
+    -- simpler than full predication.
+    -- * Cons: increases code size due to separate tail-case handling,
+    -- constrains the output size to be a multiple of the split factor.
+    TailPredicateLoads
+  | -- | Guard the stores in the loop with an if statement that prevents
+    -- evaluation beyond the original extent.
+    --
+    -- Only legal for innermost splits. Not legal for RVars, as it would change
+    -- the meaning of the algorithm. The if statement is treated like a
+    -- boundary condition, and factored out into a loop epilogue if possible.
+    -- * Pros: does not constrain output sizes, input size constraints are
+    -- simpler than full predication.
+    -- * Cons: increases code size due to separate tail-case handling,
+    -- constraints the input size to be a multiple of the split factor.
+    TailPredicateStores
+  | -- | Prevent evaluation beyond the original extent by shifting the tail
+    -- case inwards, re-evaluating some points near the end.
+    --
+    -- Only legal for pure variables in pure definitions. If the inner loop is
+    -- very simple, the tail case is treated like a boundary condition and
+    -- factored out into an epilogue.
+    --
+    -- This is a good trade-off between several factors. Like 'TailRoundUp', it
+    -- supports vectorization well, because the inner loop is always a fixed
+    -- size with no data-dependent branching. It increases code size slightly
+    -- for inner loops due to the epilogue handling, but not for outer loops
+    -- (e.g. loops over tiles). If used on a stage that reads from an input or
+    -- writes to an output, this stategy only requires that the input/output
+    -- extent be at least the split factor, instead of a multiple of the split
+    -- factor as with 'TailRoundUp'.
+    TailShiftInwards
+  | -- | For pure definitions use 'TailShiftInwards'.
+    --
+    -- For pure vars in update definitions use 'TailRoundUp'. For RVars in update
+    -- definitions use 'TailGuardWithIf'.
+    TailAuto
+  deriving stock (Eq, Ord, Show)
+
+instance Enum TailStrategy where
+  fromEnum =
+    fromIntegral . \case
+      TailRoundUp -> [CU.pure| int { static_cast<int>(Halide::TailStrategy::RoundUp) } |]
+      TailGuardWithIf -> [CU.pure| int { static_cast<int>(Halide::TailStrategy::GuardWithIf) } |]
+      TailPredicate -> [CU.pure| int { static_cast<int>(Halide::TailStrategy::Predicate) } |]
+      TailPredicateLoads -> [CU.pure| int { static_cast<int>(Halide::TailStrategy::PredicateLoads) } |]
+      TailPredicateStores -> [CU.pure| int { static_cast<int>(Halide::TailStrategy::PredicateStores) } |]
+      TailShiftInwards -> [CU.pure| int { static_cast<int>(Halide::TailStrategy::ShiftInwards) } |]
+      TailAuto -> [CU.pure| int { static_cast<int>(Halide::TailStrategy::Auto) } |]
+  toEnum k
+    | fromIntegral k == [CU.pure| int { static_cast<int>(Halide::TailStrategy::RoundUp) } |] = TailRoundUp
+    | fromIntegral k == [CU.pure| int { static_cast<int>(Halide::TailStrategy::GuardWithIf) } |] = TailGuardWithIf
+    | fromIntegral k == [CU.pure| int { static_cast<int>(Halide::TailStrategy::Predicate) } |] = TailPredicate
+    | fromIntegral k == [CU.pure| int { static_cast<int>(Halide::TailStrategy::PredicateLoads) } |] = TailPredicateLoads
+    | fromIntegral k == [CU.pure| int { static_cast<int>(Halide::TailStrategy::PredicateStores) } |] = TailPredicateStores
+    | fromIntegral k == [CU.pure| int { static_cast<int>(Halide::TailStrategy::ShiftInwards) } |] = TailShiftInwards
+    | fromIntegral k == [CU.pure| int { static_cast<int>(Halide::TailStrategy::Auto) } |] = TailAuto
+    | otherwise = error $ "invalid TailStrategy: " <> show k
+
+-- | Split a dimension by the given factor, then vectorize the inner dimension.
+--
+-- This is how you vectorize a loop of unknown size. The variable to be
+-- vectorized should be the innermost one. After this call, var refers to the
+-- outer dimension of the split.
+vectorize
+  :: (KnownNat n, IsHalideType a)
+  => TailStrategy
+  -> Func n a
+  -> Expr Int32
+  -- ^ Variable to vectorize
+  -> Expr Int32
+  -- ^ Split factor
+  -> IO ()
+vectorize strategy func var factor =
+  withFunc func $ \f ->
+    asVarOrRVar var $ \x ->
+      asExpr factor $ \n ->
+        handleHalideExceptionsM
+          [C.tryBlock| void {
+            $(Halide::Func* f)->vectorize(*$(Halide::VarOrRVar* x), *$(Halide::Expr* n),
+                                          static_cast<Halide::TailStrategy>($(int tail)));
+          } |]
+  where
+    tail = fromIntegral (fromEnum strategy)
+
+-- unroll
+--   :: (KnownNat n, IsHalideType a)
+--   => TailStrategy
+--   -> Func n a
+--   -> Expr Int32
+--   -- ^ Variable to vectorize
+--   -> Expr Int32
+--   -- ^ Split factor
+--   -> IO ()
+-- vectorize strategy func var factor =
+--   withFunc func $ \f ->
+--     asVarOrRVar var $ \x ->
+--       asExpr factor $ \n ->
+--         handleHalideExceptionsM
+--           [C.tryBlock| void {
+--             $(Halide::Func* f)->vectorize(*$(Halide::VarOrRVar* x), *$(Halide::Expr* n),
+--                                           static_cast<Halide::TailStrategy>($(int tail)));
+--           } |]
+--   where
+--     tail = fromIntegral (fromEnum strategy)
 
 deleteCxxImageParam :: FunPtr (Ptr CxxImageParam -> IO ())
 deleteCxxImageParam = [C.funPtr| void deleteImageParam(Halide::ImageParam* p) { delete p; } |]

@@ -72,6 +72,23 @@ main = hspec $ do
           scaledDiagonal 2 a' out'
       S.unsafeFreeze (matrixData out) `shouldReturn` S.fromList [0.5, 0, 0, 0, 1, 0, 0, 0, 1.5]
 
+  describe "vectorize" $ do
+    it "vectorizes loops" $ do
+      copy <- mkKernel $ \src -> do
+        i <- mkVar "i"
+        dest <- define "dest" i $ src ! i
+        vectorize TailShiftInwards dest i 4
+        pure dest
+      -- Note that since we use TailShiftInwards, we need the buffers to be at
+      -- least 4 elements long.
+      let src :: S.Vector Int64
+          src = S.generate 10 fromIntegral
+      dest <- SM.new (S.length src)
+      withHalideBuffer src $ \srcPtr ->
+        withHalideBuffer dest $ \destPtr ->
+          copy srcPtr destPtr
+      S.unsafeFreeze dest `shouldReturn` src
+
   describe "Num Expr" $ modifyMaxSuccess (const 10) $ do
     let p :: forall a. (IsHalideType a, Eq a, Num a) => a -> a -> Property
         p x y = monadicIO $ do
