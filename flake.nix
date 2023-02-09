@@ -76,14 +76,15 @@
                 attrs.propagatedBuildInputs
                 ++ lib.optionals withIntelOpenCL [clinfo intel-ocl ocl-icd]
                 ++ lib.optional withCuda inputs.nixGL.packages.${system}.nixGLDefault;
-              setupHook = with pkgs; writeText "setup-hook.sh" ''
-                setupOpenCL() {
-                  export PATH=${clinfo}/bin:$PATH
-                  export LD_LIBRARY_PATH=${ocl-icd}/lib:${Halide}/lib:$LD_LIBRARY_PATH
-                  export OCL_ICD_VENDORS="${pkgs.intel-ocl}/etc/OpenCL/vendors"
-                }
-                addEnvHooks "$hostOffset" setupOpenCL
-              '';
+              # NOTE: This does not work... :(
+              # setupHook = with pkgs; writeText "setup-hook.sh" ''
+              #   setupOpenCL() {
+              #     export PATH=${clinfo}/bin:$PATH
+              #     export LD_LIBRARY_PATH=${ocl-icd}/lib:${Halide}/lib:$LD_LIBRARY_PATH
+              #     export OCL_ICD_VENDORS="${pkgs.intel-ocl}/etc/OpenCL/vendors"
+              #   }
+              #   addEnvHooks "$hostOffset" setupOpenCL
+              # '';
             });
         in
         lib.makeOverridable builder { withIntelOpenCL = false; withCuda = false; Halide = pkgs.halide; };
