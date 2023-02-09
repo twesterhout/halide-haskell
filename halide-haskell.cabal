@@ -69,20 +69,22 @@ library
                      , vector
                      , primitive
                      , constraints
+                     -- For dlopen
+                     , unix
   extra-libraries:     Halide
                        stdc++
+
+executable halide-haskell
+  import:              common-options
+  hs-source-dirs:      example
+  main-is:             Example01.hs
+  build-depends:       halide-haskell
+                     , vector
 
 executable getting-started
   import:              common-options
   hs-source-dirs:      example
   main-is:             GettingStarted.hs
-  build-depends:       halide-haskell
-                     , vector
-
-executable example01
-  import:              common-options
-  hs-source-dirs:      example
-  main-is:             Example01.hs
   build-depends:       halide-haskell
                      , vector
 

@@ -23,6 +23,11 @@
       url = "github:halide/Halide";
       flake = false;
     };
+    nixGL = {
+      url = "github:guibou/nixGL";
+      inputs.flake-utils.follows = "flake-utils";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = inputs: inputs.flake-utils.lib.eachDefaultSystem (system:
@@ -41,6 +46,7 @@
           })
         ];
       };
+
       removeDots = version: concatStringsSep "" (splitVersion version);
 
       # only consider source dirs and package.yaml as source to our Haskell package
@@ -58,18 +64,44 @@
         ];
       };
 
+      halide-haskell-for = haskellPackages:
+        let
+          builder =
+            { withIntelOpenCL
+            , withCuda
+            , Halide
+            }:
+            (haskellPackages.callCabal2nix "halide-haskell" src { inherit Halide; }).overrideAttrs (attrs: {
+              propagatedBuildInputs = with pkgs;
+                attrs.propagatedBuildInputs
+                ++ lib.optionals withIntelOpenCL [clinfo intel-ocl ocl-icd]
+                ++ lib.optional withCuda inputs.nixGL.packages.${system}.nixGLDefault;
+              setupHook = with pkgs; writeText "setup-hook.sh" ''
+                setupOpenCL() {
+                  export PATH=${clinfo}/bin:$PATH
+                  export LD_LIBRARY_PATH=${ocl-icd}/lib:${Halide}/lib:$LD_LIBRARY_PATH
+                  export OCL_ICD_VENDORS="${pkgs.intel-ocl}/etc/OpenCL/vendors"
+                }
+                addEnvHooks "$hostOffset" setupOpenCL
+              '';
+            });
+        in
+        lib.makeOverridable builder { withIntelOpenCL = false; withCuda = false; Halide = pkgs.halide; };
+
       # This allows us to build a Haskell package with any given GHC version.
       # It will also affects all dependent libraries.
       # overrides allows us to patch existing Haskell packages, or introduce new ones
       # see here for specifics: https://nixos.wiki/wiki/Overlays
       haskellPackagesOverride = ps:
-        trace "GHC version ${ps.ghc.version}"
-          ps.override
+        ps.override
           {
             overrides = self: super: {
-              halide-haskell = self.callCabal2nix "halide-haskell" src {
-                Halide = pkgs.halide;
-              };
+              halide-haskell = halide-haskell-for self;
+              # self.callCabal2nix "halide-haskell" src {
+              #   Halide = pkgs.halide;
+              # };
+              #halide-haskell-cuda = self.halide-haskell.override { withCuda = true; };
+              #halide-haskell-intelOcl = self.halide-haskell.overrideAttrs (attrs: {});
             };
           };
 
@@ -80,34 +112,57 @@
         , ...
         }:
         let ps = haskellPackagesOverride haskellPackages; in
-        {
-          packages.${name} = ps.${package} or ps;
-          devShells.${name} = ps.shellFor {
-            packages = ps: [ ps.halide-haskell ];
-            withHoogle = true;
-            nativeBuildInputs = with pkgs; with ps; [
-              cabal-install
-              fourmolu
-              haskell-language-server
-              nixpkgs-fmt
-            ];
-            shellHook = ''
-              export PROMPT_COMMAND=""
-              export PS1='(nix) GHC ${haskellPackages.ghc.version} \w $ '
-              export HALIDE_PATH=${pkgs.halide}
-              export LD_LIBRARY_PATH=$HALIDE_PATH/lib:$LD_LIBRARY_PATH
-            '';
+        rec {
+          packages = {
+            "${name}" = ps.${package} or ps;
+            "${name}-intel-ocl" = ps.${package}.override { withIntelOpenCL = true; };
           };
+          devShells =
+            let
+              genericShell =
+                { withIntelOpenCL ? false
+                , withCuda ? false
+                } @ args:
+                ps.shellFor {
+                  packages = ps: [ (ps.halide-haskell.override args) ];
+                  withHoogle = true;
+                  nativeBuildInputs = with pkgs; with ps; [
+                    cabal-install
+                    fourmolu
+                    haskell-language-server
+                    nixpkgs-fmt
+                  ] ++ lib.optional withIntelOpenCL clinfo;
+                  shellHook = ''
+                    export PROMPT_COMMAND=""
+                    export PS1='(nix) GHC ${haskellPackages.ghc.version} \w $ '
+                    export LD_LIBRARY_PATH=${pkgs.halide}/lib:$LD_LIBRARY_PATH
+                  '' + (if withIntelOpenCL then ''
+                    export LD_LIBRARY_PATH=${pkgs.ocl-icd}/lib:$LD_LIBRARY_PATH
+                    export OCL_ICD_VENDORS="${pkgs.intel-ocl}/etc/OpenCL/vendors"
+                  '' else "");
+                };
+            in
+            {
+              "${name}" = genericShell { };
+              "${name}-cuda" = genericShell { withCuda = true; };
+              "${name}-intel-ocl" = genericShell { withIntelOpenCL = true; };
+            };
           # The formatter to use for .nix files (but not .hs files)
           # Allows us to run `nix fmt` to reformat nix files.
           formatter = pkgs.nixpkgs-fmt;
         };
     in
     foldl' (acc: conf: lib.recursiveUpdate acc (outputsFor conf)) { }
-      (lib.mapAttrsToList (name: haskellPackages: { inherit name haskellPackages; }) pkgs.haskell.packages ++ [{
-        haskellPackages = pkgs.haskellPackages;
-        name = "default";
-        package = "halide-haskell";
-      }])
+      (lib.mapAttrsToList (name: haskellPackages: { inherit name haskellPackages; }) pkgs.haskell.packages ++ [
+        {
+          haskellPackages = pkgs.haskellPackages;
+          name = "defaultGhc";
+        }
+        {
+          haskellPackages = pkgs.haskellPackages;
+          name = "default";
+          package = "halide-haskell";
+        }
+      ])
   );
 }

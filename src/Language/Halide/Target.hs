@@ -12,7 +12,8 @@
 module Language.Halide.Target
   ( DeviceAPI (..)
   , TargetFeature (..)
-  , foo
+  , testCUDA
+  , testOpenCL
   )
 where
 
@@ -59,13 +60,75 @@ data DeviceAPI
   | DeviceD3D12Compute
   deriving stock (Show, Eq, Ord)
 
-foo :: IO ()
-foo = do
-  [CU.block| void {
-    std::cout << Halide::host_supports_target_device(
-        Halide::get_host_target().with_feature(Halide::Target::OpenCL)) << std::endl;
-    std::cout << Halide::get_host_target() << std::endl;
-  } |]
+-- | A test that tries to compile and run a Halide pipeline using 'FeatureCUDA'.
+--
+-- This is implemented fully in C++ to make sure that we test the installation
+-- rather than our Haskell code.
+--
+-- On non-NixOS systems one should do the following:
+--
+-- > nixGLNvidia cabal repl --ghc-options='-fobject-code -O0'
+-- > ghci> testCUDA
+testCUDA :: IO ()
+testCUDA = do
+  handleHalideExceptionsM $
+    [C.tryBlock| void {
+      handle_halide_exceptions([](){
+        // Define a gradient function.
+        Halide::Func f;
+        Halide::Var x, y, xo, xi, yo, yi;
+        f(x, y) = x + y;
+        // Schedule f on the GPU in 16x16 tiles.
+        f.gpu_tile(x, y, xo, yo, xi, yi, 16, 16);
+        // Construct a target that uses the GPU.
+        Halide::Target target = Halide::get_host_target();
+        // Set CUDA as the GPU backend.
+        target.set_feature(Halide::Target::CUDA);
+        // Enable debugging so that you can see what CUDA API calls we do.
+        target.set_feature(Halide::Target::Debug);
+        // JIT-compile the pipeline.
+        f.compile_jit(target);
+        // Run it.
+        Halide::Buffer<int> result = f.realize({32, 32});
+        // Check correctness
+        for (int y = 0; y < result.height(); y++) {
+            for (int x = 0; x < result.width(); x++) {
+                if (result(x, y) != x + y) {
+                    printf("result(%d, %d) = %d instead of %d\n",
+                           x, y, result(x, y), x + y);
+                }
+            }
+        }
+      });
+    } |]
+
+-- | Similar to 'testCUDA' but for 'FeatureOpenCL'.
+testOpenCL :: IO ()
+testOpenCL = do
+  handleHalideExceptionsM $
+    [C.tryBlock| void {
+      handle_halide_exceptions([](){
+        Halide::Func f;
+        Halide::Var x, y, xo, xi, yo, yi;
+        f(x, y) = x + y;
+        f.gpu_tile(x, y, xo, yo, xi, yi, 4, 4);
+        Halide::Target target = Halide::get_host_target();
+        target.set_feature(Halide::Target::OpenCL);
+        target.set_feature(Halide::Target::Debug);
+        fprintf(stderr, "Compiling ...\n");
+        f.compile_jit(target);
+        fprintf(stderr, "Running on OpenCL ...\n");
+        Halide::Buffer<int> result = f.realize({32, 32});
+        for (int y = 0; y < result.height(); y++) {
+            for (int x = 0; x < result.width(); x++) {
+                if (result(x, y) != x + y) {
+                    printf("result(%d, %d) = %d instead of %d\n",
+                           x, y, result(x, y), x + y);
+                }
+            }
+        }
+      });
+    } |]
 
 -- |
 --
