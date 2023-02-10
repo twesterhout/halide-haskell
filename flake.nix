@@ -41,7 +41,15 @@
             halide = super.halide.overrideAttrs (attrs: {
               version = "16.0.0";
               src = inputs.halide;
-              cmakeFlags = attrs.cmakeFlags ++ [ "-DWITH_TESTS=OFF" "-DWITH_TUTORIALS=OFF" ];
+              cmakeFlags = attrs.cmakeFlags ++
+                [ "-DWITH_TESTS=OFF"
+                  "-DWITH_PYTHON_BINDINGS=OFF"
+                  "-DWITH_DOCS=OFF"
+                  "-DWITH_UTILS=OFF"
+                  "-DWITH_TUTORIALS=OFF"
+                  "-DHalide_ENABLE_RTTI=ON"
+                  "-DHalide_ENABLE_EXCEPTIONS=ON"
+                ];
             });
           })
         ];
@@ -72,10 +80,18 @@
             , Halide
             }:
             (haskellPackages.callCabal2nix "halide-haskell" src { inherit Halide; }).overrideAttrs (attrs: {
+              nativeBuildInputs = attrs.nativeBuildInputs
+                ++ lib.optional withIntelOpenCL pkgs.makeWrapper;
               propagatedBuildInputs = with pkgs;
                 attrs.propagatedBuildInputs
                 ++ lib.optionals withIntelOpenCL [clinfo intel-ocl ocl-icd]
                 ++ lib.optional withCuda inputs.nixGL.packages.${system}.nixGLDefault;
+              postInstall = (attrs.postInstall or "")
+                + (if withIntelOpenCL then ''
+                    wrapProgram $out/bin/halide-haskell \
+                      --prefix LD_LIBRARY_PATH : ${pkgs.ocl-icd}/lib \
+                      --prefix OCL_ICD_VENDORS : ${pkgs.intel-ocl}/etc/OpenCL/vendors
+                  '' else "");
               # NOTE: This does not work... :(
               # setupHook = with pkgs; writeText "setup-hook.sh" ''
               #   setupOpenCL() {

@@ -27,6 +27,7 @@ module Language.Halide.Type
   , CxxVector
   , CxxUserContext
   , CxxCallable
+  , CxxTarget
   , Arguments (..)
   , Length
   , Append
@@ -91,6 +92,9 @@ data CxxUserContext
 
 -- | Haskell counterpart of @Halide::Callable@.
 data CxxCallable
+
+-- | Haskell counterpart of @Halide::Target@.
+data CxxTarget
 
 -- | Haskell counterpart of @std::vector@.
 data CxxVector a

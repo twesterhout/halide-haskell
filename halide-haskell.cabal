@@ -66,6 +66,7 @@ library
                      , inline-c-cpp
                      , template-haskell
                      , text
+                     , bytestring
                      , vector
                      , primitive
                      , constraints
@@ -97,6 +98,8 @@ test-suite halide-haskell-test
                      , hspec
                      , QuickCheck
                      , vector
+                     , inline-c
+                     , inline-c-cpp
   ghc-options:         -threaded
                        -rtsopts
                        -with-rtsopts=-N

@@ -36,14 +36,15 @@ module Language.Halide.Expr
 where
 
 import Control.Exception (bracket)
-import Control.Monad (unless, (>=>))
+import Control.Monad (unless, when, (>=>))
 import Data.IORef
 import Data.Int (Int32)
 import Data.Proxy
 import Data.Ratio (denominator, numerator)
-import Data.Text (Text)
+import Data.Text (Text, pack, unpack)
 import qualified Data.Text.Encoding as T
 import qualified Data.Vector.Storable.Mutable as SM
+import Foreign.C.String (peekCString)
 import Foreign.C.Types (CDouble)
 import Foreign.ForeignPtr
 import Foreign.Marshal (alloca, with)
@@ -165,17 +166,24 @@ evaluate :: forall a. (HasCallStack, IsHalideType a) => Expr a -> IO a
 evaluate expr =
   asExpr expr $ \e -> do
     out <- SM.new 1
-    handleHalideExceptionsM $
-      withHalideBuffer out $ \buffer ->
-        let b = castPtr (buffer :: Ptr (HalideBuffer 1 a))
-         in [C.tryBlock| void {
-              handle_halide_exceptions([=]() {
-                Halide::Func f;
-                Halide::Var i;
-                f(i) = *$(Halide::Expr* e);
-                f.realize(Halide::Pipeline::RealizationArg{$(halide_buffer_t* b)});
-              });
-            } |]
+    -- hasError <-
+    -- handleHalideExceptionsM $
+    withHalideBuffer out $ \buffer -> do
+      let b = castPtr (buffer :: Ptr (HalideBuffer 1 a))
+      [C.throwBlock| void {
+        handle_halide_exceptions([=]() {
+          Halide::Func f;
+          Halide::Var i;
+          f(i) = *$(Halide::Expr* e);
+          f.realize(Halide::Pipeline::RealizationArg{$(halide_buffer_t* b)});
+        });
+      } |]
+    -- when (hasError /= 0) $ do
+    --   print hasError
+    --   -- msg <- fmap pack $ peekCString =<< [CU.exp| char const* { get_error_context().error() } |]
+    --   -- print msg
+    --   -- [CU.exp| void { get_error_context().reset() } |]
+    --   error $ "Halide error: "
     SM.read out 0
 
 -- | When 'Expr' is a 'ScalarParam', this function let's you set its name.
@@ -203,8 +211,18 @@ instance (IsHalideType a, Num a) => Num (Expr a) where
 
   abs :: Expr a -> Expr a
   abs = unaryOp $ \a ->
-    [CU.exp| Halide::Expr* { new Halide::Expr{
-      Halide::cast($(Halide::Expr* a)->type(), Halide::abs(*$(Halide::Expr* a)))} } |]
+    -- If the type is unsigned, then abs does nothing Also note that for signed
+    -- integers, in Halide abs returns the unsigned version, so we manually
+    -- cast it back.
+    [CU.block| Halide::Expr* {
+      if ($(Halide::Expr* a)->type().is_uint()) {
+        return new Halide::Expr{*$(Halide::Expr* a)};
+      }
+      else {
+        return new Halide::Expr{
+          Halide::cast($(Halide::Expr* a)->type(), Halide::abs(*$(Halide::Expr* a)))};
+      }
+    } |]
   negate :: Expr a -> Expr a
   negate = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{ -(*$(Halide::Expr* a))} } |]
   signum :: Expr a -> Expr a

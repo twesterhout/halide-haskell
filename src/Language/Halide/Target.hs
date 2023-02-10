@@ -10,7 +10,12 @@
 -- Description : Compilation target (i.e. machine and OS)
 -- Copyright   : (c) Tom Westerhout, 2023
 module Language.Halide.Target
-  ( DeviceAPI (..)
+  ( Target (..)
+  , hostTarget
+  , targetFeatureForDeviceAPI
+  , hostSupportsTargetDevice
+  , setFeature
+  , DeviceAPI (..)
   , TargetFeature (..)
   , testCUDA
   , testOpenCL
@@ -19,19 +24,21 @@ where
 
 import Control.Exception (bracket)
 import Control.Monad (forM_)
+import Data.ByteString (packCString)
 import Data.IORef
 import Data.Int (Int32)
 import Data.Kind (Type)
 import Data.Proxy
-import Data.Text (Text)
-import qualified Data.Text.Encoding as T
+import Data.Text (Text, unpack)
+import Data.Text.Encoding (decodeUtf8)
 import Data.Vector.Storable (Vector)
 import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Storable.Mutable as SM
 import Foreign.ForeignPtr
 import Foreign.ForeignPtr.Unsafe
-import Foreign.Marshal (with)
+import Foreign.Marshal (allocaArray0, with)
 import Foreign.Ptr (FunPtr, Ptr, castPtr)
+import GHC.IO (unsafePerformIO)
 import GHC.Stack (HasCallStack)
 import GHC.TypeLits
 import qualified Language.C.Inline as C
@@ -60,6 +67,109 @@ data DeviceAPI
   | DeviceD3D12Compute
   deriving stock (Show, Eq, Ord)
 
+instance Enum DeviceAPI where
+  fromEnum =
+    fromIntegral . \case
+      DeviceNone -> [CU.pure| int { static_cast<int>(Halide::DeviceAPI::None) } |]
+      DeviceHost -> [CU.pure| int { static_cast<int>(Halide::DeviceAPI::Host) } |]
+      DeviceDefaultGPU -> [CU.pure| int { static_cast<int>(Halide::DeviceAPI::Default_GPU) } |]
+      DeviceCUDA -> [CU.pure| int { static_cast<int>(Halide::DeviceAPI::CUDA) } |]
+      DeviceOpenCL -> [CU.pure| int { static_cast<int>(Halide::DeviceAPI::OpenCL) } |]
+      DeviceOpenGLCompute -> [CU.pure| int { static_cast<int>(Halide::DeviceAPI::OpenGLCompute) } |]
+      DeviceMetal -> [CU.pure| int { static_cast<int>(Halide::DeviceAPI::Metal) } |]
+      DeviceHexagon -> [CU.pure| int { static_cast<int>(Halide::DeviceAPI::Hexagon) } |]
+      DeviceHexagonDma -> [CU.pure| int { static_cast<int>(Halide::DeviceAPI::HexagonDma) } |]
+      DeviceD3D12Compute -> [CU.pure| int { static_cast<int>(Halide::DeviceAPI::D3D12Compute) } |]
+  toEnum k
+    | fromIntegral k == [CU.pure| int { static_cast<int>(Halide::DeviceAPI::None) } |] = DeviceNone
+    | fromIntegral k == [CU.pure| int { static_cast<int>(Halide::DeviceAPI::Host) } |] = DeviceHost
+    | fromIntegral k == [CU.pure| int { static_cast<int>(Halide::DeviceAPI::Default_GPU) } |] = DeviceDefaultGPU
+    | fromIntegral k == [CU.pure| int { static_cast<int>(Halide::DeviceAPI::CUDA) } |] = DeviceCUDA
+    | fromIntegral k == [CU.pure| int { static_cast<int>(Halide::DeviceAPI::OpenCL) } |] = DeviceOpenCL
+    | fromIntegral k == [CU.pure| int { static_cast<int>(Halide::DeviceAPI::OpenGLCompute) } |] = DeviceOpenGLCompute
+    | fromIntegral k == [CU.pure| int { static_cast<int>(Halide::DeviceAPI::Metal) } |] = DeviceMetal
+    | fromIntegral k == [CU.pure| int { static_cast<int>(Halide::DeviceAPI::Hexagon) } |] = DeviceHexagon
+    | fromIntegral k == [CU.pure| int { static_cast<int>(Halide::DeviceAPI::HexagonDma) } |] = DeviceHexagonDma
+    | fromIntegral k == [CU.pure| int { static_cast<int>(Halide::DeviceAPI::D3D12Compute) } |] = DeviceD3D12Compute
+    | fromIntegral k == [CU.pure| int { static_cast<int>(Halide::DeviceAPI::D3D12Compute) } |] = DeviceD3D12Compute
+    | otherwise = error $ "invalid DeviceAPI: " <> show k
+
+data Target = Target (ForeignPtr CxxTarget)
+
+instance Show Target where
+  show target = unpack . unsafePerformIO $
+    withCxxTarget target $ \p ->
+      allocaArray0 (fromIntegral bufSize) $ \buf -> do
+        [CU.block| void {
+          auto s = $(Halide::Target* p)->to_string();
+          std::strncpy($(char* buf), s.c_str(), $(int bufSize));
+          $(char* buf)[$(int bufSize)] = '\0';
+        } |]
+        decodeUtf8 <$> packCString buf
+    where
+      bufSize = 127
+
+wrapCxxTarget :: Ptr CxxTarget -> IO Target
+wrapCxxTarget = fmap Target . newForeignPtr deleter
+  where
+    deleter = [C.funPtr| void deleteTarget(Halide::Target* p) { delete p; } |]
+
+withCxxTarget :: Target -> (Ptr CxxTarget -> IO a) -> IO a
+withCxxTarget (Target fp) = withForeignPtr fp
+
+-- | Return the target that Halide will use.
+--
+-- If @HL_TARGET@ environment variable is set, it uses that. Otherwise, it
+-- returns the target corresponding to the host machine.
+hostTarget :: Target
+hostTarget =
+  unsafePerformIO $
+    wrapCxxTarget
+      =<< [CU.exp| Halide::Target* { new Halide::Target{Halide::get_target_from_environment()} } |]
+{-# NOINLINE hostTarget #-}
+
+targetFeatureForDeviceAPI :: DeviceAPI -> Maybe TargetFeature
+targetFeatureForDeviceAPI deviceAPI =
+  toFeature . unsafePerformIO $
+    [CU.block| int {
+      auto feature = Halide::target_feature_for_device_api(
+                       static_cast<Halide::DeviceAPI>($(int api)));
+      return (feature == Halide::Target::FeatureEnd) ? (-1) : static_cast<int>(feature);
+    } |]
+  where
+    api = fromIntegral . fromEnum $ deviceAPI
+    toFeature n
+      | n > 0 = Just . toEnum . fromIntegral $ n
+      | otherwise = Nothing
+
+hostSupportsTargetDevice :: Target -> Bool
+hostSupportsTargetDevice target =
+  unsafePerformIO . fmap (toEnum . fromIntegral) $
+    withCxxTarget target $ \t ->
+      [CU.exp| bool { Halide::host_supports_target_device(*$(Halide::Target* t)) } |]
+
+setFeature :: Target -> TargetFeature -> Target
+setFeature target feature = unsafePerformIO $
+  withCxxTarget target $ \t ->
+    wrapCxxTarget
+      =<< [CU.exp| Halide::Target* {
+            new Halide::Target{$(Halide::Target* t)->with_feature(
+              static_cast<Halide::Target::Feature>($(int f)))} 
+          } |]
+  where
+    f = fromIntegral . fromEnum $ feature
+
+-- | Return whether a GPU compute runtime is enabled.
+--
+-- Checks whether @Func::gpu_tile@ and similar are going to work.
+--
+-- For more info, see [@Target::has_gpu_feature@](https://halide-lang.org/docs/struct_halide_1_1_target.html#a22bf80aa6dc3a700c9732050d2341a80).
+hasGpuFeature :: Target -> Bool
+hasGpuFeature target =
+  unsafePerformIO . fmap (toEnum . fromIntegral) $
+    withCxxTarget target $ \t ->
+      [CU.exp| bool { $(Halide::Target* t)->has_gpu_feature() } |]
+
 -- | A test that tries to compile and run a Halide pipeline using 'FeatureCUDA'.
 --
 -- This is implemented fully in C++ to make sure that we test the installation
@@ -71,7 +181,7 @@ data DeviceAPI
 -- > ghci> testCUDA
 testCUDA :: IO ()
 testCUDA = do
-  handleHalideExceptionsM $
+  handleHalideExceptionsM
     [C.tryBlock| void {
       handle_halide_exceptions([](){
         // Define a gradient function.
@@ -105,7 +215,7 @@ testCUDA = do
 -- | Similar to 'testCUDA' but for 'FeatureOpenCL'.
 testOpenCL :: IO ()
 testOpenCL = do
-  handleHalideExceptionsM $
+  handleHalideExceptionsM
     [C.tryBlock| void {
       handle_halide_exceptions([](){
         Halide::Func f;

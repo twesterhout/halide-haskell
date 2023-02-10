@@ -1,5 +1,7 @@
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module Main (main) where
 
@@ -9,10 +11,14 @@ import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Storable.Mutable as SM
 import Data.Word
 import Language.Halide
+import Language.Halide.Context (importHalide)
 import Test.Hspec
 import Test.Hspec.QuickCheck
 import Test.QuickCheck (Property)
-import Test.QuickCheck.Monadic (assert, monadicIO, run)
+import Test.QuickCheck.Monadic (PropertyM, assert, monadicIO, run)
+import Type.Reflection
+
+importHalide
 
 data Matrix v a = Matrix
   { matrixRows :: !Int
@@ -90,17 +96,32 @@ main = hspec $ do
       S.unsafeFreeze dest `shouldReturn` src
 
   describe "Num Expr" $ modifyMaxSuccess (const 10) $ do
-    let p :: forall a. (IsHalideType a, Eq a, Num a) => a -> a -> Property
+    let isOverflowing :: Typeable a => (Integer -> Integer -> Integer) -> a -> a -> Bool
+        isOverflowing op x y
+          | Just HRefl <- eqTypeRep (typeOf x) (typeRep @Int32) =
+              op (toInteger x) (toInteger y) > toInteger (maxBound @Int32)
+                || op (toInteger x) (toInteger y) < toInteger (minBound @Int32)
+          | Just HRefl <- eqTypeRep (typeOf x) (typeRep @Int64) =
+              op (toInteger x) (toInteger y) > toInteger (maxBound @Int64)
+                || op (toInteger x) (toInteger y) < toInteger (minBound @Int64)
+          | otherwise = False
+        whenNotOverflowing op x y check
+          | isOverflowing op x y = pure ()
+          | otherwise = check
+        p :: forall a. (IsHalideType a, Eq a, Num a, Typeable a) => a -> a -> Property
         p x y = monadicIO $ do
-          assert . (x + y ==) =<< run (evaluate (mkExpr x + mkExpr y))
-          assert . (x - y ==) =<< run (evaluate (mkExpr x - mkExpr y))
-          assert . (x * y ==) =<< run (evaluate (mkExpr x * mkExpr y))
+          whenNotOverflowing (+) x y $
+            assert . (x + y ==) =<< run (evaluate (mkExpr x + mkExpr y))
+          whenNotOverflowing (-) x y $
+            assert . (x - y ==) =<< run (evaluate (mkExpr x - mkExpr y))
+          whenNotOverflowing (*) x y $
+            assert . (x * y ==) =<< run (evaluate (mkExpr x * mkExpr y))
           assert . (abs x ==) =<< run (evaluate (abs (mkExpr x)))
           assert . (negate x ==) =<< run (evaluate (negate (mkExpr x)))
     prop "Int8" $ p @Int8
     prop "Int16" $ p @Int16
-    -- prop "Int32" $ p @Int32
-    -- prop "Int64" $ p @Int64
+    prop "Int32" $ p @Int32
+    prop "Int64" $ p @Int64
     prop "Word8" $ p @Word8
     prop "Word16" $ p @Word16
     prop "Word32" $ p @Word32
