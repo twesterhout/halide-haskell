@@ -42,7 +42,8 @@
               version = "16.0.0";
               src = inputs.halide;
               cmakeFlags = attrs.cmakeFlags ++
-                [ "-DWITH_TESTS=OFF"
+                [
+                  "-DWITH_TESTS=OFF"
                   "-DWITH_PYTHON_BINDINGS=OFF"
                   "-DWITH_DOCS=OFF"
                   "-DWITH_UTILS=OFF"
@@ -84,14 +85,22 @@
                 ++ lib.optional withIntelOpenCL pkgs.makeWrapper;
               propagatedBuildInputs = with pkgs;
                 attrs.propagatedBuildInputs
-                ++ lib.optionals withIntelOpenCL [clinfo intel-ocl ocl-icd]
+                ++ lib.optionals withIntelOpenCL [ clinfo intel-ocl ocl-icd ]
                 ++ lib.optional withCuda inputs.nixGL.packages.${system}.nixGLDefault;
               postInstall = (attrs.postInstall or "")
                 + (if withIntelOpenCL then ''
-                    wrapProgram $out/bin/halide-haskell \
-                      --prefix LD_LIBRARY_PATH : ${pkgs.ocl-icd}/lib \
-                      --prefix OCL_ICD_VENDORS : ${pkgs.intel-ocl}/etc/OpenCL/vendors
-                  '' else "");
+                wrapProgram $out/bin/halide-haskell \
+                  --prefix LD_LIBRARY_PATH : ${pkgs.ocl-icd}/lib \
+                  --prefix OCL_ICD_VENDORS : ${pkgs.intel-ocl}/etc/OpenCL/vendors
+              '' else "")
+                + (if withCuda then ''
+                prog="$out/bin/halide-haskell"
+                hidden="$(dirname "$prog")/.$(basename "$prog")"-wrapped
+                mv "$prog" "$hidden"
+                echo "#!${pkgs.stdenv.shell}" > "$prog"
+                echo "exec ${inputs.nixGL.packages.${system}.nixGLDefault}/bin/nixGL $hidden \"\$@\"" >> "$prog"
+                chmod +x "$prog"
+              '' else "");
               # NOTE: This does not work... :(
               # setupHook = with pkgs; writeText "setup-hook.sh" ''
               #   setupOpenCL() {
@@ -132,6 +141,7 @@
         rec {
           packages = {
             "${name}" = ps.${package} or ps;
+            "${name}-cuda" = ps.${package}.override { withCuda = true; };
             "${name}-intel-ocl" = ps.${package}.override { withIntelOpenCL = true; };
           };
           devShells =
@@ -148,7 +158,9 @@
                     fourmolu
                     haskell-language-server
                     nixpkgs-fmt
-                  ] ++ lib.optional withIntelOpenCL clinfo;
+                  ]
+                  ++ lib.optional withIntelOpenCL clinfo
+                  ++ lib.optional withCuda inputs.nixGL.packages.${system}.nixGLDefault;
                   shellHook = ''
                     export PROMPT_COMMAND=""
                     export PS1='(nix) GHC ${haskellPackages.ghc.version} \w $ '
