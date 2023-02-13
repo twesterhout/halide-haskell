@@ -38,6 +38,28 @@
         inherit system;
         overlays = [
           (self: super: {
+            llvmPackages_14 = {
+              inherit (super.llvmPackages_14)
+                clang
+                clang-unwrapped
+                libraries
+                llvm
+                lld
+                libclang
+                stdenv
+                tools
+                openmp;
+              libllvm = super.llvmPackages_14.libllvm;
+              # libllvm = super.llvmPackages_14.libllvm.overrideAttrs (attrs: {
+              #   cmakeFlags = attrs.cmakeFlags ++ [ "-DLLVM_ENABLE_EH=ON" ];
+              # });
+            };
+            # super.llvmPackages_14.overrideAttrs (attrs: {
+
+            # });
+            #  {
+            #   bootBintoolsNoLibc = null;
+            # };
             halide = super.halide.overrideAttrs (attrs: {
               version = "16.0.0";
               src = inputs.halide;
