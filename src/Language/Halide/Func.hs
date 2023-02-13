@@ -20,6 +20,7 @@ module Language.Halide.Func
   , realize1D
   , TailStrategy (..)
   , vectorize
+  , unroll
 
     -- ** Internal
   , ValidIndex (toExprList)
@@ -192,26 +193,26 @@ vectorize strategy func var factor =
   where
     tail = fromIntegral (fromEnum strategy)
 
--- unroll
---   :: (KnownNat n, IsHalideType a)
---   => TailStrategy
---   -> Func n a
---   -> Expr Int32
---   -- ^ Variable to vectorize
---   -> Expr Int32
---   -- ^ Split factor
---   -> IO ()
--- vectorize strategy func var factor =
---   withFunc func $ \f ->
---     asVarOrRVar var $ \x ->
---       asExpr factor $ \n ->
---         handleHalideExceptionsM
---           [C.tryBlock| void {
---             $(Halide::Func* f)->vectorize(*$(Halide::VarOrRVar* x), *$(Halide::Expr* n),
---                                           static_cast<Halide::TailStrategy>($(int tail)));
---           } |]
---   where
---     tail = fromIntegral (fromEnum strategy)
+unroll
+  :: (KnownNat n, IsHalideType a)
+  => TailStrategy
+  -> Func n a
+  -> Expr Int32
+  -- ^ Variable to vectorize
+  -> Expr Int32
+  -- ^ Split factor
+  -> IO ()
+unroll strategy func var factor =
+  withFunc func $ \f ->
+    asVarOrRVar var $ \x ->
+      asExpr factor $ \n ->
+        handleHalideExceptionsM
+          [C.tryBlock| void {
+            $(Halide::Func* f)->unroll(*$(Halide::VarOrRVar* x), *$(Halide::Expr* n),
+                                       static_cast<Halide::TailStrategy>($(int tail)));
+          } |]
+  where
+    tail = fromIntegral (fromEnum strategy)
 
 deleteCxxImageParam :: FunPtr (Ptr CxxImageParam -> IO ())
 deleteCxxImageParam = [C.funPtr| void deleteImageParam(Halide::ImageParam* p) { delete p; } |]
@@ -262,12 +263,11 @@ instance (KnownNat n, IsHalideType a) => Named (Func n a) where
   setName :: Func n a -> Text -> IO ()
   setName (Func _) _ = error "the name of this Func has already been set"
   setName (BufferParam r) name = do
-    _ <-
-      maybe
-        (mkBufferParameter @n @a (Just name))
-        (error "the name of this Func has already been set")
-        =<< readIORef r
-    pure ()
+    readIORef r >>= \case
+      Just _ -> error "the name of this Func has already been set"
+      Nothing -> do
+        fp <- mkBufferParameter @n @a (Just name)
+        writeIORef r (Just fp)
 
 deleteCxxFunc :: FunPtr (Ptr CxxFunc -> IO ())
 deleteCxxFunc = [C.funPtr| void deleteFunc(Halide::Func *x) { delete x; } |]

@@ -15,40 +15,27 @@ module Language.Halide.Target
   , targetFeatureForDeviceAPI
   , hostSupportsTargetDevice
   , setFeature
+  , hasGpuFeature
   , DeviceAPI (..)
   , TargetFeature (..)
   , testCUDA
   , testOpenCL
+  , withCxxTarget
   )
 where
 
-import Control.Exception (bracket)
-import Control.Monad (forM_)
 import Data.ByteString (packCString)
-import Data.IORef
-import Data.Int (Int32)
-import Data.Kind (Type)
-import Data.Proxy
-import Data.Text (Text, unpack)
+import Data.Text (unpack)
 import Data.Text.Encoding (decodeUtf8)
-import Data.Vector.Storable (Vector)
-import qualified Data.Vector.Storable as S
-import qualified Data.Vector.Storable.Mutable as SM
 import Foreign.ForeignPtr
-import Foreign.ForeignPtr.Unsafe
-import Foreign.Marshal (allocaArray0, with)
-import Foreign.Ptr (FunPtr, Ptr, castPtr)
+import Foreign.Marshal (allocaArray0)
+import Foreign.Ptr (Ptr)
 import GHC.IO (unsafePerformIO)
-import GHC.Stack (HasCallStack)
-import GHC.TypeLits
 import qualified Language.C.Inline as C
 import qualified Language.C.Inline.Cpp.Exception as C
 import qualified Language.C.Inline.Unsafe as CU
-import Language.Halide.Buffer
 import Language.Halide.Context
-import Language.Halide.Expr
 import Language.Halide.Type
-import System.IO.Unsafe (unsafePerformIO)
 import Prelude hiding (tail)
 
 importHalide
@@ -148,8 +135,8 @@ hostSupportsTargetDevice target =
     withCxxTarget target $ \t ->
       [CU.exp| bool { Halide::host_supports_target_device(*$(Halide::Target* t)) } |]
 
-setFeature :: Target -> TargetFeature -> Target
-setFeature target feature = unsafePerformIO $
+setFeature :: TargetFeature -> Target -> Target
+setFeature feature target = unsafePerformIO $
   withCxxTarget target $ \t ->
     wrapCxxTarget
       =<< [CU.exp| Halide::Target* {

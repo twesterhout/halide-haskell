@@ -191,12 +191,11 @@ evaluate expr =
 instance IsHalideType a => Named (Expr a) where
   setName :: HasCallStack => Expr a -> Text -> IO ()
   setName (ScalarParam r) name = do
-    _ <-
-      maybe
-        (mkScalarParameter @a (Just name))
-        (error "the name of this Expr has already been set")
-        =<< readIORef r
-    pure ()
+    readIORef r >>= \case
+      Just _ -> error "the name of this Expr has already been set"
+      Nothing -> do
+        fp <- mkScalarParameter @a (Just name)
+        writeIORef r (Just fp)
   setName _ _ = error "cannot set the name of an expression that is not a parameter"
 
 instance (IsHalideType a, Num a) => Num (Expr a) where

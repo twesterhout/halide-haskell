@@ -18,7 +18,8 @@
 -- Copyright   : (c) Tom Westerhout, 2023
 module Language.Halide.Kernel
   ( mkKernel
-  , mkKernel'
+  , compileToLoweredStmt
+  , StmtOutputFormat (..)
   )
 where
 
@@ -31,6 +32,9 @@ import Data.Primitive.PrimArray (MutablePrimArray)
 import qualified Data.Primitive.PrimArray as P
 import qualified Data.Primitive.Ptr as P
 import Data.Proxy
+import Data.Text (Text, pack)
+import Data.Text.Encoding (encodeUtf8)
+import qualified Data.Text.IO as T
 import Foreign.C.Types (CUIntPtr (..))
 import Foreign.ForeignPtr
 import Foreign.ForeignPtr.Unsafe
@@ -44,7 +48,9 @@ import Language.Halide.Buffer
 import Language.Halide.Context
 import Language.Halide.Expr
 import Language.Halide.Func
+import Language.Halide.Target
 import Language.Halide.Type
+import System.IO.Temp (withSystemTempDirectory)
 
 importHalide
 
@@ -182,21 +188,42 @@ type family Lowered (t :: [Type]) :: [Type] where
   Lowered (Expr a ': ts) = (a ': Lowered ts)
   Lowered (Func n a ': ts) = (Ptr (HalideBuffer n a) ': Lowered ts)
 
-mkKernel'
-  :: forall ts n a k
-   . ( KnownNat n
+buildFunc
+  :: forall f ts n a r
+   . ( FunctionArguments f ~ ts
+     , FunctionReturn f ~ r
+     , UnCurry f ts r
+     , r ~ IO (Func n a)
+     , PrepareParameters ts
+     )
+  => f
+  -> IO (Arguments ts, Func n a)
+buildFunc builder = do
+  parameters <- prepareParameters
+  func <- uncurryG builder parameters
+  pure (parameters, func)
+
+-- | Convert a function that builds a Halide 'Func' into a normal Haskell
+-- function acccepting scalars and 'HalideBuffer's.
+mkKernel
+  :: forall f kernel k ts n a r
+   . ( FunctionArguments f ~ ts
+     , FunctionReturn f ~ r
+     , UnCurry f ts r
+     , r ~ IO (Func n a)
+     , KnownNat n
      , IsHalideType a
      , Length ts ~ k
      , KnownNat k
      , PrepareParameters ts
      , All ValidParameter ts
      , All ValidArgument (Lowered ts)
+     , Curry (Lowered ts) (Ptr (HalideBuffer n a) -> IO ()) kernel
      )
-  => (Arguments ts -> IO (Func n a))
-  -> IO (Arguments (Lowered ts) -> Ptr (HalideBuffer n a) -> IO ())
-mkKernel' buildFunc = do
-  parameters <- prepareParameters @ts
-  func <- buildFunc parameters
+  => f
+  -> IO kernel
+mkKernel builder = do
+  (parameters, func) <- buildFunc builder
   callable <-
     prepareCxxArguments parameters $ \v ->
       withFunc func $ \f -> do
@@ -226,12 +253,23 @@ mkKernel' buildFunc = do
         touch scalarStorage
         touch context
         touch callable
-  pure kernel
+  pure (curryG @(Lowered ts) @(Ptr (HalideBuffer n a) -> IO ()) kernel)
 
--- | Convert a function that builds a Halide 'Func' into a normal Haskell
--- function acccepting scalars and 'HalideBuffer's.
-mkKernel
-  :: forall f kernel k ts n a r
+data StmtOutputFormat = StmtText | StmtHTML
+  deriving stock (Show, Eq)
+
+instance Enum StmtOutputFormat where
+  fromEnum =
+    fromIntegral . \case
+      StmtText -> [CU.pure| int { static_cast<int>(Halide::StmtOutputFormat::Text) } |]
+      StmtHTML -> [CU.pure| int { static_cast<int>(Halide::StmtOutputFormat::HTML) } |]
+  toEnum k
+    | fromIntegral k == [CU.pure| int { static_cast<int>(Halide::StmtOutputFormat::Text) } |] = StmtText
+    | fromIntegral k == [CU.pure| int { static_cast<int>(Halide::StmtOutputFormat::HTML) } |] = StmtHTML
+    | otherwise = error $ "invalid StmtOutputFormat " <> show k
+
+compileToLoweredStmt
+  :: forall f k ts n a r
    . ( FunctionArguments f ~ ts
      , FunctionReturn f ~ r
      , UnCurry f ts r
@@ -243,10 +281,27 @@ mkKernel
      , PrepareParameters ts
      , All ValidParameter ts
      , All ValidArgument (Lowered ts)
-     , Curry (Lowered ts) (Ptr (HalideBuffer n a) -> IO ()) kernel
      )
-  => f
-  -> IO kernel
-mkKernel buildFunc = do
-  kernel <- mkKernel' (uncurryG @f @ts @r buildFunc)
-  pure (curryG kernel)
+  => StmtOutputFormat
+  -> Target
+  -> f
+  -> IO Text
+compileToLoweredStmt format target builder = do
+  withSystemTempDirectory "halide-haskell" $ \dir -> do
+    let s = encodeUtf8 (pack (dir <> "/code.stmt"))
+        o = fromIntegral (fromEnum format)
+    (parameters, func) <- buildFunc builder
+    prepareCxxArguments parameters $ \v ->
+      withFunc func $ \f ->
+        withCxxTarget target $ \t ->
+          handleHalideExceptionsM
+            [C.tryBlock| void {
+              handle_halide_exceptions([=]() {
+                $(Halide::Func* f)->compile_to_lowered_stmt(
+                  std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)},
+                  *$(const std::vector<Halide::Argument>* v),
+                  static_cast<Halide::StmtOutputFormat>($(int o)),
+                  *$(Halide::Target* t));
+              });
+            } |]
+    T.readFile (dir <> "/code.stmt")

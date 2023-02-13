@@ -38,22 +38,22 @@
         inherit system;
         overlays = [
           (self: super: {
-            llvmPackages_14 = {
-              inherit (super.llvmPackages_14)
-                clang
-                clang-unwrapped
-                libraries
-                llvm
-                lld
-                libclang
-                stdenv
-                tools
-                openmp;
-              libllvm = super.llvmPackages_14.libllvm;
-              # libllvm = super.llvmPackages_14.libllvm.overrideAttrs (attrs: {
-              #   cmakeFlags = attrs.cmakeFlags ++ [ "-DLLVM_ENABLE_EH=ON" ];
-              # });
-            };
+            # llvmPackages_14 = {
+            #   inherit (super.llvmPackages_14)
+            #     clang
+            #     clang-unwrapped
+            #     libraries
+            #     llvm
+            #     lld
+            #     libclang
+            #     stdenv
+            #     tools
+            #     openmp;
+            #   libllvm = super.llvmPackages_14.libllvm;
+            #   # libllvm = super.llvmPackages_14.libllvm.overrideAttrs (attrs: {
+            #   #   cmakeFlags = attrs.cmakeFlags ++ [ "-DLLVM_ENABLE_EH=ON" ];
+            #   # });
+            # };
             # super.llvmPackages_14.overrideAttrs (attrs: {
 
             # });
