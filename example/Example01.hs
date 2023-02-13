@@ -5,9 +5,9 @@ main :: IO ()
 main = do
   let !host = hostTarget
   putStrLn $ "[+] host target is " <> show host
-  when (hostSupportsTargetDevice (setFeature host FeatureOpenCL)) $ do
+  when (hostSupportsTargetDevice (setFeature FeatureOpenCL host)) $ do
     putStrLn "[+] OpenCL is supported! Testing ..."
     testOpenCL
-  when (hostSupportsTargetDevice (setFeature host FeatureCUDA)) $ do
+  when (hostSupportsTargetDevice (setFeature FeatureCUDA host)) $ do
     putStrLn "[+] CUDA is supported! Testing ..."
     testCUDA
