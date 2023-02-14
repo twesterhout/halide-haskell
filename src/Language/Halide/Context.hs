@@ -95,47 +95,6 @@ defineExceptionHandler :: DecsQ
 defineExceptionHandler =
   C.verbatim
     "\
-    \class ErrorContext { \n\
-    \  bool has_error;\n\
-    \  std::string msg;\n\
-    \\n\
-    \public:                                                      \n\
-    \  ErrorContext() noexcept : has_error{false}, msg{} {}\n\
-    \                                                              \n\
-    \  constexpr auto hasError() const noexcept -> bool { return has_error; }\n\
-    \  auto error() const noexcept -> char const* { return msg.c_str(); }\n\
-    \  auto error(char const* s) { has_error = true; msg = std::string{s}; }\n\
-    \  auto reset() noexcept { has_error = false; msg.clear(); }\n\
-    \};\n\
-    \\n\
-    \inline auto& get_error_context() { \n\
-    \  static thread_local ErrorContext ctx; \n\
-    \  return ctx; \n\
-    \}\n\
-    \\n\
-    \template <class Func>                               \n\
-    \auto catch_exceptions(Func&& func) noexcept -> bool {       \n\
-    \  try {                                             \n\
-    \    func();                                  \n\
-    \    return false;\n\
-    \  } catch(Halide::RuntimeError& e) {                \n\
-    \    get_error_context().error(e.what());             \n\
-    \  } catch(Halide::CompileError& e) {                \n\
-    \    fprintf(stderr, \"Caught CompileError: %s\\n\", e.what()); \n\
-    \    get_error_context().error(e.what());             \n\
-    \  } catch(Halide::InternalError& e) {               \n\
-    \    get_error_context().error(e.what());             \n\
-    \  } catch(Halide::Error& e) {                       \n\
-    \    get_error_context().error(e.what());             \n\
-    \  } catch(std::exception& e) {                       \n\
-    \    get_error_context().error(e.what());             \n\
-    \  } catch(...) {                       \n\
-    \    get_error_context().error(\"unknown exception\");             \n\
-    \  }                                                 \n\
-    \  fprintf(stderr, \"Returning true...\\n\"); \n\
-    \  return true;                                      \n\
-    \}                                                   \n\
-    \\n\
     \template <class Func>                               \n\
     \auto handle_halide_exceptions(Func&& func) {        \n\
     \  try {                                             \n\

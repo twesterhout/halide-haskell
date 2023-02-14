@@ -38,7 +38,10 @@ module Language.Halide.Type
   , UnCurry (..)
   , Curry (..)
   , defineIsHalideTypeInstances
+  , defineHasCxxVectorInstances
   , Named (..)
+  , HasCxxVector (..)
+  , IsTuple (..)
   -- defineCastableInstances,
   -- defineCurriedTypeFamily,
   -- defineUnCurriedTypeFamily,
@@ -184,6 +187,46 @@ instanceIsHalideType (cType, hsType, typeCode) =
 defineIsHalideTypeInstances :: TH.DecsQ
 defineIsHalideTypeInstances = concat <$> mapM instanceIsHalideType halideTypes
 
+class HasCxxVector a where
+  newCxxVector :: Maybe Int -> IO (Ptr (CxxVector a))
+  deleteCxxVector :: Ptr (CxxVector a) -> IO ()
+  cxxVectorSize :: Ptr (CxxVector a) -> IO Int
+  cxxVectorPushBack :: Ptr (CxxVector a) -> Ptr a -> IO ()
+  cxxVectorData :: Ptr (CxxVector a) -> IO (Ptr a)
+
+instanceHasCxxVector :: String -> TH.DecsQ
+instanceHasCxxVector cType =
+  C.substitute
+    [ ("T", const cType)
+    , ("VEC", \var -> "$(std::vector<" ++ cType ++ ">* " ++ var ++ ")")
+    ]
+    [d|
+      instance HasCxxVector $(C.getHaskellType False cType) where
+        newCxxVector maybeSize = do
+          v <- [CU.exp| std::vector<@T()>* { new std::vector<@T()>() } |]
+          case maybeSize of
+            Just size ->
+              let n = fromIntegral size
+               in [CU.exp| void { @VEC(v)->reserve($(size_t n)) } |]
+            Nothing -> pure ()
+          pure v
+        deleteCxxVector vec = [CU.exp| void { delete @VEC(vec) } |]
+        cxxVectorSize vec = fromIntegral <$> [CU.exp| size_t { @VEC(vec)->size() } |]
+        cxxVectorPushBack vec x = [CU.exp| void { @VEC(vec)->push_back(*$(@T()* x)) } |]
+        cxxVectorData vec = [CU.exp| @T()* { @VEC(vec)->data() } |]
+      |]
+
+defineHasCxxVectorInstances :: TH.DecsQ
+defineHasCxxVectorInstances =
+  concat
+    <$> mapM
+      instanceHasCxxVector
+      [ "Halide::Expr"
+      , "Halide::Var"
+      , "Halide::RVar"
+      , "Halide::VarOrRVar"
+      ]
+
 -- | List of all supported types.
 halideTypes :: [(String, TH.TypeQ, HalideTypeCode)]
 halideTypes =
@@ -276,3 +319,31 @@ instance Curry args r f => Curry (a ': args) r (a -> f) where
 class Named a where
   -- | Set the name of a parameter.
   setName :: HasCallStack => a -> Text -> IO ()
+
+class IsTuple a t | a -> t, t -> a where
+  toTuple :: a -> t
+  fromTuple :: t -> a
+
+instance IsTuple (Arguments '[]) () where
+  toTuple Nil = ()
+  fromTuple () = Nil
+
+instance IsTuple (Arguments '[a1, a2]) (a1, a2) where
+  toTuple (a1 ::: a2 ::: Nil) = (a1, a2)
+  fromTuple (a1, a2) = a1 ::: a2 ::: Nil
+
+instance IsTuple (Arguments '[a1, a2, a3]) (a1, a2, a3) where
+  toTuple (a1 ::: a2 ::: a3 ::: Nil) = (a1, a2, a3)
+  fromTuple (a1, a2, a3) = a1 ::: a2 ::: a3 ::: Nil
+
+instance IsTuple (Arguments '[a1, a2, a3, a4]) (a1, a2, a3, a4) where
+  toTuple (a1 ::: a2 ::: a3 ::: a4 ::: Nil) = (a1, a2, a3, a4)
+  fromTuple (a1, a2, a3, a4) = a1 ::: a2 ::: a3 ::: a4 ::: Nil
+
+instance IsTuple (Arguments '[a1, a2, a3, a4, a5]) (a1, a2, a3, a4, a5) where
+  toTuple (a1 ::: a2 ::: a3 ::: a4 ::: a5 ::: Nil) = (a1, a2, a3, a4, a5)
+  fromTuple (a1, a2, a3, a4, a5) = a1 ::: a2 ::: a3 ::: a4 ::: a5 ::: Nil
+
+-- instance IsTuple (Arguments '[Expr a]) (Expr a) where
+--   toTuple (x ::: Nil) = x
+--   fromTuple () = Nil
