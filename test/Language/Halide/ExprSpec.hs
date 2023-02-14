@@ -11,7 +11,7 @@ import Type.Reflection
 
 spec :: Spec
 spec = do
-  describe "Num Expr" $ modifyMaxSuccess (const 10) $ do
+  describe "Num Expr" $ modifyMaxSuccess (const 50) $ do
     let isOverflowing :: Typeable a => (Integer -> Integer -> Integer) -> a -> a -> Bool
         isOverflowing op x y
           | Just HRefl <- eqTypeRep (typeOf x) (typeRep @Int32) =
@@ -27,11 +27,11 @@ spec = do
         p :: forall a. (IsHalideType a, Eq a, Num a, Typeable a) => a -> a -> Property
         p x y = monadicIO $ do
           whenNotOverflowing (+) x y $
-            assert . (x + y ==) =<< run (evaluate (mkExpr x + mkExpr y))
+            assert . (x + y ==) =<< run (let r = (mkExpr x + mkExpr y) in checkType @a r >> evaluate r)
           whenNotOverflowing (-) x y $
-            assert . (x - y ==) =<< run (evaluate (mkExpr x - mkExpr y))
+            assert . (x - y ==) =<< run (let r = (mkExpr x - mkExpr y) in checkType @a r >> evaluate r)
           whenNotOverflowing (*) x y $
-            assert . (x * y ==) =<< run (evaluate (mkExpr x * mkExpr y))
+            assert . (x * y ==) =<< run (let r = (mkExpr x * mkExpr y) in checkType @a r >> evaluate r)
           assert . (abs x ==) =<< run (evaluate (abs (mkExpr x)))
           assert . (negate x ==) =<< run (evaluate (negate (mkExpr x)))
     prop "Int8" $ p @Int8

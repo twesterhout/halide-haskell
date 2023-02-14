@@ -38,6 +38,7 @@
         cmakeFlags = (attrs.cmakeFlags or [ ]) ++ [
           "-DLLVM_ENABLE_EH=ON"
         ];
+        doCheck = false;
       });
       pkgs = import inputs.nixpkgs {
         inherit system;
@@ -45,16 +46,17 @@
           (self: super: {
             halide =
               (super.halide.override {
-                llvmPackages = super.llvmPackages // {
-                  libllvm = enableExceptions super.libllvm;
-                  llvm = enableExceptions super.llvm;
-                };
+                llvmPackages = super.llvmPackages_15;
+                # llvmPackages = super.llvmPackages_15 // {
+                #   libllvm = enableExceptions super.llvmPackages_15.libllvm;
+                #   llvm = enableExceptions super.llvmPackages_15.llvm;
+                # };
               }).overrideAttrs (attrs: {
                 version = "16.0.0";
                 src = inputs.halide;
-                cmakeFlags = attrs.cmakeFlags ++
+                cmakeFlags = (attrs.cmakeFlags or []) ++
                   [
-                    "-DWITH_TESTS=OFF"
+                    "-DWITH_TESTS=ON"
                     "-DWITH_PYTHON_BINDINGS=OFF"
                     "-DWITH_DOCS=OFF"
                     "-DWITH_UTILS=OFF"
@@ -62,6 +64,7 @@
                     "-DHalide_ENABLE_RTTI=ON"
                     "-DHalide_ENABLE_EXCEPTIONS=ON"
                   ];
+                nativeBuildInputs = (attrs.nativeBuildInputs or []) ++ [super.zlib];
               });
           })
         ];
@@ -167,6 +170,7 @@
                     fourmolu
                     haskell-language-server
                     nixpkgs-fmt
+                    gcc
                   ]
                   ++ lib.optional withIntelOpenCL clinfo
                   ++ lib.optional withCuda inputs.nixGL.packages.${system}.nixGLDefault;

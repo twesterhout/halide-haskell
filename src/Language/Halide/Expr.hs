@@ -32,6 +32,7 @@ module Language.Halide.Expr
   , asScalarParam
   , binaryOp
   , unaryOp
+  , checkType
   )
 where
 
@@ -298,6 +299,27 @@ wrapCxxRVar = fmap RVar . newForeignPtr deleter
 
 class HasHalideType a where
   getHalideType :: a -> IO HalideType
+
+instance HasHalideType (Expr a) where
+  getHalideType (Expr fp) =
+    withForeignPtr fp $ \e -> alloca $ \t -> do
+      [CU.block| void {
+        *$(halide_type_t* t) = static_cast<halide_type_t>(
+          $(Halide::Expr* e)->type()); } |]
+      peek t
+  getHalideType (Var fp) =
+    withForeignPtr fp $ \e -> alloca $ \t -> do
+      [CU.block| void {
+        *$(halide_type_t* t) = static_cast<halide_type_t>(
+          static_cast<Halide::Expr>(*$(Halide::Var* e)).type()); } |]
+      peek t
+  getHalideType (RVar fp) =
+    withForeignPtr fp $ \e -> alloca $ \t -> do
+      [CU.block| void {
+        *$(halide_type_t* t) = static_cast<halide_type_t>(
+          static_cast<Halide::Expr>(*$(Halide::RVar* e)).type()); } |]
+      peek t
+  getHalideType _ = error "not implemented"
 
 instance HasHalideType (Ptr CxxExpr) where
   getHalideType e =
