@@ -25,7 +25,8 @@ module Language.Halide.Func
   , reorder
 
     -- ** Internal
-  , ValidIndex (toExprList)
+
+  -- , ValidIndex (toExprList)
   , withFunc
   , withBufferParam
   )
@@ -439,23 +440,23 @@ withExprMany xs f = do
     f v
 
 -- | Specifies that a type can be used as an index to a Halide function.
-class ValidIndex (a :: Type) (n :: Nat) | a -> n, n -> a where
-  toExprList :: a -> [ForeignPtr CxxExpr]
-
-instance ValidIndex (Expr Int32) 1 where
-  toExprList a = [exprToForeignPtr a]
-
-instance ValidIndex (Expr Int32, Expr Int32) 2 where
-  toExprList (a, b) = [exprToForeignPtr a, exprToForeignPtr b]
-
-instance ValidIndex (Expr Int32, Expr Int32, Expr Int32) 3 where
-  toExprList (a1, a2, a3) = exprToForeignPtr <$> [a1, a2, a3]
-
-instance ValidIndex (Expr Int32, Expr Int32, Expr Int32, Expr Int32) 4 where
-  toExprList (a1, a2, a3, a4) = exprToForeignPtr <$> [a1, a2, a3, a4]
-
-instance ValidIndex (Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32) 5 where
-  toExprList (a1, a2, a3, a4, a5) = exprToForeignPtr <$> [a1, a2, a3, a4, a5]
+-- class ValidIndex (a :: Type) (n :: Nat) | a -> n, n -> a where
+--   toExprList :: a -> [ForeignPtr CxxExpr]
+--
+-- instance ValidIndex (Expr Int32) 1 where
+--   toExprList a = [exprToForeignPtr a]
+--
+-- instance ValidIndex (Expr Int32, Expr Int32) 2 where
+--   toExprList (a, b) = [exprToForeignPtr a, exprToForeignPtr b]
+--
+-- instance ValidIndex (Expr Int32, Expr Int32, Expr Int32) 3 where
+--   toExprList (a1, a2, a3) = exprToForeignPtr <$> [a1, a2, a3]
+--
+-- instance ValidIndex (Expr Int32, Expr Int32, Expr Int32, Expr Int32) 4 where
+--   toExprList (a1, a2, a3, a4) = exprToForeignPtr <$> [a1, a2, a3, a4]
+--
+-- instance ValidIndex (Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32) 5 where
+--   toExprList (a1, a2, a3, a4, a5) = exprToForeignPtr <$> [a1, a2, a3, a4, a5]
 
 -- | Define a Halide function.
 --
@@ -503,15 +504,51 @@ define name args expr =
 -- | Create an update definition for a Halide function.
 --
 -- @update f i e@ creates an update definition for @f@ that performs @f[i] = e@.
-update :: (ValidIndex i n, KnownNat n, IsHalideType a) => Func n a -> i -> Expr a -> IO ()
-update func x y = updateFunc (funcToForeignPtr func) (toExprList x) (exprToForeignPtr y)
+-- update :: (ValidIndex i n, KnownNat n, IsHalideType a) => Func n a -> i -> Expr a -> IO ()
+-- update func x y = updateFunc (funcToForeignPtr func) (toExprList x) (exprToForeignPtr y)
+update
+  :: ( IsTuple (Arguments ts) i
+     , All ((~) (Expr Int32)) ts
+     , Length ts ~ n
+     , KnownNat n
+     , IsHalideType a
+     )
+  => Func n a
+  -> i
+  -> Expr a
+  -> IO ()
+update func args expr =
+  withFunc func $ \f ->
+    asVectorOf @((~) (Expr Int32)) asExpr (fromTuple args) $ \x ->
+      asExpr expr $ \y ->
+        [CU.block| void {
+          $(Halide::Func* f)->operator()(*$(std::vector<Halide::Expr>* x)) = *$(Halide::Expr* y);
+        } |]
 
 infix 9 !
 
 -- | Apply a Halide function. Conceptually, @f ! i@ is equivalent to @f[i]@, i.e.
 -- indexing into a lazy array.
-(!) :: (ValidIndex i n, KnownNat n, IsHalideType r) => Func n r -> i -> Expr r
-(!) func args = unsafePerformIO $ applyFunc (funcToForeignPtr func) (toExprList args)
+-- (!) :: (ValidIndex i n, KnownNat n, IsHalideType r) => Func n r -> i -> Expr r
+-- (!) func args = unsafePerformIO $ applyFunc (funcToForeignPtr func) (toExprList args)
+(!)
+  :: ( IsTuple (Arguments ts) i
+     , All ((~) (Expr Int32)) ts
+     , Length ts ~ n
+     , KnownNat n
+     , IsHalideType a
+     )
+  => Func n a
+  -> i
+  -> Expr a
+(!) func args =
+  unsafePerformIO $
+    withFunc func $ \f ->
+      asVectorOf @((~) (Expr Int32)) asExpr (fromTuple args) $ \x ->
+        wrapCxxExpr
+          =<< [CU.exp| Halide::Expr* {
+            new Halide::Expr{$(Halide::Func* f)->operator()(*$(std::vector<Halide::Expr>* x))}
+          } |]
 
 -- | Write out the loop nests specified by the schedule for this function.
 --
