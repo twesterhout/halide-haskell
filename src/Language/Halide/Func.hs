@@ -1,6 +1,7 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -21,9 +22,11 @@ module Language.Halide.Func
   , TailStrategy (..)
   , vectorize
   , unroll
+  , reorder
 
     -- ** Internal
-  , ValidIndex (toExprList)
+
+  -- , ValidIndex (toExprList)
   , withFunc
   , withBufferParam
   )
@@ -44,6 +47,8 @@ import Foreign.ForeignPtr
 import Foreign.ForeignPtr.Unsafe
 import Foreign.Marshal (with)
 import Foreign.Ptr (FunPtr, Ptr, castPtr)
+import GHC.Base (TypeLitSort)
+import GHC.Records (HasField (..))
 import GHC.Stack (HasCallStack)
 import GHC.TypeLits
 import qualified Language.C.Inline as C
@@ -67,6 +72,32 @@ data Func (n :: Nat) (a :: Type)
   | -- | A buffer parameter to a function. See 'Expr' for more the reason, why
     -- we use IORef here.
     BufferParam (IORef (Maybe (ForeignPtr CxxImageParam)))
+
+data CxxDimension
+
+data Dimension = Dimension (ForeignPtr CxxDimension)
+
+instance HasField "extent" Dimension (Expr Int32) where
+  getField :: Dimension -> Expr Int32
+  getField = undefined
+
+dim :: Int -> Func n a -> Dimension
+dim = undefined
+
+-- getMin :: Dimension -> Expr Int32
+-- getMin = undefined
+
+-- getMax :: Dimension -> Expr Int32
+-- getMax = undefined
+
+-- getStride :: Dimension -> Expr Int32
+-- getStride = undefined
+
+setBounds :: Dimension -> (Expr Int32, Expr Int32) -> IO ()
+setBounds = undefined
+
+setStride :: Dimension -> Expr Int32 -> IO ()
+setStride = undefined
 
 -- | Different ways to handle a tail case in a split when the split factor does
 -- not provably divide the extent.
@@ -193,12 +224,17 @@ vectorize strategy func var factor =
   where
     tail = fromIntegral (fromEnum strategy)
 
+-- | Split a dimension by the given factor, then unroll the inner dimension.
+--
+-- This is how you unroll a loop of unknown size by some constant factor. After
+-- this call, @var@ refers to the outer dimension of the split. 'factor' must be
+-- an integer.
 unroll
   :: (KnownNat n, IsHalideType a)
   => TailStrategy
   -> Func n a
   -> Expr Int32
-  -- ^ Variable to vectorize
+  -- ^ Variable @var@ to vectorize
   -> Expr Int32
   -- ^ Split factor
   -> IO ()
@@ -213,6 +249,45 @@ unroll strategy func var factor =
           } |]
   where
     tail = fromIntegral (fromEnum strategy)
+
+reorder
+  :: forall n a i ts
+   . ( IsTuple (Arguments ts) i
+     , All ((~) (Expr Int32)) ts
+     , Length ts ~ n
+     , KnownNat n
+     , IsHalideType a
+     )
+  => Func n a
+  -> i
+  -> IO ()
+reorder func args =
+  asVectorOf @((~) (Expr Int32)) asVarOrRVar (fromTuple args) $ \v -> do
+    withFunc func $ \f ->
+      handleHalideExceptionsM
+        [C.tryBlock| void { $(Halide::Func* f)->reorder(*$(std::vector<Halide::VarOrRVar>* v)); } |]
+
+-- withVarOrRVarMany :: [Expr Int32] -> (Int -> Ptr (CxxVector CxxVarOrRVar) -> IO a) -> IO a
+-- withVarOrRVarMany xs f =
+--   bracket allocate destroy $ \v -> do
+--     let go !k [] = f k v
+--         go !k (y : ys) = withVarOrRVarMany y $ \p -> do
+--           [CU.exp| void { $(std::vector<Halide::Expr>* v)->push_back(*$(Halide::VarOrRVar* p)) } |]
+--           go (k + 1) ys
+--     go 0 xs
+--   where
+--     count = fromIntegral (length xs)
+
+--   withFunc func $ \f ->
+--     withVarOrRVarMany vars $ \count v -> do
+--       unless natVal (Proxy @n)
+--       handleHalideExceptionsM
+--         [C.tryBlock| void {
+--           $(Halide::Func* f)->reorder(*$(std::vector<Halide::VarOrRVar>* v));
+--         } |]
+--
+-- class Curry (args :: [Type]) (r :: Type) (f :: Type) | args r -> f where
+--   curryG :: (Arguments args -> r) -> f
 
 deleteCxxImageParam :: FunPtr (Ptr CxxImageParam -> IO ())
 deleteCxxImageParam = [C.funPtr| void deleteImageParam(Halide::ImageParam* p) { delete p; } |]
@@ -328,6 +403,24 @@ updateFunc func args expr = do
           $(Halide::Func* f)->operator()(*$(std::vector<Halide::Expr>* x)) = *$(Halide::Expr* y);
         } |]
 
+-- withVarOrRVarMany :: [Expr Int32] -> (Int -> Ptr (CxxVector CxxVarOrRVar) -> IO a) -> IO a
+-- withVarOrRVarMany xs f =
+--   bracket allocate destroy $ \v -> do
+--     let go !k [] = f k v
+--         go !k (y : ys) = withVarOrRVarMany y $ \p -> do
+--           [CU.exp| void { $(std::vector<Halide::Expr>* v)->push_back(*$(Halide::VarOrRVar* p)) } |]
+--           go (k + 1) ys
+--     go 0 xs
+--   where
+--     count = fromIntegral (length xs)
+--     allocate =
+--       [CU.block| std::vector<Halide::VarOrRVar>* {
+--         auto v = new std::vector<Halide::VarOrRVar>{};
+--         v->reserve($(size_t count));
+--         return v;
+--       } |]
+--     destroy v = [CU.exp| void { delete $(std::vector<Halide::VarOrRVar>* v) } |]
+
 withExprMany :: [ForeignPtr CxxExpr] -> (Ptr (CxxVector CxxExpr) -> IO a) -> IO a
 withExprMany xs f = do
   let count = fromIntegral (length xs)
@@ -347,35 +440,115 @@ withExprMany xs f = do
     f v
 
 -- | Specifies that a type can be used as an index to a Halide function.
-class ValidIndex (a :: Type) (n :: Nat) | a -> n where
-  toExprList :: a -> [ForeignPtr CxxExpr]
-
-instance ValidIndex (Expr Int32) 1 where
-  toExprList :: Expr Int32 -> [ForeignPtr CxxExpr]
-  toExprList a = [exprToForeignPtr a]
-
-instance ValidIndex (Expr Int32, Expr Int32) 2 where
-  toExprList :: (Expr Int32, Expr Int32) -> [ForeignPtr CxxExpr]
-  toExprList (a, b) = [exprToForeignPtr a, exprToForeignPtr b]
+-- class ValidIndex (a :: Type) (n :: Nat) | a -> n, n -> a where
+--   toExprList :: a -> [ForeignPtr CxxExpr]
+--
+-- instance ValidIndex (Expr Int32) 1 where
+--   toExprList a = [exprToForeignPtr a]
+--
+-- instance ValidIndex (Expr Int32, Expr Int32) 2 where
+--   toExprList (a, b) = [exprToForeignPtr a, exprToForeignPtr b]
+--
+-- instance ValidIndex (Expr Int32, Expr Int32, Expr Int32) 3 where
+--   toExprList (a1, a2, a3) = exprToForeignPtr <$> [a1, a2, a3]
+--
+-- instance ValidIndex (Expr Int32, Expr Int32, Expr Int32, Expr Int32) 4 where
+--   toExprList (a1, a2, a3, a4) = exprToForeignPtr <$> [a1, a2, a3, a4]
+--
+-- instance ValidIndex (Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32) 5 where
+--   toExprList (a1, a2, a3, a4, a5) = exprToForeignPtr <$> [a1, a2, a3, a4, a5]
 
 -- | Define a Halide function.
 --
 -- @define "f" i e@ defines a Halide function called "f" such that @f[i] = e@.
-define :: (ValidIndex i n, IsHalideType a) => Text -> i -> Expr a -> IO (Func n a)
-define name x y = Func <$> defineFunc name (toExprList x) (exprToForeignPtr y)
+-- define :: (ValidIndex i n, IsHalideType a) => Text -> i -> Expr a -> IO (Func n a)
+-- define name x y = Func <$> defineFunc name (toExprList x) (exprToForeignPtr y)
+define
+  :: ( IsTuple (Arguments ts) i
+     , All ((~) (Expr Int32)) ts
+     , Length ts ~ n
+     , KnownNat n
+     , IsHalideType a
+     )
+  => Text
+  -> i
+  -> Expr a
+  -> IO (Func n a)
+define name args expr =
+  asVectorOf @((~) (Expr Int32)) asVar (fromTuple args) $ \x -> do
+    let s = T.encodeUtf8 name
+    asExpr expr $ \y ->
+      wrapCxxFunc
+        =<< [CU.block| Halide::Func* {
+              Halide::Func f{std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}};
+              f(*$(std::vector<Halide::Var>* x)) = *$(Halide::Expr* y);
+              return new Halide::Func{f};
+            } |]
+
+-- Func <$> defineFunc name (toExprList x) (exprToForeignPtr y)
+
+-- reorder
+--   :: forall n a f ts r
+--    . ( KnownNat n
+--      , IsHalideType a
+--      , r ~ IO ()
+--      , n ~ Length ts
+--      , FunctionArguments f ~ ts
+--      , FunctionReturn f ~ r
+--      , All ((~) (Expr Int32)) ts
+--      , Curry ts r f
+--      )
+--   => Func n a
+--   -> f
 
 -- | Create an update definition for a Halide function.
 --
 -- @update f i e@ creates an update definition for @f@ that performs @f[i] = e@.
-update :: (ValidIndex i n, KnownNat n, IsHalideType a) => Func n a -> i -> Expr a -> IO ()
-update func x y = updateFunc (funcToForeignPtr func) (toExprList x) (exprToForeignPtr y)
+-- update :: (ValidIndex i n, KnownNat n, IsHalideType a) => Func n a -> i -> Expr a -> IO ()
+-- update func x y = updateFunc (funcToForeignPtr func) (toExprList x) (exprToForeignPtr y)
+update
+  :: ( IsTuple (Arguments ts) i
+     , All ((~) (Expr Int32)) ts
+     , Length ts ~ n
+     , KnownNat n
+     , IsHalideType a
+     )
+  => Func n a
+  -> i
+  -> Expr a
+  -> IO ()
+update func args expr =
+  withFunc func $ \f ->
+    asVectorOf @((~) (Expr Int32)) asExpr (fromTuple args) $ \x ->
+      asExpr expr $ \y ->
+        [CU.block| void {
+          $(Halide::Func* f)->operator()(*$(std::vector<Halide::Expr>* x)) = *$(Halide::Expr* y);
+        } |]
 
 infix 9 !
 
 -- | Apply a Halide function. Conceptually, @f ! i@ is equivalent to @f[i]@, i.e.
 -- indexing into a lazy array.
-(!) :: (ValidIndex i n, KnownNat n, IsHalideType r) => Func n r -> i -> Expr r
-(!) func args = unsafePerformIO $ applyFunc (funcToForeignPtr func) (toExprList args)
+-- (!) :: (ValidIndex i n, KnownNat n, IsHalideType r) => Func n r -> i -> Expr r
+-- (!) func args = unsafePerformIO $ applyFunc (funcToForeignPtr func) (toExprList args)
+(!)
+  :: ( IsTuple (Arguments ts) i
+     , All ((~) (Expr Int32)) ts
+     , Length ts ~ n
+     , KnownNat n
+     , IsHalideType a
+     )
+  => Func n a
+  -> i
+  -> Expr a
+(!) func args =
+  unsafePerformIO $
+    withFunc func $ \f ->
+      asVectorOf @((~) (Expr Int32)) asExpr (fromTuple args) $ \x ->
+        wrapCxxExpr
+          =<< [CU.exp| Halide::Expr* {
+            new Halide::Expr{$(Halide::Func* f)->operator()(*$(std::vector<Halide::Expr>* x))}
+          } |]
 
 -- | Write out the loop nests specified by the schedule for this function.
 --
