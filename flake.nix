@@ -65,6 +65,7 @@
                     "-DHalide_ENABLE_EXCEPTIONS=ON"
                   ];
                 nativeBuildInputs = (attrs.nativeBuildInputs or []) ++ [super.zlib];
+                patches = (attrs.patches or []) ++ [./print_loop_nest.patch];
               });
           })
         ];

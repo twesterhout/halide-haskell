@@ -1,0 +1,13 @@
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 4f4b8e532..ae93b8894 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -69,7 +69,7 @@ set(HEADER_FILES
+     FindIntrinsics.h
+     FlattenNestedRamps.h
+     Float16.h
+-    Func.h
++    Func.h PrintLoopNest.h
+     Function.h
+     FunctionPtr.h
+     FuseGPUThreadLoops.h
