@@ -40,20 +40,6 @@ import Prelude hiding (tail)
 
 importHalide
 
--- | An enum describing a type of device API.
-data DeviceAPI
-  = DeviceNone
-  | DeviceHost
-  | DeviceDefaultGPU
-  | DeviceCUDA
-  | DeviceOpenCL
-  | DeviceOpenGLCompute
-  | DeviceMetal
-  | DeviceHexagon
-  | DeviceHexagonDma
-  | DeviceD3D12Compute
-  deriving stock (Show, Eq, Ord)
-
 instance Enum DeviceAPI where
   fromEnum =
     fromIntegral . \case

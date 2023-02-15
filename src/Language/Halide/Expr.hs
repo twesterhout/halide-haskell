@@ -15,6 +15,7 @@
 -- Copyright   : (c) Tom Westerhout, 2023
 module Language.Halide.Expr
   ( Expr (..)
+  , Int32
   , mkExpr
   , mkVar
   , setName

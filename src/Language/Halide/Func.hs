@@ -1,7 +1,7 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE OverloadedRecordDot #-}
+-- {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -23,6 +23,7 @@ module Language.Halide.Func
   , vectorize
   , unroll
   , reorder
+  , setEstimate
 
     -- ** Internal
 
@@ -47,7 +48,6 @@ import Foreign.ForeignPtr
 import Foreign.ForeignPtr.Unsafe
 import Foreign.Marshal (with)
 import Foreign.Ptr (FunPtr, Ptr, castPtr)
-import GHC.Base (TypeLitSort)
 import GHC.Records (HasField (..))
 import GHC.Stack (HasCallStack)
 import GHC.TypeLits
@@ -266,6 +266,18 @@ reorder func args =
     withFunc func $ \f ->
       handleHalideExceptionsM
         [C.tryBlock| void { $(Halide::Func* f)->reorder(*$(std::vector<Halide::VarOrRVar>* v)); } |]
+
+setEstimate :: (KnownNat n, IsHalideType a) => Func n a -> Expr Int32 -> Expr Int32 -> Expr Int32 -> IO ()
+setEstimate func var min extent =
+  withFunc func $ \f ->
+    asVar var $ \i ->
+      asExpr min $ \minExpr ->
+        asExpr extent $ \extentExpr ->
+          [CU.exp| void {
+            $(Halide::Func* f)->set_estimate(*$(Halide::Var* i),
+                                             *$(Halide::Expr* minExpr),
+                                             *$(Halide::Expr* extentExpr))
+          } |]
 
 -- withVarOrRVarMany :: [Expr Int32] -> (Int -> Ptr (CxxVector CxxVarOrRVar) -> IO a) -> IO a
 -- withVarOrRVarMany xs f =

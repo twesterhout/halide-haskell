@@ -16,6 +16,7 @@ module Language.Halide.Type
   ( HalideTypeCode (..)
   , HalideType (..)
   , IsHalideType (..)
+  , DeviceAPI (..)
   , CxxExpr
   , CxxVar
   , CxxRVar
@@ -28,6 +29,7 @@ module Language.Halide.Type
   , CxxUserContext
   , CxxCallable
   , CxxTarget
+  , CxxStageSchedule
   , Arguments (..)
   , Length
   , Append
@@ -38,6 +40,7 @@ module Language.Halide.Type
   , UnCurry (..)
   , Curry (..)
   , defineIsHalideTypeInstances
+  , instanceHasCxxVector
   , defineHasCxxVectorInstances
   , Named (..)
   , HasCxxVector (..)
@@ -101,6 +104,26 @@ data CxxTarget
 
 -- | Haskell counterpart of @std::vector@.
 data CxxVector a
+
+-- | Haskell counterpart of @Halide::Internal::StageSchedule@.
+data CxxStageSchedule
+
+-- | An enum describing a type of device API.
+data DeviceAPI
+  = DeviceNone
+  | DeviceHost
+  | DeviceDefaultGPU
+  | DeviceCUDA
+  | DeviceOpenCL
+  | DeviceOpenGLCompute
+  | DeviceMetal
+  | DeviceHexagon
+  | DeviceHexagonDma
+  | DeviceD3D12Compute
+  deriving stock (Show, Eq, Ord)
+
+-- data Split =
+--   SplitVar !Text !Text !Text !(Expr Int32) !
 
 -- | Haskell counterpart of @halide_type_code_t@.
 data HalideTypeCode

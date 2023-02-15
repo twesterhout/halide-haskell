@@ -60,6 +60,7 @@ library
                        Language.Halide.Expr
                        Language.Halide.Func
                        Language.Halide.Kernel
+                       Language.Halide.Schedule
                        Language.Halide.Target
                        Language.Halide.Type
   build-depends:       inline-c
@@ -98,6 +99,7 @@ test-suite halide-haskell-test
   other-modules:       Language.Halide.FuncSpec
                        Language.Halide.KernelSpec
                        Language.Halide.ExprSpec
+                       Language.Halide.ScheduleSpec
                        Language.Halide.TargetSpec
   build-depends:       halide-haskell
                      , hspec
