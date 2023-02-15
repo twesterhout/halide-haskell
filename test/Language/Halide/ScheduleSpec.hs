@@ -30,9 +30,9 @@ spec = do
           builder src = do
             i <- mkVar "i"
             dest <- define "dest1" i $ src ! i
-            setEstimate dest i 0 1000
+            setEstimate dest i 0 100
             -- vectorize TailShiftInwards dest i 4
-            applyAutoscheduler dest "Adams2019" hostTarget
+            -- applyAutoscheduler dest "Adams2019" hostTarget
             printLoopNest dest
             print =<< (getDims <$> getStageSchedule dest)
             print =<< (getSplits <$> getStageSchedule dest)

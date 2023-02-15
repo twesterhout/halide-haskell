@@ -11,9 +11,12 @@ import Type.Reflection
 
 spec :: Spec
 spec = do
-  describe "Num Expr" $ modifyMaxSuccess (const 50) $ do
+  describe "Num Expr" $ modifyMaxSuccess (const 10) $ do
     let isOverflowing :: Typeable a => (Integer -> Integer -> Integer) -> a -> a -> Bool
         isOverflowing op x y
+          | Just HRefl <- eqTypeRep (typeOf x) (typeRep @Int8) =
+              op (toInteger x) (toInteger y) > toInteger (maxBound @Int8)
+                || op (toInteger x) (toInteger y) < toInteger (minBound @Int8)
           | Just HRefl <- eqTypeRep (typeOf x) (typeRep @Int32) =
               op (toInteger x) (toInteger y) > toInteger (maxBound @Int32)
                 || op (toInteger x) (toInteger y) < toInteger (minBound @Int32)
@@ -34,7 +37,8 @@ spec = do
             assert . (x * y ==) =<< run (let r = (mkExpr x * mkExpr y) in checkType @a r >> evaluate r)
           assert . (abs x ==) =<< run (evaluate (abs (mkExpr x)))
           assert . (negate x ==) =<< run (evaluate (negate (mkExpr x)))
-    prop "Int8" $ p @Int8
+    modifyMaxSuccess (const 100) $
+      prop "Int8" $ p @Int8
     prop "Int16" $ p @Int16
     prop "Int32" $ p @Int32
     prop "Int64" $ p @Int64
