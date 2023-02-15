@@ -262,7 +262,8 @@ data TargetFeature
   | FeatureHVX_v62
   | FeatureHVX_v65
   | FeatureHVX_v66
-  | FeatureHVX_shared_object
+  -- Removed in upstream Halide
+  -- | FeatureHVX_shared_object
   | FeatureFuzzFloatStores
   | FeatureSoftFloatABI
   | FeatureMSAN
@@ -345,7 +346,7 @@ instance Enum TargetFeature where
       FeatureHVX_v62 -> [CU.pure| int { halide_target_feature_hvx_v62 } |]
       FeatureHVX_v65 -> [CU.pure| int { halide_target_feature_hvx_v65 } |]
       FeatureHVX_v66 -> [CU.pure| int { halide_target_feature_hvx_v66 } |]
-      FeatureHVX_shared_object -> [CU.pure| int { halide_target_feature_hvx_use_shared_object } |]
+      -- FeatureHVX_shared_object -> [CU.pure| int { halide_target_feature_hvx_use_shared_object } |]
       FeatureFuzzFloatStores -> [CU.pure| int { halide_target_feature_fuzz_float_stores } |]
       FeatureSoftFloatABI -> [CU.pure| int { halide_target_feature_soft_float_abi } |]
       FeatureMSAN -> [CU.pure| int { halide_target_feature_msan } |]
@@ -422,7 +423,7 @@ instance Enum TargetFeature where
     | fromIntegral k == [CU.pure| int { halide_target_feature_hvx_v62 } |] = FeatureHVX_v62
     | fromIntegral k == [CU.pure| int { halide_target_feature_hvx_v65 } |] = FeatureHVX_v65
     | fromIntegral k == [CU.pure| int { halide_target_feature_hvx_v66 } |] = FeatureHVX_v66
-    | fromIntegral k == [CU.pure| int { halide_target_feature_hvx_use_shared_object } |] = FeatureHVX_shared_object
+    -- | fromIntegral k == [CU.pure| int { halide_target_feature_hvx_use_shared_object } |] = FeatureHVX_shared_object
     | fromIntegral k == [CU.pure| int { halide_target_feature_fuzz_float_stores } |] = FeatureFuzzFloatStores
     | fromIntegral k == [CU.pure| int { halide_target_feature_soft_float_abi } |] = FeatureSoftFloatABI
     | fromIntegral k == [CU.pure| int { halide_target_feature_msan } |] = FeatureMSAN

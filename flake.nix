@@ -34,51 +34,41 @@
     with builtins;
     let
       inherit (inputs.nixpkgs) lib;
+      enableExceptions = drv: drv.overrideAttrs (attrs: {
+        cmakeFlags = (attrs.cmakeFlags or [ ]) ++ [
+          "-DLLVM_ENABLE_EH=ON"
+        ];
+        doCheck = false;
+      });
       pkgs = import inputs.nixpkgs {
         inherit system;
         overlays = [
           (self: super: {
-            # llvmPackages_14 = {
-            #   inherit (super.llvmPackages_14)
-            #     clang
-            #     clang-unwrapped
-            #     libraries
-            #     llvm
-            #     lld
-            #     libclang
-            #     stdenv
-            #     tools
-            #     openmp;
-            #   libllvm = super.llvmPackages_14.libllvm;
-            #   # libllvm = super.llvmPackages_14.libllvm.overrideAttrs (attrs: {
-            #   #   cmakeFlags = attrs.cmakeFlags ++ [ "-DLLVM_ENABLE_EH=ON" ];
-            #   # });
-            # };
-            # super.llvmPackages_14.overrideAttrs (attrs: {
-
-            # });
-            #  {
-            #   bootBintoolsNoLibc = null;
-            # };
-            halide = super.halide.overrideAttrs (attrs: {
-              version = "16.0.0";
-              src = inputs.halide;
-              cmakeFlags = attrs.cmakeFlags ++
-                [
-                  "-DWITH_TESTS=OFF"
-                  "-DWITH_PYTHON_BINDINGS=OFF"
-                  "-DWITH_DOCS=OFF"
-                  "-DWITH_UTILS=OFF"
-                  "-DWITH_TUTORIALS=OFF"
-                  "-DHalide_ENABLE_RTTI=ON"
-                  "-DHalide_ENABLE_EXCEPTIONS=ON"
-                ];
-            });
+            halide =
+              (super.halide.override {
+                llvmPackages = super.llvmPackages_15;
+                # llvmPackages = super.llvmPackages_15 // {
+                #   libllvm = enableExceptions super.llvmPackages_15.libllvm;
+                #   llvm = enableExceptions super.llvmPackages_15.llvm;
+                # };
+              }).overrideAttrs (attrs: {
+                version = "16.0.0";
+                src = inputs.halide;
+                cmakeFlags = (attrs.cmakeFlags or []) ++
+                  [
+                    "-DWITH_TESTS=ON"
+                    "-DWITH_PYTHON_BINDINGS=OFF"
+                    "-DWITH_DOCS=OFF"
+                    "-DWITH_UTILS=OFF"
+                    "-DWITH_TUTORIALS=OFF"
+                    "-DHalide_ENABLE_RTTI=ON"
+                    "-DHalide_ENABLE_EXCEPTIONS=ON"
+                  ];
+                nativeBuildInputs = (attrs.nativeBuildInputs or []) ++ [super.zlib];
+              });
           })
         ];
       };
-
-      removeDots = version: concatStringsSep "" (splitVersion version);
 
       # only consider source dirs and package.yaml as source to our Haskell package
       # this allows the project to rebuild only when source files change, not e.g. readme
@@ -180,6 +170,7 @@
                     fourmolu
                     haskell-language-server
                     nixpkgs-fmt
+                    gcc
                   ]
                   ++ lib.optional withIntelOpenCL clinfo
                   ++ lib.optional withCuda inputs.nixGL.packages.${system}.nixGLDefault;
