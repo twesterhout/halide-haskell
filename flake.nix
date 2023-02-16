@@ -168,9 +168,12 @@
                   withHoogle = true;
                   nativeBuildInputs = with pkgs; with ps; [
                     cabal-install
-                    fourmolu
                     haskell-language-server
+                    # Formatters
+                    fourmolu
+                    cabal-fmt
                     nixpkgs-fmt
+                    # For debugging Halide
                     gcc
                   ]
                   ++ lib.optional withIntelOpenCL clinfo
