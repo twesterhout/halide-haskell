@@ -33,7 +33,7 @@ spec = do
             setEstimate dest i 0 100
             -- vectorize TailShiftInwards dest i 4
             -- applyAutoscheduler dest "Adams2019" hostTarget
-            printLoopNest dest
+            T.putStrLn =<< prettyLoopNest dest
             print =<< (getDims <$> getStageSchedule dest)
             print =<< (getSplits <$> getStageSchedule dest)
             pure dest

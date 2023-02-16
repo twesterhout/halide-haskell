@@ -1,3 +1,5 @@
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE QuasiQuotes #-}
 -- |
 -- Module      : Language.Halide.Buffer
 -- Description : Buffers
@@ -27,6 +29,7 @@ import Data.Kind (Type)
 import Data.Proxy
 import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Storable.Mutable as SM
+import qualified Language.C.Inline.Unsafe as CU
 import Data.Word
 import Foreign.Marshal.Array
 import Foreign.Marshal.Utils
@@ -35,6 +38,7 @@ import Foreign.Storable
 import GHC.Stack (HasCallStack)
 import GHC.TypeNats
 import Language.Halide.Type
+import Language.Halide.Context
 
 -- | Haskell analogue of [@halide_dimension_t@](https://halide-lang.org/docs/structhalide__dimension__t.html).
 data HalideDimension = HalideDimension
@@ -102,6 +106,8 @@ data RawHalideBuffer = RawHalideBuffer
 newtype HalideBuffer (n :: Nat) (a :: Type) = HalideBuffer {unHalideBuffer :: RawHalideBuffer}
   deriving stock (Show, Eq)
 
+importHalide
+
 instance Storable RawHalideBuffer where
   sizeOf _ = 56
   alignment _ = 8
@@ -162,7 +168,25 @@ bufferFromPtrShapeStrides p shape stride action =
             , halideBufferDim = dim
             , halideBufferPadding = nullPtr
             }
-    with buffer (action . castPtr)
+    with buffer $ \bufferPtr -> do
+      r <- action (castPtr bufferPtr)
+      -- [CU.block| void {
+      --   auto& buf = *$(halide_buffer_t* bufferPtr);
+      --   // if (buf.device_interface != nullptr) {
+      --   //   std::cout << "device_interface is not null!\n";
+      --   // }
+      --   if (buf.device_dirty()) {
+      --     if (buf.device_interface == nullptr) {
+      --       throw std::runtime_error{"device_dirty is set, but device_interface is nullptr; "
+      --                                "this should never happen"};
+      --     }
+      --     buf.device_interface->copy_to_host(nullptr, &buf);
+      --   }
+      --   if (buf.device) {
+      --     buf.device_interface->device_free(nullptr, &buf);
+      --   }
+      -- } |]
+      pure r
 
 -- | Similar to 'bufferFromPtrShapeStrides', but assumes row-major ordering of data.
 bufferFromPtrShape

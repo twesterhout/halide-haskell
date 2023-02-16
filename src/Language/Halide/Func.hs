@@ -17,26 +17,34 @@ module Language.Halide.Func
   , define
   , update
   , (!)
-  , printLoopNest
+  -- , printLoopNest
+  , prettyLoopNest
   , realize1D
   , TailStrategy (..)
   , vectorize
   , unroll
   , reorder
   , setEstimate
+  , gpuBlocks
+  , gpuBlocks'
+  , computeRoot
+  , asUsed
+  , asUsedBy
+  , copyToDevice
+  , copyToHost
 
     -- ** Internal
 
   -- , ValidIndex (toExprList)
   , withFunc
   , withBufferParam
+  , wrapCxxFunc
   )
 where
 
 import Control.Exception (bracket)
 import Control.Monad (forM_)
 import Data.IORef
-import Data.Int (Int32)
 import Data.Kind (Type)
 import Data.Proxy
 import Data.Text (Text)
@@ -57,6 +65,7 @@ import qualified Language.C.Inline.Unsafe as CU
 import Language.Halide.Buffer
 import Language.Halide.Context
 import Language.Halide.Expr
+import Language.Halide.Target
 import Language.Halide.Type
 import System.IO.Unsafe (unsafePerformIO)
 import Prelude hiding (tail)
@@ -278,6 +287,91 @@ setEstimate func var min extent =
                                              *$(Halide::Expr* minExpr),
                                              *$(Halide::Expr* extentExpr))
           } |]
+
+gpuBlocks'
+  :: ( KnownNat n
+     , IsHalideType a
+     , IsTuple (Arguments ts) i
+     , All ((~) (Expr Int32)) ts
+     , Length ts <= 3
+     , 1 <= Length ts
+     )
+  => DeviceAPI
+  -> i
+  -> Func n a
+  -> IO (Func n a)
+gpuBlocks' deviceApi vars func = do
+  withFunc func $ \f ->
+    asVectorOf @((~) (Expr Int32)) asVarOrRVar (fromTuple vars) $ \i -> do
+      [C.throwBlock| void {
+        handle_halide_exceptions([=](){
+          auto const& v = *$(std::vector<Halide::VarOrRVar>* i);
+          auto& fn = *$(Halide::Func* f);
+          auto const device = static_cast<Halide::DeviceAPI>($(int api));
+          if (v.size() == 1) {
+            fn.gpu_blocks(v.at(0), device);
+          }
+          else if (v.size() == 2) {
+            fn.gpu_blocks(v.at(0), v.at(1), device);
+          }
+          else if (v.size() == 3) {
+            fn.gpu_blocks(v.at(0), v.at(1), v.at(2), device);
+          }
+          else {
+            throw std::runtime_error{"unexpected v.size() in gpuBlocks'"};
+          }
+        });
+      } |]
+  pure func
+  where
+    api = fromIntegral . fromEnum $ deviceApi
+
+gpuBlocks
+  :: ( KnownNat n
+     , IsHalideType a
+     , IsTuple (Arguments ts) i
+     , All ((~) (Expr Int32)) ts
+     , Length ts <= 3
+     , 1 <= Length ts
+     )
+  => i
+  -> Func n a
+  -> IO (Func n a)
+gpuBlocks = gpuBlocks' DeviceDefaultGPU
+
+computeRoot :: (KnownNat n, IsHalideType a) => Func n a -> IO (Func n a)
+computeRoot func = do
+  withFunc func $ \f ->
+    [CU.exp| void { $(Halide::Func* f)->compute_root() } |]
+  pure func
+
+asUsedBy :: (KnownNat n, KnownNat m, IsHalideType a, IsHalideType b) => Func n a -> Func m b -> IO (Func n a)
+asUsedBy g f =
+  withFunc g $ \gPtr -> withFunc f $ \fPtr ->
+    wrapCxxFunc
+      =<< [CU.exp| Halide::Func* {
+            new Halide::Func{$(Halide::Func* gPtr)->in(*$(Halide::Func* fPtr))} } |]
+
+asUsed :: (KnownNat n, IsHalideType a) => Func n a -> IO (Func n a)
+asUsed f =
+  withFunc f $ \fPtr ->
+    wrapCxxFunc
+      =<< [CU.exp| Halide::Func* { new Halide::Func{$(Halide::Func* fPtr)->in()} } |]
+
+copyToDevice :: (KnownNat n, IsHalideType a) => DeviceAPI -> Func n a -> IO (Func n a)
+copyToDevice deviceApi func = do
+  withFunc func $ \f ->
+    [C.throwBlock| void {
+      handle_halide_exceptions([=](){
+        $(Halide::Func* f)->copy_to_device(static_cast<Halide::DeviceAPI>($(int api)));
+      });
+    } |]
+  pure func
+  where
+    api = fromIntegral . fromEnum $ deviceApi
+
+copyToHost :: (KnownNat n, IsHalideType a) => Func n a -> IO (Func n a)
+copyToHost = copyToDevice DeviceHost
 
 -- withVarOrRVarMany :: [Expr Int32] -> (Int -> Ptr (CxxVector CxxVarOrRVar) -> IO a) -> IO a
 -- withVarOrRVarMany xs f =
@@ -568,9 +662,21 @@ infix 9 !
 --
 -- For more info, see
 -- [@Halide::Func::print_loop_nest@](https://halide-lang.org/docs/class_halide_1_1_func.html#a03f839d9e13cae4b87a540aa618589ae)
-printLoopNest :: (KnownNat n, IsHalideType r) => Func n r -> IO ()
-printLoopNest func = withFunc func $ \f ->
-  [C.exp| void { $(Halide::Func* f)->print_loop_nest() } |]
+-- printLoopNest :: (KnownNat n, IsHalideType r) => Func n r -> IO ()
+-- printLoopNest func = withFunc func $ \f ->
+--   [C.exp| void { $(Halide::Func* f)->print_loop_nest() } |]
+
+-- | Get the loop nests specified by the schedule for this function.
+--
+-- Helpful for understanding what a schedule is doing.
+--
+-- For more info, see
+-- [@Halide::Func::print_loop_nest@](https://halide-lang.org/docs/class_halide_1_1_func.html#a03f839d9e13cae4b87a540aa618589ae)
+prettyLoopNest :: (KnownNat n, IsHalideType r) => Func n r -> IO Text
+prettyLoopNest func = withFunc func $ \f ->
+  peekAndDeleteCxxString
+    =<< [CU.exp| std::string* { new std::string{Halide::Internal::print_loop_nest(
+          std::vector<Halide::Internal::Function>{$(Halide::Func* f)->function()})} } |]
 
 -- | Evaluate this function over a one-dimensional domain and return the
 -- resulting buffer or buffers.

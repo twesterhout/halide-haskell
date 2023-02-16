@@ -30,6 +30,7 @@ module Language.Halide.Type
   , CxxCallable
   , CxxTarget
   , CxxStageSchedule
+  , CxxString
   , Arguments (..)
   , Length
   , Append
@@ -107,6 +108,8 @@ data CxxVector a
 
 -- | Haskell counterpart of @Halide::Internal::StageSchedule@.
 data CxxStageSchedule
+
+data CxxString
 
 -- | An enum describing a type of device API.
 data DeviceAPI

@@ -19,7 +19,6 @@ import qualified Language.C.Inline as C
 import qualified Language.C.Inline.Cpp as C
 import qualified Language.C.Inline.Cpp.Exception as C
 import Language.C.Types (CIdentifier)
-import Language.Halide.Buffer
 import Language.Halide.Type
 import Language.Haskell.TH (DecsQ, Q, TypeQ, lookupTypeName)
 import qualified Language.Haskell.TH as TH
@@ -82,7 +81,7 @@ halideCxt = do
 
 halideTypePairs :: Q [(CIdentifier, TypeQ)]
 halideTypePairs = do
-  fmap concat . sequence $ [core, buffer, schedule]
+  fmap concat . sequence $ [core, other]
   where
     core =
       pure
@@ -98,17 +97,15 @@ halideTypePairs = do
         , ("Halide::JITUserContext", [t|CxxUserContext|])
         , ("Halide::Argument", [t|CxxArgument|])
         , ("std::vector", [t|CxxVector|])
-        ]
-    buffer =
-      pure
-        [ ("halide_buffer_t", [t|RawHalideBuffer|])
+        , ("std::string", [t|CxxString|])
         , ("halide_type_t", [t|HalideType|])
         ]
-    schedule =
+    other =
       optionals
         [ ("Halide::Internal::StageSchedule", "CxxStageSchedule")
         , ("Halide::Internal::Dim", "Language.Halide.Schedule.Dim")
         , ("Halide::Internal::Split", "Language.Halide.Schedule.Split")
+        , ("halide_buffer_t", "Language.Halide.Buffer.RawHalideBuffer")
         ]
     optional :: (CIdentifier, String) -> Q [(CIdentifier, TypeQ)]
     optional (cName, hsName) = do
@@ -159,4 +156,11 @@ defineExceptionHandler =
     \    throw std::runtime_error{e.what()};             \n\
     \  }                                                 \n\
     \}                                                   \n\
+    \                                                    \n\
+    \template <class T>                                               \n\
+    \auto to_string_via_iostream(T const& x) -> std::string* {        \n\
+    \  std::ostringstream stream;                                     \n\
+    \  stream << x;                                                   \n\
+    \  return new std::string{stream.str()};                          \n\
+    \}                                                                \n\
     \"

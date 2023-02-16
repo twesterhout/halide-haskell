@@ -1,3 +1,6 @@
+{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE TemplateHaskell #-}
+
 module Language.Halide.FuncSpec (spec) where
 
 import Control.Monad.ST (RealWorld)
@@ -6,8 +9,14 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Storable.Mutable as SM
+import qualified Language.C.Inline.Cpp.Exception as C
+import qualified Language.C.Inline.Unsafe as CU
 import Language.Halide
+import Language.Halide.Context
+import Language.Halide.Func
 import Test.Hspec
+
+importHalide
 
 data Matrix v a = Matrix
   { matrixRows :: !Int
@@ -20,6 +29,15 @@ instance IsHalideType a => IsHalideBuffer (Matrix (SM.MVector RealWorld) a) 2 a 
   withHalideBuffer (Matrix n m v) f =
     SM.unsafeWith v $ \dataPtr ->
       bufferFromPtrShapeStrides dataPtr [n, m] [1, n] f
+
+gpuTarget :: Maybe (Target)
+gpuTarget
+  | hostSupportsTargetDevice openCLTarget = Just openCLTarget
+  | hostSupportsTargetDevice cudaTarget = Just cudaTarget
+  | otherwise = Nothing
+  where
+    openCLTarget = setFeature FeatureOpenCL hostTarget
+    cudaTarget = setFeature FeatureCUDA hostTarget
 
 spec :: Spec
 spec = do
@@ -97,6 +115,43 @@ spec = do
       print =<< S.unsafeFreeze (matrixData dest)
       s <- compileToLoweredStmt StmtText (setFeature FeatureNoAsserts hostTarget) builder
       T.putStrLn s
+
+  describe "gpuBlocks" $ do
+    it "binds indices to gpu block indices" $ do
+      let builder (src :: Func 1 Int64) = do
+            i <- mkVar "i"
+            j <- mkVar "j"
+            dest <-
+              define "matrix" (i, j) $
+                bool (equal i j) (src ! i) 0
+            _ <-
+              pure dest
+                >>= gpuBlocks (i, j)
+                >>= computeRoot
+            s <- prettyLoopNest dest
+            s `shouldSatisfy` T.isInfixOf "gpu_block i"
+            s `shouldSatisfy` T.isInfixOf "gpu_block j"
+            _ <-
+              (src `asUsedBy` dest)
+                >>= copyToDevice DeviceDefaultGPU
+                >>= computeRoot
+            asUsed dest >>= copyToHost
+      case gpuTarget of
+        Just target -> do
+          copy <- mkKernelForTarget (setFeature FeatureDebug target) builder
+          let src :: S.Vector Int64
+              src = S.generate 3 fromIntegral
+          dest <- Matrix 3 3 <$> SM.new (S.length src * S.length src)
+          withHalideBuffer src $ \srcPtr ->
+            withHalideBuffer dest $ \destPtr ->
+              copy srcPtr destPtr
+          print =<< S.unsafeFreeze (matrixData dest)
+        Nothing -> do
+          T.putStrLn "\nSkipping gpuBlocks test, because no GPU target is available"
+          pure ()
+
+-- s <- compileToLoweredStmt StmtText (setFeature FeatureNoAsserts hostTarget) builder
+-- T.putStrLn s
 
 -- s `shouldSatisfy` T.isInfixOf "ramp(dest1"
 

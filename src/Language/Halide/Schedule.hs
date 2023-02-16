@@ -27,7 +27,6 @@ import qualified Language.C.Inline as C
 import qualified Language.C.Inline.Cpp.Exception as C
 import qualified Language.C.Inline.Unsafe as CU
 import Language.Halide.Context
-import Language.Halide.Expr
 import Language.Halide.Func
 import Language.Halide.Target
 import Language.Halide.Type
@@ -109,22 +108,25 @@ instance Storable Split where
   alignment _ = fromIntegral [CU.pure| size_t { alignof(Halide::Internal::Split) } |]
   peek p = do
     oldVar <-
-      fmap decodeUtf8 $
-        packCString =<< [CU.exp| char const* { $(Halide::Internal::Split* p)->old_var.c_str() } |]
+      fmap decodeUtf8
+        <$> packCString
+        =<< [CU.exp| char const* { $(Halide::Internal::Split* p)->old_var.c_str() } |]
     outer <-
-      fmap decodeUtf8 $
-        packCString =<< [CU.exp| char const* { $(Halide::Internal::Split* p)->outer.c_str() } |]
+      fmap decodeUtf8
+        <$> packCString
+        =<< [CU.exp| char const* { $(Halide::Internal::Split* p)->outer.c_str() } |]
     inner <-
-      fmap decodeUtf8 $
-        packCString =<< [CU.exp| char const* { $(Halide::Internal::Split* p)->inner.c_str() } |]
+      fmap decodeUtf8
+        <$> packCString
+        =<< [CU.exp| char const* { $(Halide::Internal::Split* p)->inner.c_str() } |]
     factor <-
       fromIntegral
         <$> [CU.block| int {
-        auto expr = $(Halide::Internal::Split* p)->factor;
-        Halide::Internal::IntImm const* node = expr.as<Halide::Internal::IntImm>();
-        if (node == nullptr) return -1;
-        return node->value;
-      } |]
+              auto expr = $(Halide::Internal::Split* p)->factor;
+              Halide::Internal::IntImm const* node = expr.as<Halide::Internal::IntImm>();
+              if (node == nullptr) return -1;
+              return node->value;
+            } |]
     exact <- toEnum . fromIntegral <$> [CU.exp| bool { $(Halide::Internal::Split* p)->exact } |]
     (tail :: TailStrategy) <-
       toEnum . fromIntegral <$> [CU.exp| int { static_cast<int>($(Halide::Internal::Split* p)->tail) } |]

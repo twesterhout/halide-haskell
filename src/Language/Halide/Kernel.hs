@@ -18,6 +18,7 @@
 -- Copyright   : (c) Tom Westerhout, 2023
 module Language.Halide.Kernel
   ( mkKernel
+  , mkKernelForTarget
   , compileToLoweredStmt
   , StmtOutputFormat (..)
   )
@@ -222,19 +223,40 @@ mkKernel
      )
   => f
   -> IO kernel
-mkKernel builder = do
+mkKernel = mkKernelForTarget hostTarget
+
+mkKernelForTarget
+  :: forall f kernel k ts n a r
+   . ( FunctionArguments f ~ ts
+     , FunctionReturn f ~ r
+     , UnCurry f ts r
+     , r ~ IO (Func n a)
+     , KnownNat n
+     , IsHalideType a
+     , Length ts ~ k
+     , KnownNat k
+     , PrepareParameters ts
+     , All ValidParameter ts
+     , All ValidArgument (Lowered ts)
+     , Curry (Lowered ts) (Ptr (HalideBuffer n a) -> IO ()) kernel
+     )
+  => Target
+  -> f
+  -> IO kernel
+mkKernelForTarget target builder = do
   (parameters, func) <- buildFunc builder
   callable <-
     prepareCxxArguments parameters $ \v ->
-      withFunc func $ \f -> do
-        wrapCxxCallable
-          =<< handleHalideExceptions
-          =<< [C.tryBlock| Halide::Callable* {
-                return handle_halide_exceptions([=]() {
-                  return new Halide::Callable{$(Halide::Func* f)->compile_to_callable(
-                    *$(const std::vector<Halide::Argument>* v))};
-                });
-              } |]
+      withFunc func $ \f ->
+        withCxxTarget target $ \t ->
+          wrapCxxCallable
+            =<< [C.throwBlock| Halide::Callable* {
+                  return handle_halide_exceptions([=]() {
+                    return new Halide::Callable{$(Halide::Func* f)->compile_to_callable(
+                      *$(const std::vector<Halide::Argument>* v),
+                      *$(const Halide::Target* t))};
+                  });
+                } |]
   context <- newEmptyCxxUserContext
   let argc = 1 + fromIntegral (natVal (Proxy @k)) + 1
   storage@(ArgvStorage argv scalarStorage) <- newArgvStorage (fromIntegral argc)
