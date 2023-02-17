@@ -52,6 +52,8 @@ import Language.Halide.Func
 import Language.Halide.Target
 import Language.Halide.Type
 import System.IO.Temp (withSystemTempDirectory)
+import Type.Reflection
+import Unsafe.Coerce (unsafeCoerce)
 
 importHalide
 
@@ -123,14 +125,15 @@ instance IsHalideType a => ValidParameter (Expr a) where
   prepareParameter :: IO (Expr a)
   prepareParameter = ScalarParam <$> newIORef Nothing
 
-instance (KnownNat n, IsHalideType a) => ValidParameter (Func n a) where
-  appendToArgList :: Ptr (CxxVector CxxArgument) -> Func n a -> IO ()
-  appendToArgList v func =
+instance (KnownNat n, IsHalideType a) => ValidParameter (Func t n a) where
+  appendToArgList :: Ptr (CxxVector CxxArgument) -> Func t n a -> IO ()
+  appendToArgList v func@(Param _) =
     withBufferParam func $ \p ->
       [CU.exp| void { $(std::vector<Halide::Argument>* v)->push_back(
         *$(Halide::ImageParam const* p)) } |]
-  prepareParameter :: IO (Func n a)
-  prepareParameter = BufferParam <$> newIORef Nothing
+  appendToArgList _ _ = error "appendToArgList called on Func; this should never happen"
+  prepareParameter :: IO (Func t n a)
+  prepareParameter = unsafeCoerce $ Param <$> newIORef Nothing
 
 class PrepareParameters ts where
   prepareParameters :: IO (Arguments ts)
@@ -187,18 +190,18 @@ wrapCxxCallable = newForeignPtr deleteCxxCallable
 type family Lowered (t :: [Type]) :: [Type] where
   Lowered '[] = '[]
   Lowered (Expr a ': ts) = (a ': Lowered ts)
-  Lowered (Func n a ': ts) = (Ptr (HalideBuffer n a) ': Lowered ts)
+  Lowered (Func t n a ': ts) = (Ptr (HalideBuffer n a) ': Lowered ts)
 
 buildFunc
-  :: forall f ts n a r
+  :: forall f ts t n a r
    . ( FunctionArguments f ~ ts
      , FunctionReturn f ~ r
      , UnCurry f ts r
-     , r ~ IO (Func n a)
+     , r ~ IO (Func t n a)
      , PrepareParameters ts
      )
   => f
-  -> IO (Arguments ts, Func n a)
+  -> IO (Arguments ts, Func t n a)
 buildFunc builder = do
   parameters <- prepareParameters
   func <- uncurryG builder parameters
@@ -207,11 +210,11 @@ buildFunc builder = do
 -- | Convert a function that builds a Halide 'Func' into a normal Haskell
 -- function acccepting scalars and 'HalideBuffer's.
 mkKernel
-  :: forall f kernel k ts n a r
+  :: forall f kernel k ts t n a r
    . ( FunctionArguments f ~ ts
      , FunctionReturn f ~ r
      , UnCurry f ts r
-     , r ~ IO (Func n a)
+     , r ~ IO (Func t n a)
      , KnownNat n
      , IsHalideType a
      , Length ts ~ k
@@ -226,11 +229,11 @@ mkKernel
 mkKernel = mkKernelForTarget hostTarget
 
 mkKernelForTarget
-  :: forall f kernel k ts n a r
+  :: forall f kernel k ts t n a r
    . ( FunctionArguments f ~ ts
      , FunctionReturn f ~ r
      , UnCurry f ts r
-     , r ~ IO (Func n a)
+     , r ~ IO (Func t n a)
      , KnownNat n
      , IsHalideType a
      , Length ts ~ k
@@ -291,11 +294,11 @@ instance Enum StmtOutputFormat where
     | otherwise = error $ "invalid StmtOutputFormat " <> show k
 
 compileToLoweredStmt
-  :: forall f k ts n a r
+  :: forall f k ts t n a r
    . ( FunctionArguments f ~ ts
      , FunctionReturn f ~ r
      , UnCurry f ts r
-     , r ~ IO (Func n a)
+     , r ~ IO (Func t n a)
      , KnownNat n
      , IsHalideType a
      , Length ts ~ k
@@ -316,14 +319,13 @@ compileToLoweredStmt format target builder = do
     prepareCxxArguments parameters $ \v ->
       withFunc func $ \f ->
         withCxxTarget target $ \t ->
-          handleHalideExceptionsM
-            [C.tryBlock| void {
-              handle_halide_exceptions([=]() {
-                $(Halide::Func* f)->compile_to_lowered_stmt(
-                  std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)},
-                  *$(const std::vector<Halide::Argument>* v),
-                  static_cast<Halide::StmtOutputFormat>($(int o)),
-                  *$(Halide::Target* t));
-              });
-            } |]
+          [C.throwBlock| void {
+            handle_halide_exceptions([=]() {
+              $(Halide::Func* f)->compile_to_lowered_stmt(
+                std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)},
+                *$(const std::vector<Halide::Argument>* v),
+                static_cast<Halide::StmtOutputFormat>($(int o)),
+                *$(Halide::Target* t));
+            });
+          } |]
     T.readFile (dir <> "/code.stmt")

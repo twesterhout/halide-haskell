@@ -6,7 +6,7 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# OPTIONS_GHC -Wno-unused-local-binds #-}
+{-# OPTIONS_GHC -Wno-unused-local-binds -Wno-unused-matches #-}
 
 -- |
 -- Module      : Language.Halide.Type
@@ -16,7 +16,6 @@ module Language.Halide.Type
   ( HalideTypeCode (..)
   , HalideType (..)
   , IsHalideType (..)
-  , DeviceAPI (..)
   , CxxExpr
   , CxxVar
   , CxxRVar
@@ -31,6 +30,7 @@ module Language.Halide.Type
   , CxxTarget
   , CxxStageSchedule
   , CxxString
+  , CxxLoopLevel
   , Arguments (..)
   , Length
   , Append
@@ -42,7 +42,6 @@ module Language.Halide.Type
   , Curry (..)
   , defineIsHalideTypeInstances
   , instanceHasCxxVector
-  , defineHasCxxVectorInstances
   , Named (..)
   , HasCxxVector (..)
   , IsTuple (..)
@@ -109,21 +108,11 @@ data CxxVector a
 -- | Haskell counterpart of @Halide::Internal::StageSchedule@.
 data CxxStageSchedule
 
+-- | Haskell counterpart of @std::string@
 data CxxString
 
--- | An enum describing a type of device API.
-data DeviceAPI
-  = DeviceNone
-  | DeviceHost
-  | DeviceDefaultGPU
-  | DeviceCUDA
-  | DeviceOpenCL
-  | DeviceOpenGLCompute
-  | DeviceMetal
-  | DeviceHexagon
-  | DeviceHexagonDma
-  | DeviceD3D12Compute
-  deriving stock (Show, Eq, Ord)
+-- | Haskell counterpart of @Halide::LoopLevel@
+data CxxLoopLevel
 
 -- data Split =
 --   SplitVar !Text !Text !Text !(Expr Int32) !
@@ -213,6 +202,10 @@ instanceIsHalideType (cType, hsType, typeCode) =
 defineIsHalideTypeInstances :: TH.DecsQ
 defineIsHalideTypeInstances = concat <$> mapM instanceIsHalideType halideTypes
 
+-- | Specifies that a given Haskell type can be used with @std::vector@.
+--
+-- E.g. if we have @HasCxxVector Int16@, then using @std::vector<int16_t>*@
+-- in inline-c quotes will work.
 class HasCxxVector a where
   newCxxVector :: Maybe Int -> IO (Ptr (CxxVector a))
   deleteCxxVector :: Ptr (CxxVector a) -> IO ()
@@ -220,6 +213,7 @@ class HasCxxVector a where
   cxxVectorPushBack :: Ptr (CxxVector a) -> Ptr a -> IO ()
   cxxVectorData :: Ptr (CxxVector a) -> IO (Ptr a)
 
+-- | Template Haskell splice that defines an instance of 'HasCxxVector' for a given C type name.
 instanceHasCxxVector :: String -> TH.DecsQ
 instanceHasCxxVector cType =
   C.substitute
@@ -241,17 +235,6 @@ instanceHasCxxVector cType =
         cxxVectorPushBack vec x = [CU.exp| void { @VEC(vec)->push_back(*$(@T()* x)) } |]
         cxxVectorData vec = [CU.exp| @T()* { @VEC(vec)->data() } |]
       |]
-
-defineHasCxxVectorInstances :: TH.DecsQ
-defineHasCxxVectorInstances =
-  concat
-    <$> mapM
-      instanceHasCxxVector
-      [ "Halide::Expr"
-      , "Halide::Var"
-      , "Halide::RVar"
-      , "Halide::VarOrRVar"
-      ]
 
 -- | List of all supported types.
 halideTypes :: [(String, TH.TypeQ, HalideTypeCode)]
@@ -346,6 +329,9 @@ class Named a where
   -- | Set the name of a parameter.
   setName :: HasCallStack => a -> Text -> IO ()
 
+-- | Specifies that there is an isomorphism between a type @a@ and a tuple @t@.
+--
+-- We use this class to convert between 'Arguments' and normal tuples.
 class IsTuple a t | a -> t, t -> a where
   toTuple :: a -> t
   fromTuple :: t -> a

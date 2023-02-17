@@ -1,3 +1,6 @@
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE ViewPatterns #-}
+
 module Language.Halide.KernelSpec (spec) where
 
 import Control.Monad.ST (RealWorld)
@@ -71,10 +74,10 @@ spec = do
             setFeature FeatureNoAsserts . setFeature FeatureNoBoundsQuery $
               hostTarget
       s <- compileToLoweredStmt StmtText target $
-        \(src :: Func 1 Float) -> do
-          setName src "src"
+        \(buffer "src" -> src) (scalar @Float "c" -> c) -> do
+          -- setName src "src"
           i <- mkVar "i"
-          define "dest1234" i $ src ! i
+          define "dest1234" i $ c * src ! i
       -- T.putStrLn s
-      s `shouldSatisfy` T.isInfixOf "func dest1234 (src, dest1234) {"
+      s `shouldSatisfy` T.isInfixOf "func dest1234 (src, c, dest1234) {"
       s `shouldSatisfy` T.isInfixOf "produce dest1234 {"

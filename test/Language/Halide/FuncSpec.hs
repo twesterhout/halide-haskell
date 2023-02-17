@@ -43,7 +43,7 @@ spec :: Spec
 spec = do
   describe "vectorize" $ do
     it "vectorizes loops" $ do
-      let builder :: Func 1 Int64 -> IO (Func 1 Int64)
+      let builder :: Func 'ParamTy 1 Int64 -> IO (Func 'FuncTy 1 Int64)
           builder src = do
             i <- mkVar "i"
             dest <- define "dest1" i $ src ! i
@@ -97,7 +97,7 @@ spec = do
   describe "reorder" $ do
     it "reorders loops" $ do
       let
-        builder (src :: Func 1 Int64) = do
+        builder (src :: Func 'ParamTy 1 Int64) = do
           i <- mkVar "i"
           j <- mkVar "j"
           dest <-
@@ -118,7 +118,7 @@ spec = do
 
   describe "gpuBlocks" $ do
     it "binds indices to gpu block indices" $ do
-      let builder (src :: Func 1 Int64) = do
+      let builder (src :: Func 'ParamTy 1 Int64) = do
             i <- mkVar "i"
             j <- mkVar "j"
             dest <-

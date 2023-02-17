@@ -4,24 +4,32 @@
 -- Module      : Language.Halide.Buffer
 -- Description : Buffers
 -- Copyright   : (c) Tom Westerhout, 2021-2023
+--
+-- A buffer in Halide is a __view__ of some multidimensional array. Buffers can reference data that's
+-- located on a CPU, GPU, or another device. In the C interface of Halide, buffers are described by
+-- the C struct [@halide_buffer_t@](https://halide-lang.org/docs/structhalide__buffer__t.html). On the
+-- Haskell side, we choose to define two types: 'RawHalideBuffer' and 'HalideBuffer'. 'RawHalideBuffer'
+-- is the low-level untyped version, and 'HalideBuffer' builds on top of it and stores the element type
+-- and the number of dimensions at the type level. Prefer 'HalideBuffer' whenever possible.
+--
+-- You can tell Halide how to work with your custom multidimensional arrays by defining an instance of
+-- 'IsHalideBuffer'.
 module Language.Halide.Buffer
-  ( -- * Types
-    IsHalideBuffer (..)
+  ( RawHalideBuffer (..)
   , HalideBuffer (..)
-  , RawHalideBuffer (..)
   , HalideDimension (..)
   , HalideDeviceInterface
+  , IsHalideBuffer (..)
 
     -- * Constructing
-
-    -- | We define helper functions to easily construct 'HalideBuffer's from CPU
-    -- pointers.
+    --
+    -- | We define helper functions to easily construct 'HalideBuffer's from CPU pointers.
   , bufferFromPtrShapeStrides
   , bufferFromPtrShape
   )
 where
 
-import Control.Monad (unless)
+import Control.Monad (unless, when)
 import Control.Monad.ST (RealWorld)
 import Data.Bits
 import Data.Int
@@ -29,6 +37,7 @@ import Data.Kind (Type)
 import Data.Proxy
 import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Storable.Mutable as SM
+import qualified Language.C.Inline as C
 import qualified Language.C.Inline.Unsafe as CU
 import Data.Word
 import Foreign.Marshal.Array
@@ -40,11 +49,19 @@ import GHC.TypeNats
 import Language.Halide.Type
 import Language.Halide.Context
 
--- | Haskell analogue of [@halide_dimension_t@](https://halide-lang.org/docs/structhalide__dimension__t.html).
+-- | Information about a dimension in a buffer.
+--
+-- It is the Haskell analogue of [@halide_dimension_t@](https://halide-lang.org/docs/structhalide__dimension__t.html).
+--
 data HalideDimension = HalideDimension
-  { halideDimensionMin :: {-# UNPACK #-} !Int32
+  { 
+    -- | Starting index.
+    halideDimensionMin :: {-# UNPACK #-} !Int32
+    -- | Length of the dimension.
   , halideDimensionExtent :: {-# UNPACK #-} !Int32
+    -- | Stride along this dimension.
   , halideDimensionStride :: {-# UNPACK #-} !Int32
+    -- | Extra flags.
   , halideDimensionFlags :: {-# UNPACK #-} !Word32
   }
   deriving stock (Read, Show, Eq)
@@ -138,7 +155,7 @@ instance Storable RawHalideBuffer where
 -- match @n@.
 bufferFromPtrShapeStrides
   :: forall n a b
-   . (KnownNat n, IsHalideType a)
+   . (HasCallStack, KnownNat n, IsHalideType a)
   => Ptr a
   -- ^ CPU pointer to the data
   -> [Int]
@@ -170,22 +187,10 @@ bufferFromPtrShapeStrides p shape stride action =
             }
     with buffer $ \bufferPtr -> do
       r <- action (castPtr bufferPtr)
-      -- [CU.block| void {
-      --   auto& buf = *$(halide_buffer_t* bufferPtr);
-      --   // if (buf.device_interface != nullptr) {
-      --   //   std::cout << "device_interface is not null!\n";
-      --   // }
-      --   if (buf.device_dirty()) {
-      --     if (buf.device_interface == nullptr) {
-      --       throw std::runtime_error{"device_dirty is set, but device_interface is nullptr; "
-      --                                "this should never happen"};
-      --     }
-      --     buf.device_interface->copy_to_host(nullptr, &buf);
-      --   }
-      --   if (buf.device) {
-      --     buf.device_interface->device_free(nullptr, &buf);
-      --   }
-      -- } |]
+      hasDataOnDevice <- toEnum . fromIntegral
+        <$> [CU.exp| bool { $(halide_buffer_t* bufferPtr)->device } |]
+      when hasDataOnDevice $
+        error "the Buffer still references data on the device; did you forget to call copyToHost?"
       pure r
 
 -- | Similar to 'bufferFromPtrShapeStrides', but assumes row-major ordering of data.

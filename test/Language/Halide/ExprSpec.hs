@@ -37,8 +37,11 @@ spec = do
             assert . (x * y ==) =<< run (let r = (mkExpr x * mkExpr y) in checkType @a r >> evaluate r)
           assert . (abs x ==) =<< run (evaluate (abs (mkExpr x)))
           assert . (negate x ==) =<< run (evaluate (negate (mkExpr x)))
+    it "" $
+      evaluate ((mkExpr (-128) :: Expr Int8) + mkExpr (-2)) `shouldReturn` 126
     modifyMaxSuccess (const 100) $
-      prop "Int8" $ p @Int8
+      prop "Int8" $
+        p @Int8
     prop "Int16" $ p @Int16
     prop "Int32" $ p @Int32
     prop "Int64" $ p @Int64

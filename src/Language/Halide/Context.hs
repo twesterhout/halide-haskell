@@ -2,29 +2,56 @@
 
 -- |
 -- Module      : Language.Halide.Context
--- Description : Helpers to setup inline-c context for Halide
+-- Description : Helpers to setup inline-c for Halide
 -- Copyright   : (c) Tom Westerhout, 2023
+--
+-- This module defines a Template Haskell function 'importHalide' that sets up everything you need
+-- to call Halide functions from 'Language.C.Inline' and 'Language.C.Inlinde.Cpp' quasiquotes.
+--
+-- We also define two C++ functions:
+--
+-- > template <class Func>
+-- > auto handle_halide_exceptions(Func&& func);
+-- >
+-- > template <class T>
+-- > auto to_string_via_iostream(T const& x) -> std::string*;
+--
+-- @handle_halide_exceptions@ can be used to catch various Halide exceptions and convert them to
+-- [@std::runtime_error@](https://en.cppreference.com/w/cpp/error/runtime_error). It can be used
+-- inside 'C.tryBlock' or 'C.catchBlock' to properly re-throw Halide errors.
+--
+-- @
+-- [C.catchBlock| void {
+--   handle_halide_exceptions([=]() {
+--     Halide::Func f;
+--     Halide::Var i;
+--     f(i) = *$(Halide::Expr* e);
+--     f.realize(Halide::Pipeline::RealizationArg{$(halide_buffer_t* b)});
+--   });
+-- } |]
+-- @
+--
+-- @to_string_via_iostream@ is a helper that converts a variable into a string by relying on
+-- [iostreams](https://en.cppreference.com/w/cpp/io). It returns a pointer to
+-- [@std::string@](https://en.cppreference.com/w/cpp/string/basic_string) that it allocated using the @new@
+-- keyword. To convert it to a Haskell string, use the 'Language.Halide.Utils.peekCxxString' and
+-- 'Language.Halide.Utils.peekAndDeleteCxxString' functions.
 module Language.Halide.Context
   ( importHalide
-  , handleHalideExceptions
-  , handleHalideExceptionsM
-  , halideTypePairs
   )
 where
 
-import Data.Text (unpack)
-import Data.Text.Encoding (decodeUtf8)
-import GHC.Stack (HasCallStack)
 import qualified Language.C.Inline as C
 import qualified Language.C.Inline.Cpp as C
-import qualified Language.C.Inline.Cpp.Exception as C
 import Language.C.Types (CIdentifier)
 import Language.Halide.Type
 import Language.Haskell.TH (DecsQ, Q, TypeQ, lookupTypeName)
 import qualified Language.Haskell.TH as TH
 
--- | One stop function to include all the neccessary machinery to call Halide
--- functions via inline-c.
+-- | One stop function to include all the neccessary machinery to call Halide functions via inline-c.
+--
+-- Put @importHalide@ somewhere at the beginning of the file and enjoy using the C++ interface of
+-- Halide via inline-c quasiquotes.
 importHalide :: DecsQ
 importHalide =
   concat
@@ -34,50 +61,10 @@ importHalide =
       , defineExceptionHandler
       ]
 
--- | Convert Halide C++ exceptions into calls to 'error'.
---
--- Normally, you would use it like this:
---
--- > halideHandleExceptions
--- >   =<< [C.tryBlock| void {
--- >         handle_halide_exceptions([=]() {
--- >           Halide::Func f;
--- >           f() = *$(Halide::Expr* e);
--- >           f.realize(Halide::Pipeline::RealizationArg{$(halide_buffer_t* b)});
--- >         });
--- >       } |]
-handleHalideExceptions :: HasCallStack => Either C.CppException a -> IO a
-handleHalideExceptions (Right x) = pure x
-handleHalideExceptions (Left (C.CppStdException _ msg _)) = error $ unpack (decodeUtf8 msg)
-handleHalideExceptions (Left err) = error $ "Halide error: " <> show err
-
--- | Similar to 'handleHalideExceptions' but takes a monadic action.
-handleHalideExceptionsM :: HasCallStack => IO (Either C.CppException a) -> IO a
-handleHalideExceptionsM action = action >>= handleHalideExceptions
-
--- | Define @inline-c@ context for Halide types.
 halideCxt :: Q C.Context
 halideCxt = do
   typePairs <- C.cppTypePairs <$> halideTypePairs
   pure (C.cppCtx <> C.fptrCtx <> C.bsCtx <> typePairs)
-
--- [ ("Halide::Expr", [t|CxxExpr|])
--- , ("Halide::Var", [t|CxxVar|])
--- , ("Halide::RVar", [t|CxxRVar|])
--- , ("Halide::VarOrRVar", [t|CxxVarOrRVar|])
--- , ("Halide::Func", [t|CxxFunc|])
--- , ("Halide::Internal::Parameter", [t|CxxParameter|])
--- , ("Halide::ImageParam", [t|CxxImageParam|])
--- , ("Halide::Callable", [t|CxxCallable|])
--- , ("Halide::Target", [t|CxxTarget|])
--- , ("Halide::JITUserContext", [t|CxxUserContext|])
--- , ("Halide::Argument", [t|CxxArgument|])
--- , ("std::vector", [t|CxxVector|])
--- , ("Halide::Internal::StageSchedule", [t|CxxStageSchedule|])
--- , ("Halide::Internal::Dim", [t|Dim|])
--- , ("halide_buffer_t", [t|RawHalideBuffer|])
--- , ("halide_type_t", [t|HalideType|])
--- ]
 
 halideTypePairs :: Q [(CIdentifier, TypeQ)]
 halideTypePairs = do
@@ -96,6 +83,7 @@ halideTypePairs = do
         , ("Halide::Target", [t|CxxTarget|])
         , ("Halide::JITUserContext", [t|CxxUserContext|])
         , ("Halide::Argument", [t|CxxArgument|])
+        , ("Halide::LoopLevel", [t|CxxLoopLevel|])
         , ("std::vector", [t|CxxVector|])
         , ("std::string", [t|CxxString|])
         , ("halide_type_t", [t|HalideType|])
@@ -106,6 +94,7 @@ halideTypePairs = do
         , ("Halide::Internal::Dim", "Language.Halide.Schedule.Dim")
         , ("Halide::Internal::Split", "Language.Halide.Schedule.Split")
         , ("halide_buffer_t", "Language.Halide.Buffer.RawHalideBuffer")
+        , ("Halide::Internal::Dimension", "CxxDimension")
         ]
     optional :: (CIdentifier, String) -> Q [(CIdentifier, TypeQ)]
     optional (cName, hsName) = do
@@ -114,30 +103,6 @@ halideTypePairs = do
     optionals :: [(CIdentifier, String)] -> Q [(CIdentifier, TypeQ)]
     optionals pairs = concat <$> mapM optional pairs
 
--- schedule =
---   cxxStageSchedule <- lookupTypeName "CxxStageSchedule")
---   fmap concat . sequence $
---     [ maybe [] pure (lookupTypeName "CxxStageSchedule")
---     , maybe [] pure ()
---   [ ("Halide::Internal::StageSchedule", [t|CxxStageSchedule|])
---   , ("Halide::Internal::Dim", [t|Dim|])
---   ]
-
--- | Define a C++ function @halide_handle_exception@ that converts Halide
--- exceptions into @std::runtime_error@. It can be used inside 'C.tryBlock' or
--- 'C.catchBlock' to properly re-throw Halide errors (otherwise we'll get a
--- call to @std::terminate@).
---
--- E.g.
---
---    [C.catchBlock| void {
---      handle_halide_exceptions([=]() {
---        Halide::Func f;
---        Halide::Var i;
---        f(i) = *$(Halide::Expr* e);
---        f.realize(Halide::Pipeline::RealizationArg{$(halide_buffer_t* b)});
---      });
---    } |]
 defineExceptionHandler :: DecsQ
 defineExceptionHandler =
   C.verbatim

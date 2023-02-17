@@ -4,6 +4,7 @@
 module Language.Halide.Schedule
   ( Dim (..)
   , DimType (..)
+  , LoopLevel (..)
   , ForType (..)
   , Split (..)
   , StageSchedule (..)
@@ -47,12 +48,20 @@ data ForType
   | ForGPULane
   deriving stock (Show, Eq)
 
+data LoopAlignStrategy
+  = LoopAlignStart
+  | LoopAlignEnd
+  | LoopNoAlign
+  | LoopAuto
+  deriving stock (Show, Eq)
+
+newtype LoopLevel = ForeignPtr CxxLoopLevel
+
 data Dim = Dim !Text !ForType !DeviceAPI !DimType
   deriving stock (Show, Eq)
 
-data Split
-  = SplitVar !Text !Text !Text !(Maybe Int) !Bool !TailStrategy !CInt
-  deriving stock (Show)
+data Split = SplitVar !Text !Text !Text !(Maybe Int) !Bool !TailStrategy !CInt
+  deriving stock (Show, Eq)
 
 importHalide
 
@@ -144,7 +153,7 @@ wrapCxxStageSchedule = fmap StageSchedule . newForeignPtr deleter
         std::cout << "deleting ..." << std::endl;
         delete p; } |]
 
-getStageSchedule :: (KnownNat n, IsHalideType a) => Func n a -> IO StageSchedule
+getStageSchedule :: (KnownNat n, IsHalideType a) => Func t n a -> IO StageSchedule
 getStageSchedule func =
   withFunc func $ \f ->
     wrapCxxStageSchedule
@@ -183,18 +192,27 @@ getSplits (StageSchedule fp) = unsafePerformIO $
       } |]
       peekArray n p
 
-applyAutoscheduler :: (KnownNat n, IsHalideType a) => Func n a -> Text -> Target -> IO ()
+applyAutoscheduler :: (KnownNat n, IsHalideType a) => Func t n a -> Text -> Target -> IO ()
 applyAutoscheduler func name target = do
   let s = encodeUtf8 name
   withFunc func $ \f ->
     withCxxTarget target $ \t -> do
       [C.throwBlock| void {
         handle_halide_exceptions([=](){
-          Halide::load_plugin("autoschedule_adams2019");
+          auto name = std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)};
+          if (name == "Adams2019") {
+            Halide::load_plugin("autoschedule_adams2019");
+          }
+          else if (name == "Li2018") {
+            Halide::load_plugin("autoschedule_li2018");
+          }
+          else if (name == "Mullapudi2016") {
+            Halide::load_plugin("autoschedule_mullapudi2016");
+          }
           auto pipeline = Halide::Pipeline{*$(Halide::Func* f)};
-          auto params = Halide::AutoschedulerParams{std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}};
+          auto params = Halide::AutoschedulerParams{name};
           auto results = pipeline.apply_autoscheduler(*$(Halide::Target* t), params);
-          std::cout << results.schedule_source << std::endl;
+          std::cout << '\n' << results.schedule_source << std::endl;
         });
       } |]
 

@@ -22,26 +22,36 @@ instance IsHalideType a => IsHalideBuffer (Matrix (SM.MVector RealWorld) a) 2 a 
     SM.unsafeWith v $ \dataPtr ->
       bufferFromPtrShapeStrides dataPtr [n, m] [1, n] f
 
+-- autoschedule :: Scheduler -> Func n a -> IO Schedule
+
 spec :: Spec
 spec = do
   describe "prints schedules" $ do
     it "of vectorized loops" $ do
-      let builder :: Func 1 Int64 -> IO (Func 1 Int64)
-          builder src = do
+      let builder :: Target -> Func 'ParamTy 1 Int64 -> IO (Func 'FuncTy 1 Float)
+          builder target src = do
             i <- mkVar "i"
-            dest <- define "dest1" i $ src ! i
-            setEstimate dest i 0 100
+            dest <- define "dest1" i $ sin (cast @Float (src ! i))
+            -- dim 0 src >>= setEstimate 0 1000
+            dim 0 src >>= setMin 0 >>= setStride 1 >>= print
+            -- schedule <- do
+            setEstimate i 0 1000 dest
+            --  autoschedule defAdams2019{...} dest
+            -- applySchedule schedule{...} dest
             -- vectorize TailShiftInwards dest i 4
-            -- applyAutoscheduler dest "Adams2019" hostTarget
+            applyAutoscheduler dest "Adams2019" target
             T.putStrLn =<< prettyLoopNest dest
             print =<< (getDims <$> getStageSchedule dest)
             print =<< (getSplits <$> getStageSchedule dest)
             pure dest
-      copy <- mkKernel builder
-      let src :: S.Vector Int64
-          src = S.generate 100 fromIntegral
-      dest <- SM.new (S.length src)
-      withHalideBuffer src $ \srcPtr ->
-        withHalideBuffer dest $ \destPtr ->
-          copy srcPtr destPtr
-      S.unsafeFreeze dest `shouldReturn` src
+      let target = hostTarget -- setFeature FeatureOpenCL hostTarget
+      copy <- mkKernelForTarget target (builder target)
+      -- let src :: S.Vector Int64
+      --     src = S.generate 100 fromIntegral
+      pure ()
+
+-- dest <- SM.new (S.length src)
+-- withHalideBuffer src $ \srcPtr ->
+--   withHalideBuffer dest $ \destPtr ->
+--     copy srcPtr destPtr
+-- S.unsafeFreeze dest `shouldReturn` src

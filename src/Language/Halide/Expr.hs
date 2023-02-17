@@ -37,14 +37,11 @@ module Language.Halide.Expr
   , binaryOp
   , unaryOp
   , checkType
-  , peekCxxString
-  , peekAndDeleteCxxString
   )
 where
 
 import Control.Exception (bracket)
 import Control.Monad (unless, (>=>))
-import Data.ByteString (packCString)
 import Data.IORef
 import Data.Int (Int32)
 import Data.Proxy
@@ -64,31 +61,23 @@ import qualified Language.C.Inline.Unsafe as CU
 import Language.Halide.Buffer
 import Language.Halide.Context
 import Language.Halide.Type
+import Language.Halide.Utils
 import System.IO.Unsafe (unsafePerformIO)
 
 importHalide
 
 defineIsHalideTypeInstances
 
-defineHasCxxVectorInstances
+instanceHasCxxVector "Halide::Expr"
+instanceHasCxxVector "Halide::Var"
+instanceHasCxxVector "Halide::RVar"
+instanceHasCxxVector "Halide::VarOrRVar"
 
 instance IsHalideType Bool where
   halideTypeFor _ = HalideType HalideTypeUInt 1 1
   toCxxExpr x = [CU.exp| Halide::Expr* { new Halide::Expr{cast(Halide::UInt(1), Halide::Expr{$(int b)})} } |]
     where
       b = fromIntegral (fromEnum x)
-
-peekCxxString :: Ptr CxxString -> IO Text
-peekCxxString p =
-  fmap T.decodeUtf8 $
-    packCString
-      =<< [CU.exp| char const* { $(const std::string* p)->c_str() } |]
-
-peekAndDeleteCxxString :: Ptr CxxString -> IO Text
-peekAndDeleteCxxString p = do
-  s <- peekCxxString p
-  [CU.exp| void { delete $(const std::string* p) } |]
-  pure s
 
 -- | A scalar expression in Halide.
 --
@@ -107,7 +96,7 @@ data Expr a
   | -- | Scalar parameter.
     --
     -- The 'IORef' is initialized with 'Nothing' and filled in on the first
-    -- call to 'withExpr'. This is done to allow the user to specify the
+    -- call to 'asExpr'. This is done to allow the user to specify the
     -- parameter name using the 'setName' function.
     --
     -- E.g. here, the parameter @a@ will be named "a":
@@ -183,12 +172,10 @@ bool condExpr trueExpr falseExpr = unsafePerformIO $!
                                                 *$(Halide::Expr* f))} } |]
 
 -- | Evaluate a scalar expression. It should contain no parameters.
-evaluate :: forall a. (HasCallStack, IsHalideType a) => Expr a -> IO a
+evaluate :: forall a. IsHalideType a => Expr a -> IO a
 evaluate expr =
   asExpr expr $ \e -> do
     out <- SM.new 1
-    -- hasError <-
-    -- handleHalideExceptionsM $
     withHalideBuffer out $ \buffer -> do
       let b = castPtr (buffer :: Ptr (HalideBuffer 1 a))
       [C.throwBlock| void {
@@ -199,12 +186,6 @@ evaluate expr =
           f.realize(Halide::Pipeline::RealizationArg{$(halide_buffer_t* b)});
         });
       } |]
-    -- when (hasError /= 0) $ do
-    --   print hasError
-    --   -- msg <- fmap pack $ peekCString =<< [CU.exp| char const* { get_error_context().error() } |]
-    --   -- print msg
-    --   -- [CU.exp| void { get_error_context().reset() } |]
-    --   error $ "Halide error: "
     SM.read out 0
 
 instance IsTuple (Arguments '[Expr a]) (Expr a) where
@@ -339,11 +320,10 @@ wrapCxxVar = fmap Var . newForeignPtr deleter
 -- | Wrap a raw @Halide::RVar@ pointer in a Haskell value.
 --
 -- __Note:__ 'Var' objects correspond to expressions of type 'Int32'.
-wrapCxxRVar :: Ptr CxxRVar -> IO (Expr Int32)
-wrapCxxRVar = fmap RVar . newForeignPtr deleter
-  where
-    deleter = [C.funPtr| void deleteExpr(Halide::RVar *p) { delete p; } |]
-
+-- wrapCxxRVar :: Ptr CxxRVar -> IO (Expr Int32)
+-- wrapCxxRVar = fmap RVar . newForeignPtr deleter
+--   where
+--     deleter = [C.funPtr| void deleteExpr(Halide::RVar *p) { delete p; } |]
 class HasHalideType a where
   getHalideType :: a -> IO HalideType
 
@@ -396,6 +376,11 @@ wrapCxxParameter = newForeignPtr deleter
   where
     deleter = [C.funPtr| void deleteParameter(Halide::Internal::Parameter *p) { delete p; } |]
 
+-- | Helper function to assert that the runtime type of the expression matches it's
+-- compile-time type.
+--
+-- Essentially, given an @(x :: 'Expr' a)@, we check that @x.type()@ in C++ is equal to
+-- @'halideTypeFor' (Proxy \@a)@ in Haskell.
 checkType :: forall a t. (HasCallStack, IsHalideType a, HasHalideType t) => t -> IO ()
 checkType x = do
   let hsType = halideTypeFor (Proxy @a)
@@ -474,6 +459,14 @@ forceExpr (ScalarParam r) =
 asExpr :: IsHalideType a => Expr a -> (Ptr CxxExpr -> IO b) -> IO b
 asExpr x = withForeignPtr (exprToForeignPtr x)
 
+-- | Allows applying 'asExpr', 'asVar', 'asRVar', and 'asVarOrRVar' to multiple arguments.
+--
+-- Example usage:
+--
+-- > asVectorOf @((~) (Expr Int32)) asVarOrRVar (fromTuple args) $ \v -> do
+-- >   withFunc func $ \f ->
+-- >     [C.throwBlock| void { $(Halide::Func* f)->reorder(
+-- >                             *$(std::vector<Halide::VarOrRVar>* v)); } |]
 asVectorOf
   :: forall c k ts a
    . (All c ts, HasCxxVector k)
@@ -502,6 +495,7 @@ asRVar :: HasCallStack => Expr Int32 -> (Ptr CxxRVar -> IO b) -> IO b
 asRVar (RVar fp) = withForeignPtr fp
 asRVar _ = error "the expression is not an RVar"
 
+-- | Use the underlying 'Var' or 'RVar' as @Halide::VarOrRVar@ in an 'IO' action.
 asVarOrRVar :: HasCallStack => Expr Int32 -> (Ptr CxxVarOrRVar -> IO b) -> IO b
 asVarOrRVar x action = case x of
   Var fp ->
