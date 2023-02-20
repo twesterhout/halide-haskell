@@ -83,7 +83,6 @@ halideTypePairs = do
         , ("Halide::Target", [t|CxxTarget|])
         , ("Halide::JITUserContext", [t|CxxUserContext|])
         , ("Halide::Argument", [t|CxxArgument|])
-        , ("Halide::LoopLevel", [t|CxxLoopLevel|])
         , ("std::vector", [t|CxxVector|])
         , ("std::string", [t|CxxString|])
         , ("halide_type_t", [t|HalideType|])
@@ -95,6 +94,7 @@ halideTypePairs = do
         , ("Halide::Internal::Split", "Language.Halide.Schedule.Split")
         , ("halide_buffer_t", "Language.Halide.Buffer.RawHalideBuffer")
         , ("Halide::Internal::Dimension", "CxxDimension")
+        , ("Halide::LoopLevel", "CxxLoopLevel")
         ]
     optional :: (CIdentifier, String) -> Q [(CIdentifier, TypeQ)]
     optional (cName, hsName) = do

@@ -52,7 +52,6 @@ import Language.Halide.Func
 import Language.Halide.Target
 import Language.Halide.Type
 import System.IO.Temp (withSystemTempDirectory)
-import Type.Reflection
 import Unsafe.Coerce (unsafeCoerce)
 
 importHalide

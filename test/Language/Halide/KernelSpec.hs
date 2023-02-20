@@ -81,3 +81,8 @@ spec = do
       -- T.putStrLn s
       s `shouldSatisfy` T.isInfixOf "func dest1234 (src, c, dest1234) {"
       s `shouldSatisfy` T.isInfixOf "produce dest1234 {"
+      s2 <- compileToLoweredStmt StmtText target $
+        \src (c :: Expr Float) -> do
+          i <- mkVar "i"
+          define "dest5678" i $ c * src ! i
+      s2 `shouldSatisfy` T.isInfixOf "produce dest5678 {"

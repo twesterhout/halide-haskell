@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedRecordDot #-}
+
 module Language.Halide.ScheduleSpec (spec) where
 
 import Control.Monad.ST (RealWorld)
@@ -27,7 +29,7 @@ instance IsHalideType a => IsHalideBuffer (Matrix (SM.MVector RealWorld) a) 2 a 
 spec :: Spec
 spec = do
   describe "prints schedules" $ do
-    it "of vectorized loops" $ do
+    it "of auto-scheduled pipelines" $ do
       let builder :: Target -> Func 'ParamTy 1 Int64 -> IO (Func 'FuncTy 1 Float)
           builder target src = do
             i <- mkVar "i"
@@ -35,13 +37,14 @@ spec = do
             -- dim 0 src >>= setEstimate 0 1000
             dim 0 src >>= setMin 0 >>= setStride 1 >>= print
             -- schedule <- do
-            setEstimate i 0 1000 dest
+            estimate i 0 1000 dest
             --  autoschedule defAdams2019{...} dest
             -- applySchedule schedule{...} dest
             -- vectorize TailShiftInwards dest i 4
             applyAutoscheduler dest "Adams2019" target
             T.putStrLn =<< prettyLoopNest dest
-            print =<< (getDims <$> getStageSchedule dest)
+            schedule <- getStageSchedule dest
+            print schedule.dims
             print =<< (getSplits <$> getStageSchedule dest)
             pure dest
       let target = hostTarget -- setFeature FeatureOpenCL hostTarget

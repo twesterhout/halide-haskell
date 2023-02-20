@@ -67,6 +67,7 @@ library
     Language.Halide.Expr
     Language.Halide.Func
     Language.Halide.Kernel
+    Language.Halide.LoopLevel
     Language.Halide.Prelude
     Language.Halide.Schedule
     Language.Halide.Target
@@ -115,6 +116,7 @@ test-suite halide-haskell-test
     Language.Halide.ExprSpec
     Language.Halide.FuncSpec
     Language.Halide.KernelSpec
+    Language.Halide.LoopLevelSpec
     Language.Halide.ScheduleSpec
     Language.Halide.TargetSpec
 

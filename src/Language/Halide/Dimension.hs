@@ -9,15 +9,16 @@
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 -- |
--- Module      : Language.Halide.Func
--- Description : Functions / Arrays
+-- Module      : Language.Halide.Dimension
 -- Copyright   : (c) Tom Westerhout, 2023
 module Language.Halide.Dimension
   ( Dimension (..)
   , setMin
   , setExtent
   , setStride
-  -- , setEstimate
+  , setEstimate
+
+    -- * Internal
   , CxxDimension
   , wrapCxxDimension
   , withCxxDimension
@@ -41,6 +42,7 @@ data CxxDimension
 
 importHalide
 
+-- | Information about a buffer's dimension, such as the min, extent, and stride.
 newtype Dimension = Dimension (ForeignPtr CxxDimension)
 
 instance Show Dimension where
@@ -64,6 +66,8 @@ instance HasField "min" Dimension (Expr Int32) where
 
 -- | Set the min in a given dimension to equal the given expression. Setting the mins to
 -- zero may simplify some addressing math.
+--
+-- For more info, see [Halide::Internal::Dimension::set_min](https://halide-lang.org/docs/class_halide_1_1_internal_1_1_dimension.html#a84acaf7733391fdaea4f4cec24a60de2).
 setMin :: Expr Int32 -> Dimension -> IO Dimension
 setMin expr dim = do
   asExpr expr $ \n ->
@@ -113,6 +117,8 @@ instance HasField "stride" Dimension (Expr Int32) where
 --
 -- This is particularly useful to set when vectorizing. Known strides for the vectorized
 -- dimensions generate better code.
+--
+-- For more info, see [Halide::Internal::Dimension::set_stride](https://halide-lang.org/docs/class_halide_1_1_internal_1_1_dimension.html#a94f4c432a89907e2cc2aa908b5012cf8).
 setStride :: Expr Int32 -> Dimension -> IO Dimension
 setStride expr dim = do
   asExpr expr $ \n ->
@@ -122,21 +128,22 @@ setStride expr dim = do
   pure dim
 
 -- | Set estimates for autoschedulers.
--- setEstimate
---   :: Expr Int32
---   -- ^ @min@ estimate
---   -> Expr Int32
---   -- ^ @extent@ estimate
---   -> Dimension
---   -> IO Dimension
--- setEstimate minExpr extentExpr dim = do
---   asExpr minExpr $ \m ->
---     asExpr extentExpr $ \e ->
---       withCxxDimension dim $ \d ->
---         [CU.exp| void {
---           $(Halide::Internal::Dimension* d)->set_estimate(*$(const Halide::Expr* m),
---                                                           *$(const Halide::Expr* e)) } |]
---   pure dim
+setEstimate
+  :: Expr Int32
+  -- ^ @min@ estimate
+  -> Expr Int32
+  -- ^ @extent@ estimate
+  -> Dimension
+  -> IO Dimension
+setEstimate minExpr extentExpr dim = do
+  asExpr minExpr $ \m ->
+    asExpr extentExpr $ \e ->
+      withCxxDimension dim $ \d ->
+        [CU.exp| void {
+          $(Halide::Internal::Dimension* d)->set_estimate(*$(const Halide::Expr* m),
+                                                          *$(const Halide::Expr* e)) } |]
+  pure dim
+
 wrapCxxDimension :: Ptr CxxDimension -> IO Dimension
 wrapCxxDimension = fmap Dimension . newForeignPtr deleter
   where

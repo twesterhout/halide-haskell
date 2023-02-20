@@ -30,7 +30,6 @@ module Language.Halide.Type
   , CxxTarget
   , CxxStageSchedule
   , CxxString
-  , CxxLoopLevel
   , Arguments (..)
   , Length
   , Append
@@ -110,9 +109,6 @@ data CxxStageSchedule
 
 -- | Haskell counterpart of @std::string@
 data CxxString
-
--- | Haskell counterpart of @Halide::LoopLevel@
-data CxxLoopLevel
 
 -- data Split =
 --   SplitVar !Text !Text !Text !(Expr Int32) !

@@ -1,5 +1,7 @@
+{-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Language.Halide.FuncSpec (spec) where
 
@@ -30,7 +32,7 @@ instance IsHalideType a => IsHalideBuffer (Matrix (SM.MVector RealWorld) a) 2 a 
     SM.unsafeWith v $ \dataPtr ->
       bufferFromPtrShapeStrides dataPtr [n, m] [1, n] f
 
-gpuTarget :: Maybe (Target)
+gpuTarget :: Maybe Target
 gpuTarget
   | hostSupportsTargetDevice openCLTarget = Just openCLTarget
   | hostSupportsTargetDevice cudaTarget = Just cudaTarget
@@ -43,11 +45,14 @@ spec :: Spec
 spec = do
   describe "vectorize" $ do
     it "vectorizes loops" $ do
-      let builder :: Func 'ParamTy 1 Int64 -> IO (Func 'FuncTy 1 Int64)
-          builder src = do
+      let builder src = do
             i <- mkVar "i"
             dest <- define "dest1" i $ src ! i
             vectorize TailShiftInwards dest i 4
+            -- Check that the vectorization happens
+            s <- prettyLoopNest dest
+            s `shouldSatisfy` T.isInfixOf "vectorized i"
+            s `shouldSatisfy` T.isInfixOf "in [0, 3]"
             pure dest
       copy <- mkKernel builder
       -- Note that since we use TailShiftInwards, we need the buffers to be at
@@ -58,18 +63,20 @@ spec = do
       withHalideBuffer src $ \srcPtr ->
         withHalideBuffer dest $ \destPtr ->
           copy srcPtr destPtr
+      -- Check that vectorization does not screw up the result
       S.unsafeFreeze dest `shouldReturn` src
-      s <- compileToLoweredStmt StmtText hostTarget builder
-      T.putStrLn s
-      -- Check that we're generating ramps on the destination buffer
-      s `shouldSatisfy` T.isInfixOf "ramp(dest1"
 
   describe "unroll" $ do
     it "unrolls loops" $ do
       copy <- mkKernel $ \src -> do
         i <- mkVar "i"
         dest <- define "dest" i $ src ! i
-        unroll TailPredicate dest i 4
+        unroll TailPredicate dest i 3
+        -- Check that the unrolling happens
+        s <- prettyLoopNest dest
+        -- T.putStrLn s
+        s `shouldSatisfy` T.isInfixOf "unrolled i"
+        s `shouldSatisfy` T.isInfixOf "in [0, 2]"
         pure dest
       let src :: S.Vector Int64
           src = S.generate 10 fromIntegral
@@ -79,42 +86,33 @@ spec = do
           copy srcPtr destPtr
       S.unsafeFreeze dest `shouldReturn` src
 
-  -- it "repeated unrolls work" $ do
-  --   let builder (src :: Func 1 Int64) = do
-  --         i <- mkVar "i"
-  --         dest <- define "dest" i $ src ! i
-  --         unroll TailPredicate dest i 4
-  --         pure dest
-  --   copy <- mkKernel builder
-  --   let src :: S.Vector Int64
-  --       src = S.generate 10 fromIntegral
-  --   dest <- SM.new (S.length src)
-  --   withHalideBuffer src $ \srcPtr ->
-  --     withHalideBuffer dest $ \destPtr ->
-  --       copy srcPtr destPtr
-  --   S.unsafeFreeze dest `shouldReturn` src
-
   describe "reorder" $ do
     it "reorders loops" $ do
       let
-        builder (src :: Func 'ParamTy 1 Int64) = do
+        builder (buffer @1 @Double "src" -> src) = do
           i <- mkVar "i"
           j <- mkVar "j"
           dest <-
             define "matrix" (i, j) $
               bool (equal i j) (src ! i) 0
+          s0 <- prettyLoopNest dest
+          case T.splitOn "for j" s0 of
+            [_, r] -> length (T.splitOn "for i" r) `shouldBe` 2
+            r -> length r `shouldBe` 2
           reorder dest (j, i)
+          s1 <- prettyLoopNest dest
+          -- T.putStrLn s
+          case T.splitOn "for i" s1 of
+            [_, r] -> length (T.splitOn "for j" r) `shouldBe` 2
+            r -> length r `shouldBe` 2
           pure dest
       copy <- mkKernel builder
-      let src :: S.Vector Int64
-          src = S.generate 5 fromIntegral
-      dest <- Matrix 5 5 <$> SM.new (S.length src * S.length src)
+      let src = S.generate 3 ((+ 1) . fromIntegral)
+      dest <- Matrix 3 3 <$> SM.new (S.length src * S.length src)
       withHalideBuffer src $ \srcPtr ->
         withHalideBuffer dest $ \destPtr ->
           copy srcPtr destPtr
-      print =<< S.unsafeFreeze (matrixData dest)
-      s <- compileToLoweredStmt StmtText (setFeature FeatureNoAsserts hostTarget) builder
-      T.putStrLn s
+      S.unsafeFreeze (matrixData dest) `shouldReturn` [1, 0, 0, 0, 2, 0, 0, 0, 3]
 
   describe "gpuBlocks" $ do
     it "binds indices to gpu block indices" $ do
