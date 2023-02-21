@@ -19,6 +19,7 @@
 module Language.Halide.Target
   ( Target (..)
   , hostTarget
+  , gpuTarget
   , hostSupportsTargetDevice
   , setFeature
   , hasGpuFeature
@@ -76,6 +77,17 @@ hostTarget =
     wrapCxxTarget
       =<< [CU.exp| Halide::Target* { new Halide::Target{Halide::get_target_from_environment()} } |]
 {-# NOINLINE hostTarget #-}
+
+-- | Get the default GPU target. We first check for CUDA and then for OpenCL.
+-- If neither of the two is usable, 'Nothing' is returned.
+gpuTarget :: Maybe Target
+gpuTarget
+  | hostSupportsTargetDevice cudaTarget = Just cudaTarget
+  | hostSupportsTargetDevice openCLTarget = Just openCLTarget
+  | otherwise = Nothing
+  where
+    openCLTarget = setFeature FeatureOpenCL hostTarget
+    cudaTarget = setFeature FeatureCUDA hostTarget
 
 -- | Attempt to sniff whether a given 'Target' (and its implied 'DeviceAPI') is usable on the
 -- current host.

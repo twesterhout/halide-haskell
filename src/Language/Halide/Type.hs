@@ -44,6 +44,8 @@ module Language.Halide.Type
   , Named (..)
   , HasCxxVector (..)
   , IsTuple (..)
+  , FromTuple
+  , ToTuple
   -- defineCastableInstances,
   -- defineCurriedTypeFamily,
   -- defineUnCurriedTypeFamily,
@@ -325,10 +327,26 @@ class Named a where
   -- | Set the name of a parameter.
   setName :: HasCallStack => a -> Text -> IO ()
 
+type family ToTuple t where
+  ToTuple (Arguments '[]) = ()
+  ToTuple (Arguments '[a1]) = a1
+  ToTuple (Arguments '[a1, a2]) = (a1, a2)
+  ToTuple (Arguments '[a1, a2, a3]) = (a1, a2, a3)
+  ToTuple (Arguments '[a1, a2, a3, a4]) = (a1, a2, a3, a4)
+  ToTuple (Arguments '[a1, a2, a3, a4, a5]) = (a1, a2, a3, a4, a5)
+
+type family FromTuple t
+
+type instance FromTuple () = Arguments '[]
+type instance FromTuple (a1, a2) = Arguments '[a1, a2]
+type instance FromTuple (a1, a2, a3) = Arguments '[a1, a2, a3]
+type instance FromTuple (a1, a2, a3, a4) = Arguments '[a1, a2, a3, a4]
+type instance FromTuple (a1, a2, a3, a4, a5) = Arguments '[a1, a2, a3, a4, a5]
+
 -- | Specifies that there is an isomorphism between a type @a@ and a tuple @t@.
 --
 -- We use this class to convert between 'Arguments' and normal tuples.
-class IsTuple a t | a -> t, t -> a where
+class (ToTuple a ~ t, FromTuple t ~ a) => IsTuple a t | a -> t, t -> a where
   toTuple :: a -> t
   fromTuple :: t -> a
 

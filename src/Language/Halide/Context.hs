@@ -95,6 +95,7 @@ halideTypePairs = do
         , ("halide_buffer_t", "Language.Halide.Buffer.RawHalideBuffer")
         , ("Halide::Internal::Dimension", "CxxDimension")
         , ("Halide::LoopLevel", "CxxLoopLevel")
+        , ("Halide::Stage", "CxxStage")
         ]
     optional :: (CIdentifier, String) -> Q [(CIdentifier, TypeQ)]
     optional (cName, hsName) = do

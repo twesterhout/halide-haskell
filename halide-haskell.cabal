@@ -55,6 +55,7 @@ common common-options
     TypeApplications
     TypeFamilies
     TypeOperators
+    ViewPatterns
 
 library
   import:          common-options
@@ -108,10 +109,10 @@ executable getting-started
     , vector
 
 test-suite halide-haskell-test
-  import:         common-options
-  type:           exitcode-stdio-1.0
-  hs-source-dirs: test
-  main-is:        Spec.hs
+  import:              common-options
+  type:                exitcode-stdio-1.0
+  hs-source-dirs:      test
+  main-is:             Spec.hs
   other-modules:
     Language.Halide.ExprSpec
     Language.Halide.FuncSpec
@@ -119,6 +120,7 @@ test-suite halide-haskell-test
     Language.Halide.LoopLevelSpec
     Language.Halide.ScheduleSpec
     Language.Halide.TargetSpec
+    Utils
 
   build-depends:
     , halide-haskell
@@ -130,6 +132,5 @@ test-suite halide-haskell-test
     , text
     , vector
 
-  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
-
--- build-tool-depends: hspec-discover:hspec-discover
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  build-tools-depends: hspec-discover:hspec-discover

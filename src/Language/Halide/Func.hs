@@ -1,4 +1,5 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
@@ -15,42 +16,50 @@
 -- Description : Functions / Arrays
 -- Copyright   : (c) Tom Westerhout, 2023
 module Language.Halide.Func
-  ( Func (..)
+  ( -- * Defining pipelines
+    Func (..)
   , FuncTy (..)
+  , Stage (..)
   , buffer
   , scalar
-  -- , setName
   , define
-  , update
   , (!)
-  -- , printLoopNest
-  , prettyLoopNest
-  , realize1D
 
     -- * Scheduling
+  , Schedulable (..)
   , TailStrategy (..)
-  , vectorize
-  , unroll
-  , reorder
-  , split
-  , fuse
-  , gpuBlocks
-  , gpuBlocks'
+
+    -- ** 'Func'-specific
   , computeRoot
+  , getStage
+  , getLoopLevel
+  , getLoopLevelAtStage
   , asUsed
   , asUsedBy
   , copyToDevice
   , copyToHost
+  , storeAt
+  , computeAt
   , dim
   , estimate
   , bound
 
+    -- * Update definitions
+  , update
+  , hasUpdateDefinitions
+  , getUpdateStage
+
     -- * Debugging
+  , prettyLoopNest
+  , realize1D
 
     -- * Internal
   , withFunc
   , withBufferParam
   , wrapCxxFunc
+  , CxxStage
+  , wrapCxxStage
+  , withCxxStage
   )
 where
 
@@ -63,7 +72,7 @@ import Data.Vector.Storable (Vector)
 import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Storable.Mutable as SM
 import Foreign.ForeignPtr
-import Foreign.Marshal (with)
+import Foreign.Marshal (toBool, with)
 import Foreign.Ptr (Ptr, castPtr)
 import GHC.Stack (HasCallStack)
 import GHC.TypeLits
@@ -74,11 +83,15 @@ import Language.Halide.Buffer
 import Language.Halide.Context
 import Language.Halide.Dimension
 import Language.Halide.Expr
+import Language.Halide.LoopLevel
 import Language.Halide.Target
 import Language.Halide.Type
 import Language.Halide.Utils
 import System.IO.Unsafe (unsafePerformIO)
 import Prelude hiding (min, tail)
+
+-- | Haskell counterpart of [Halide::Stage](https://halide-lang.org/docs/class_halide_1_1_stage.html).
+data CxxStage
 
 importHalide
 
@@ -94,6 +107,9 @@ data Func (t :: FuncTy) (n :: Nat) (a :: Type) where
 -- or 'ParamTy' which means that it's a parameter to our pipeline.
 data FuncTy = FuncTy | ParamTy
   deriving stock (Show, Eq, Ord)
+
+-- | A single definition of a t'Func'.
+newtype Stage (n :: Nat) (a :: Type) = Stage (ForeignPtr CxxStage)
 
 -- | Different ways to handle a tail case in a split when the split factor does
 -- not provably divide the extent.
@@ -174,6 +190,267 @@ data TailStrategy
     TailAuto
   deriving stock (Eq, Ord, Show)
 
+-- | Either v'Var' or v'RVar'
+type VarOrRVar = Expr Int32
+
+-- | Specifies that @i@ is a tuple of @'Expr' Int32@.
+--
+-- @ts@ are deduced from @i@, so you don't have to specify them explicitly.
+type IndexTuple i ts = (IsTuple (Arguments ts) i, All ((~) (Expr Int32)) ts)
+
+-- | Common scheduling functions
+class (KnownNat n, IsHalideType a) => Schedulable f n a where
+  -- | Vectorize the dimension.
+  vectorize :: VarOrRVar -> f n a -> IO (f n a)
+
+  -- | Unroll the dimension.
+  unroll :: VarOrRVar -> f n a -> IO (f n a)
+
+  -- | Reorder variables to have the given nesting order, from innermost out.
+  reorder :: (IndexTuple i ts, Length ts ~ n) => i -> f n a -> IO (f n a)
+
+  -- | Split a dimension into inner and outer subdimensions with the given names, where the inner dimension
+  -- iterates from @0@ to @factor-1@.
+  --
+  -- The inner and outer subdimensions can then be dealt with using the other scheduling calls. It's okay
+  -- to reuse the old variable name as either the inner or outer variable. The first argument specifies
+  -- how the tail should be handled if the split factor does not provably divide the extent.
+  split :: TailStrategy -> VarOrRVar -> (VarOrRVar, VarOrRVar) -> Expr Int32 -> f n a -> IO (f n a)
+
+  -- | Join two dimensions into a single fused dimenion.
+  --
+  -- The fused dimension covers the product of the extents of the inner and outer dimensions given.
+  fuse :: (VarOrRVar, VarOrRVar) -> VarOrRVar -> f n a -> IO (f n a)
+
+  -- | Mark the dimension to be traversed serially
+  serial :: VarOrRVar -> f n a -> IO (f n a)
+
+  -- | Mark the dimension to be traversed in parallel
+  parallel :: VarOrRVar -> f n a -> IO (f n a)
+
+  specialize :: Expr Bool -> f n a -> IO (Stage n a)
+  specializeFail :: Text -> f n a -> IO ()
+  gpuBlocks :: (IndexTuple i ts, 1 <= Length ts, Length ts <= 3) => DeviceAPI -> i -> f n a -> IO (f n a)
+  gpuThreads :: (IndexTuple i ts, 1 <= Length ts, Length ts <= 3) => DeviceAPI -> i -> f n a -> IO (f n a)
+
+  -- | Schedule the iteration over this stage to be fused with another stage from outermost loop to a
+  -- given LoopLevel.
+  --
+  -- For more info, see [Halide::Stage::compute_with](https://halide-lang.org/docs/class_halide_1_1_stage.html#a82a2ae25a009d6a2d52cb407a25f0a5b).
+  computeWith :: LoopAlignStrategy -> LoopLevel -> f n a -> IO (f n a)
+
+instance (KnownNat n, IsHalideType a) => Schedulable Stage n a where
+  vectorize var stage = do
+    withCxxStage stage $ \stage' ->
+      asVarOrRVar var $ \var' ->
+        [C.throwBlock| void {
+          handle_halide_exceptions([=](){
+            $(Halide::Stage* stage')->vectorize(*$(const Halide::VarOrRVar* var'));
+          });
+        } |]
+    pure stage
+  unroll var stage = do
+    withCxxStage stage $ \stage' ->
+      asVarOrRVar var $ \var' ->
+        [C.throwBlock| void {
+          handle_halide_exceptions([=](){
+            $(Halide::Stage* stage')->unroll(*$(const Halide::VarOrRVar* var'));
+          });
+        } |]
+    pure stage
+  reorder args stage = do
+    asVectorOf @((~) (Expr Int32)) asVarOrRVar (fromTuple args) $ \args' -> do
+      withCxxStage stage $ \stage' ->
+        [C.throwBlock| void {
+          handle_halide_exceptions([=]() {
+            $(Halide::Stage* stage')->reorder(
+              *$(const std::vector<Halide::VarOrRVar>* args')); 
+          });
+        } |]
+    pure stage
+  split tail old (outer, inner) factor stage = do
+    withCxxStage stage $ \stage' ->
+      asVarOrRVar old $ \old' ->
+        asVarOrRVar outer $ \outer' ->
+          asVarOrRVar inner $ \inner' ->
+            asExpr factor $ \factor' ->
+              [C.throwBlock| void {
+                handle_halide_exceptions([=](){
+                  $(Halide::Stage* stage')->split(
+                    *$(const Halide::VarOrRVar* old'),
+                    *$(const Halide::VarOrRVar* outer'),
+                    *$(const Halide::VarOrRVar* inner'),
+                    *$(const Halide::Expr* factor'),
+                    static_cast<Halide::TailStrategy>($(int t)));
+                });
+              } |]
+    pure stage
+    where
+      t = fromIntegral . fromEnum $ tail
+  fuse (outer, inner) fused stage = do
+    withCxxStage stage $ \stage' ->
+      asVarOrRVar outer $ \outer' ->
+        asVarOrRVar inner $ \inner' ->
+          asVarOrRVar fused $ \fused' ->
+            [C.throwBlock| void {
+              handle_halide_exceptions([=](){
+                $(Halide::Stage* stage')->fuse(
+                  *$(const Halide::VarOrRVar* outer'),
+                  *$(const Halide::VarOrRVar* inner'),
+                  *$(const Halide::VarOrRVar* fused'));
+              });
+            } |]
+    pure stage
+  serial var stage = do
+    withCxxStage stage $ \stage' ->
+      asVarOrRVar var $ \var' ->
+        [C.throwBlock| void {
+          handle_halide_exceptions([=](){
+            $(Halide::Stage* stage')->serial(*$(const Halide::VarOrRVar* var'));
+          });
+        } |]
+    pure stage
+  parallel var stage = do
+    withCxxStage stage $ \stage' ->
+      asVarOrRVar var $ \var' ->
+        [C.throwBlock| void {
+          handle_halide_exceptions([=](){
+            $(Halide::Stage* stage')->parallel(*$(const Halide::VarOrRVar* var'));
+          });
+        } |]
+    pure stage
+  specialize cond stage = do
+    withCxxStage stage $ \stage' ->
+      asExpr cond $ \cond' ->
+        wrapCxxStage
+          =<< [C.throwBlock| Halide::Stage* {
+                return handle_halide_exceptions([=](){
+                  return new Halide::Stage{$(Halide::Stage* stage')->specialize(
+                    *$(const Halide::Expr* cond'))};
+                });
+              } |]
+  specializeFail (T.encodeUtf8 -> s) stage =
+    withCxxStage stage $ \stage' ->
+      [C.throwBlock| void {
+        return handle_halide_exceptions([=](){
+          $(Halide::Stage* stage')->specialize_fail(
+            std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)});
+        });
+      } |]
+  gpuBlocks (fromIntegral . fromEnum -> api) vars stage = do
+    withCxxStage stage $ \stage' ->
+      asVectorOf @((~) (Expr Int32)) asVarOrRVar (fromTuple vars) $ \vars' -> do
+        [C.throwBlock| void {
+          handle_halide_exceptions([=](){
+            auto const& vars = *$(const std::vector<Halide::VarOrRVar>* vars');
+            auto& stage = *$(Halide::Stage* stage');
+            auto const device = static_cast<Halide::DeviceAPI>($(int api));
+            switch (vars.size()) {
+              case 1: stage.gpu_blocks(vars.at(0), device);
+                      break;
+              case 2: stage.gpu_blocks(vars.at(0), vars.at(1), device);
+                      break;
+              case 3: stage.gpu_blocks(vars.at(0), vars.at(1), vars.at(2), device);
+                      break;
+              default: throw std::runtime_error{"unexpected number of arguments in gpuBlocks"};
+            }
+          });
+        } |]
+    pure stage
+  gpuThreads (fromIntegral . fromEnum -> api) vars stage = do
+    withCxxStage stage $ \stage' ->
+      asVectorOf @((~) (Expr Int32)) asVarOrRVar (fromTuple vars) $ \vars' -> do
+        [C.throwBlock| void {
+          handle_halide_exceptions([=](){
+            auto const& vars = *$(const std::vector<Halide::VarOrRVar>* vars');
+            auto& stage = *$(Halide::Stage* stage');
+            auto const device = static_cast<Halide::DeviceAPI>($(int api));
+            switch (vars.size()) {
+              case 1: stage.gpu_threads(vars.at(0), device);
+                      break;
+              case 2: stage.gpu_threads(vars.at(0), vars.at(1), device);
+                      break;
+              case 3: stage.gpu_threads(vars.at(0), vars.at(1), vars.at(2), device);
+                      break;
+              default: throw std::runtime_error{"unexpected number of arguments in gpuThreads"};
+            }
+          });
+        } |]
+    pure stage
+  computeWith (fromIntegral . fromEnum -> align) level stage = do
+    withCxxStage stage $ \stage' ->
+      withCxxLoopLevel level $ \level' ->
+        [C.throwBlock| void {
+          handle_halide_exceptions([=]() {
+            $(Halide::Stage* stage')->compute_with(
+              *$(const Halide::LoopLevel* level'),
+              static_cast<Halide::LoopAlignStrategy>($(int align)));
+          });
+        } |]
+    pure stage
+
+viaStage1
+  :: (KnownNat n, IsHalideType b)
+  => (a -> Stage n b -> IO (Stage n b))
+  -> a
+  -> Func t n b
+  -> IO (Func t n b)
+viaStage1 f a1 func = do
+  _ <- f a1 =<< getStage func
+  pure func
+
+viaStage2
+  :: (KnownNat n, IsHalideType b)
+  => (a1 -> a2 -> Stage n b -> IO (Stage n b))
+  -> a1
+  -> a2
+  -> Func t n b
+  -> IO (Func t n b)
+viaStage2 f a1 a2 func = do
+  _ <- f a1 a2 =<< getStage func
+  pure func
+
+{-
+viaStage3
+  :: (KnownNat n, IsHalideType b)
+  => (a1 -> a2 -> a3 -> Stage n b -> IO (Stage n b))
+  -> a1
+  -> a2
+  -> a3
+  -> Func t n b
+  -> IO (Func t n b)
+viaStage3 f a1 a2 a3 func = do
+  _ <- f a1 a2 a3 =<< getStage func
+  pure func
+-}
+
+viaStage4
+  :: (KnownNat n, IsHalideType b)
+  => (a1 -> a2 -> a3 -> a4 -> Stage n b -> IO (Stage n b))
+  -> a1
+  -> a2
+  -> a3
+  -> a4
+  -> Func t n b
+  -> IO (Func t n b)
+viaStage4 f a1 a2 a3 a4 func = do
+  _ <- f a1 a2 a3 a4 =<< getStage func
+  pure func
+
+instance (KnownNat n, IsHalideType a) => Schedulable (Func t) n a where
+  vectorize = viaStage1 vectorize
+  unroll = viaStage1 unroll
+  reorder = viaStage1 reorder
+  split = viaStage4 split
+  fuse = viaStage2 fuse
+  serial = viaStage1 serial
+  parallel = viaStage1 parallel
+  specialize cond func = getStage func >>= specialize cond
+  specializeFail msg func = getStage func >>= specializeFail msg
+  gpuBlocks = viaStage2 gpuBlocks
+  gpuThreads = viaStage2 gpuThreads
+  computeWith = viaStage2 computeWith
+
 instance Enum TailStrategy where
   fromEnum =
     fromIntegral . \case
@@ -194,71 +471,66 @@ instance Enum TailStrategy where
     | fromIntegral k == [CU.pure| int { static_cast<int>(Halide::TailStrategy::Auto) } |] = TailAuto
     | otherwise = error $ "invalid TailStrategy: " <> show k
 
--- | Split a dimension by the given factor, then vectorize the inner dimension.
---
--- This is how you vectorize a loop of unknown size. The variable to be
--- vectorized should be the innermost one. After this call, var refers to the
--- outer dimension of the split.
-vectorize
-  :: (KnownNat n, IsHalideType a)
-  => TailStrategy
-  -> Func t n a
-  -> Expr Int32
-  -- ^ Variable to vectorize
-  -> Expr Int32
-  -- ^ Split factor
-  -> IO ()
-vectorize strategy func var factor =
-  withFunc func $ \f ->
-    asVarOrRVar var $ \x ->
-      asExpr factor $ \n ->
-        [C.throwBlock| void {
-          $(Halide::Func* f)->vectorize(*$(Halide::VarOrRVar* x), *$(Halide::Expr* n),
-                                        static_cast<Halide::TailStrategy>($(int tail)));
-        } |]
-  where
-    tail = fromIntegral (fromEnum strategy)
+-- vectorize
+--   :: (KnownNat n, IsHalideType a)
+--   => TailStrategy
+--   -> Func t n a
+--   -> Expr Int32
+--   -- ^ Variable to vectorize
+--   -> Expr Int32
+--   -- ^ Split factor
+--   -> IO ()
+-- vectorize strategy func var factor =
+--   withFunc func $ \f ->
+--     asVarOrRVar var $ \x ->
+--       asExpr factor $ \n ->
+--         [C.throwBlock| void {
+--           $(Halide::Func* f)->vectorize(*$(Halide::VarOrRVar* x), *$(Halide::Expr* n),
+--                                         static_cast<Halide::TailStrategy>($(int tail)));
+--         } |]
+--   where
+--     tail = fromIntegral (fromEnum strategy)
 
 -- | Split a dimension by the given factor, then unroll the inner dimension.
 --
 -- This is how you unroll a loop of unknown size by some constant factor. After
 -- this call, @var@ refers to the outer dimension of the split.
-unroll
-  :: (KnownNat n, IsHalideType a)
-  => TailStrategy
-  -> Func t n a
-  -> Expr Int32
-  -- ^ Variable @var@ to vectorize
-  -> Expr Int32
-  -- ^ Split factor
-  -> IO ()
-unroll strategy func var factor =
-  withFunc func $ \f ->
-    asVarOrRVar var $ \x ->
-      asExpr factor $ \n ->
-        [C.throwBlock| void {
-          $(Halide::Func* f)->unroll(*$(Halide::VarOrRVar* x), *$(Halide::Expr* n),
-                                     static_cast<Halide::TailStrategy>($(int tail)));
-        } |]
-  where
-    tail = fromIntegral (fromEnum strategy)
+-- unroll
+--   :: (KnownNat n, IsHalideType a)
+--   => TailStrategy
+--   -> Func t n a
+--   -> Expr Int32
+--   -- ^ Variable @var@ to vectorize
+--   -> Expr Int32
+--   -- ^ Split factor
+--   -> IO ()
+-- unroll strategy func var factor =
+--   withFunc func $ \f ->
+--     asVarOrRVar var $ \x ->
+--       asExpr factor $ \n ->
+--         [C.throwBlock| void {
+--           $(Halide::Func* f)->unroll(*$(Halide::VarOrRVar* x), *$(Halide::Expr* n),
+--                                      static_cast<Halide::TailStrategy>($(int tail)));
+--         } |]
+--   where
+--     tail = fromIntegral (fromEnum strategy)
 
 -- | Reorder variables to have the given nesting order, from innermost out.
-reorder
-  :: forall t n a i ts
-   . ( IsTuple (Arguments ts) i
-     , All ((~) (Expr Int32)) ts
-     , Length ts ~ n
-     , KnownNat n
-     , IsHalideType a
-     )
-  => Func t n a
-  -> i
-  -> IO ()
-reorder func args =
-  asVectorOf @((~) (Expr Int32)) asVarOrRVar (fromTuple args) $ \v -> do
-    withFunc func $ \f ->
-      [C.throwBlock| void { $(Halide::Func* f)->reorder(*$(std::vector<Halide::VarOrRVar>* v)); } |]
+-- reorder
+--   :: forall t n a i ts
+--    . ( IsTuple (Arguments ts) i
+--      , All ((~) (Expr Int32)) ts
+--      , Length ts ~ n
+--      , KnownNat n
+--      , IsHalideType a
+--      )
+--   => Func t n a
+--   -> i
+--   -> IO ()
+-- reorder func args =
+--   asVectorOf @((~) (Expr Int32)) asVarOrRVar (fromTuple args) $ \v -> do
+--     withFunc func $ \f ->
+--       [C.throwBlock| void { $(Halide::Func* f)->reorder(*$(std::vector<Halide::VarOrRVar>* v)); } |]
 
 -- | Statically declare the range over which the function will be evaluated in the general case.
 --
@@ -307,60 +579,60 @@ bound var min extent func =
 --
 -- This is useful for scheduling stages that will run serially within each GPU block.
 -- If the selected target is not ptx, this just marks those dimensions as parallel.
-gpuBlocks'
-  :: ( KnownNat n
-     , IsHalideType a
-     , IsTuple (Arguments ts) i
-     , All ((~) (Expr Int32)) ts
-     , Length ts <= 3
-     , 1 <= Length ts
-     )
-  => DeviceAPI
-  -> i
-  -> Func t n a
-  -> IO (Func t n a)
-gpuBlocks' deviceApi vars func = do
-  withFunc func $ \f ->
-    asVectorOf @((~) (Expr Int32)) asVarOrRVar (fromTuple vars) $ \i -> do
-      [C.throwBlock| void {
-        handle_halide_exceptions([=](){
-          auto const& v = *$(std::vector<Halide::VarOrRVar>* i);
-          auto& fn = *$(Halide::Func* f);
-          auto const device = static_cast<Halide::DeviceAPI>($(int api));
-          if (v.size() == 1) {
-            fn.gpu_blocks(v.at(0), device);
-          }
-          else if (v.size() == 2) {
-            fn.gpu_blocks(v.at(0), v.at(1), device);
-          }
-          else if (v.size() == 3) {
-            fn.gpu_blocks(v.at(0), v.at(1), v.at(2), device);
-          }
-          else {
-            throw std::runtime_error{"unexpected v.size() in gpuBlocks'"};
-          }
-        });
-      } |]
-  pure func
-  where
-    api = fromIntegral . fromEnum $ deviceApi
+-- gpuBlocks'
+--   :: ( KnownNat n
+--      , IsHalideType a
+--      , IsTuple (Arguments ts) i
+--      , All ((~) (Expr Int32)) ts
+--      , Length ts <= 3
+--      , 1 <= Length ts
+--      )
+--   => DeviceAPI
+--   -> i
+--   -> Func t n a
+--   -> IO (Func t n a)
+-- gpuBlocks' deviceApi vars func = do
+--   withFunc func $ \f ->
+--     asVectorOf @((~) (Expr Int32)) asVarOrRVar (fromTuple vars) $ \i -> do
+--       [C.throwBlock| void {
+--         handle_halide_exceptions([=](){
+--           auto const& v = *$(std::vector<Halide::VarOrRVar>* i);
+--           auto& fn = *$(Halide::Func* f);
+--           auto const device = static_cast<Halide::DeviceAPI>($(int api));
+--           if (v.size() == 1) {
+--             fn.gpu_blocks(v.at(0), device);
+--           }
+--           else if (v.size() == 2) {
+--             fn.gpu_blocks(v.at(0), v.at(1), device);
+--           }
+--           else if (v.size() == 3) {
+--             fn.gpu_blocks(v.at(0), v.at(1), v.at(2), device);
+--           }
+--           else {
+--             throw std::runtime_error{"unexpected v.size() in gpuBlocks'"};
+--           }
+--         });
+--       } |]
+--   pure func
+--   where
+--     api = fromIntegral . fromEnum $ deviceApi
 
 -- | Same as 'gpuBlocks'', but uses 'DeviceDefaultGPU'.
 --
 -- This is useful for scheduling stages that will run serially within each GPU block.
 -- If the selected target is not ptx, this just marks those dimensions as parallel.
-gpuBlocks
-  :: ( KnownNat n
-     , IsHalideType a
-     , IsTuple (Arguments ts) i
-     , All ((~) (Expr Int32)) ts
-     , Length ts <= 3
-     , 1 <= Length ts
-     )
-  => i
-  -> Func t n a
-  -> IO (Func t n a)
-gpuBlocks = gpuBlocks' DeviceDefaultGPU
+-- gpuBlocks
+--   :: ( KnownNat n
+--      , IsHalideType a
+--      , IsTuple (Arguments ts) i
+--      , All ((~) (Expr Int32)) ts
+--      , Length ts <= 3
+--      , 1 <= Length ts
+--      )
+--   => i
+--   -> Func t n a
+--   -> IO (Func t n a)
+-- gpuBlocks = gpuBlocks' DeviceDefaultGPU
 
 -- | Compute all of this function once ahead of time.
 --
@@ -426,63 +698,63 @@ copyToHost = copyToDevice DeviceHost
 -- The inner and outer subdimensions can then be dealt with using the other scheduling calls. It's okay
 -- to reuse the old variable name as either the inner or outer variable. The first argument specifies
 -- how the tail should be handled if the split factor does not provably divide the extent.
-split
-  :: (KnownNat n, IsHalideType a)
-  => TailStrategy
-  -- ^ how to treat the remainder
-  -> Func t n a
-  -> Expr Int32
-  -- ^ loop variable to split
-  -> Expr Int32
-  -- ^ new outer loop variable
-  -> Expr Int32
-  -- ^ new inner loop variable
-  -> Expr Int32
-  -- ^ split factor
-  -> IO (Func t n a)
-split tail func old outer inner factor = do
-  withFunc func $ \f ->
-    asVarOrRVar old $ \old' ->
-      asVarOrRVar outer $ \outer' ->
-        asVarOrRVar inner $ \inner' ->
-          asExpr factor $ \factor' ->
-            [C.throwBlock| void {
-              handle_halide_exceptions([=](){
-                $(Halide::Func* f)->split(
-                  *$(const Halide::VarOrRVar* old'),
-                  *$(const Halide::VarOrRVar* outer'),
-                  *$(const Halide::VarOrRVar* inner'),
-                  *$(const Halide::Expr* factor'),
-                  static_cast<Halide::TailStrategy>($(int t)));
-              }); } |]
-  pure func
-  where
-    t = fromIntegral . fromEnum $ tail
+-- split
+--   :: (KnownNat n, IsHalideType a)
+--   => TailStrategy
+--   -- ^ how to treat the remainder
+--   -> Func t n a
+--   -> Expr Int32
+--   -- ^ loop variable to split
+--   -> Expr Int32
+--   -- ^ new outer loop variable
+--   -> Expr Int32
+--   -- ^ new inner loop variable
+--   -> Expr Int32
+--   -- ^ split factor
+--   -> IO (Func t n a)
+-- split tail func old outer inner factor = do
+--   withFunc func $ \f ->
+--     asVarOrRVar old $ \old' ->
+--       asVarOrRVar outer $ \outer' ->
+--         asVarOrRVar inner $ \inner' ->
+--           asExpr factor $ \factor' ->
+--             [C.throwBlock| void {
+--               handle_halide_exceptions([=](){
+--                 $(Halide::Func* f)->split(
+--                   *$(const Halide::VarOrRVar* old'),
+--                   *$(const Halide::VarOrRVar* outer'),
+--                   *$(const Halide::VarOrRVar* inner'),
+--                   *$(const Halide::Expr* factor'),
+--                   static_cast<Halide::TailStrategy>($(int t)));
+--               }); } |]
+--   pure func
+--   where
+--     t = fromIntegral . fromEnum $ tail
 
 -- | Join two dimensions into a single fused dimenion.
 --
 -- The fused dimension covers the product of the extents of the inner and outer dimensions given.
-fuse
-  :: (KnownNat n, IsHalideType a)
-  => Func t n a
-  -> Expr Int32
-  -- ^ inner loop variable
-  -> Expr Int32
-  -- ^ outer loop variable
-  -> Expr Int32
-  -- ^ new fused loop variable
-  -> IO (Func t n a)
-fuse func outer inner fused = do
-  withFunc func $ \f ->
-    asVarOrRVar outer $ \outer' ->
-      asVarOrRVar inner $ \inner' ->
-        asVarOrRVar fused $ \fused' ->
-          [CU.exp| void {
-                $(Halide::Func* f)->fuse(
-                  *$(const Halide::VarOrRVar* outer'),
-                  *$(const Halide::VarOrRVar* inner'),
-                  *$(const Halide::VarOrRVar* fused')) } |]
-  pure func
+-- fuse
+--   :: (KnownNat n, IsHalideType a)
+--   => Func t n a
+--   -> Expr Int32
+--   -- ^ inner loop variable
+--   -> Expr Int32
+--   -- ^ outer loop variable
+--   -> Expr Int32
+--   -- ^ new fused loop variable
+--   -> IO (Func t n a)
+-- fuse func outer inner fused = do
+--   withFunc func $ \f ->
+--     asVarOrRVar outer $ \outer' ->
+--       asVarOrRVar inner $ \inner' ->
+--         asVarOrRVar fused $ \fused' ->
+--           [CU.exp| void {
+--                 $(Halide::Func* f)->fuse(
+--                   *$(const Halide::VarOrRVar* outer'),
+--                   *$(const Halide::VarOrRVar* inner'),
+--                   *$(const Halide::VarOrRVar* fused')) } |]
+--   pure func
 
 -- withVarOrRVarMany :: [Expr Int32] -> (Int -> Ptr (CxxVector CxxVarOrRVar) -> IO a) -> IO a
 -- withVarOrRVarMany xs f =
@@ -548,14 +820,14 @@ withBufferParam
 withBufferParam (Param r) action =
   getBufferParameter @n @a Nothing r >>= flip withForeignPtr action
 
-instance (KnownNat n, IsHalideType a) => Named (Func 'ParamTy n a) where
-  setName :: Func 'ParamTy n a -> Text -> IO ()
-  setName (Param r) name = do
-    readIORef r >>= \case
-      Just _ -> error "the name of this Func has already been set"
-      Nothing -> do
-        fp <- mkBufferParameter @n @a (Just name)
-        writeIORef r (Just fp)
+-- instance (KnownNat n, IsHalideType a) => Named (Func 'ParamTy n a) where
+--   setName :: Func 'ParamTy n a -> Text -> IO ()
+--   setName (Param r) name = do
+--     readIORef r >>= \case
+--       Just _ -> error "the name of this Func has already been set"
+--       Nothing -> do
+--         fp <- mkBufferParameter @n @a (Just name)
+--         writeIORef r (Just fp)
 
 -- | Get the underlying pointer to @Halide::Func@ and invoke an 'IO' action with it.
 withFunc :: (KnownNat n, IsHalideType a) => Func t n a -> (Ptr CxxFunc -> IO b) -> IO b
@@ -794,12 +1066,12 @@ prettyLoopNest func = withFunc func $ \f ->
 -- resulting buffer or buffers.
 realize1D
   :: IsHalideType a
-  => Func t 1 a
-  -- ^ Function to evaluate
-  -> Int
+  => Int
   -- ^ @size@ of the domain. The function will be evaluated on @[0, ..., size -1]@
+  -> Func t 1 a
+  -- ^ Function to evaluate
   -> IO (Vector a)
-realize1D func size = do
+realize1D size func = do
   buf <- SM.new size
   withHalideBuffer buf $ \x -> do
     let b = castPtr x
@@ -838,3 +1110,77 @@ scalar :: forall a. IsHalideType a => Text -> Expr a -> Expr a
 scalar name p = unsafePerformIO $ do
   setName p name
   pure p
+
+wrapCxxStage :: (KnownNat n, IsHalideType a) => Ptr CxxStage -> IO (Stage n a)
+wrapCxxStage = fmap Stage . newForeignPtr deleter
+  where
+    deleter = [C.funPtr| void deleteStage(Halide::Stage* p) { delete p; } |]
+
+withCxxStage :: (KnownNat n, IsHalideType a) => Stage n a -> (Ptr CxxStage -> IO b) -> IO b
+withCxxStage (Stage fp) = withForeignPtr fp
+
+getStage :: (KnownNat n, IsHalideType a) => Func t n a -> IO (Stage n a)
+getStage func =
+  withFunc func $ \func' ->
+    [CU.exp| Halide::Stage* { new Halide::Stage{static_cast<Halide::Stage>(*$(Halide::Func* func'))} } |]
+      >>= wrapCxxStage
+
+hasUpdateDefinitions :: (KnownNat n, IsHalideType a) => Func t n a -> IO Bool
+hasUpdateDefinitions func =
+  withFunc func $ \func' ->
+    toBool <$> [CU.exp| bool { $(const Halide::Func* func')->has_update_definition() } |]
+
+getUpdateStage :: (KnownNat n, IsHalideType a) => Int -> Func 'FuncTy n a -> IO (Stage n a)
+getUpdateStage k func =
+  withFunc func $ \func' ->
+    let k' = fromIntegral k
+     in [CU.exp| Halide::Stage* { new Halide::Stage{$(Halide::Func* func')->update($(int k'))} } |]
+          >>= wrapCxxStage
+
+-- | Identify the loop nest corresponding to some dimension of some function.
+getLoopLevelAtStage
+  :: (KnownNat n, IsHalideType a)
+  => Func t n a
+  -> Expr Int32
+  -> Int
+  -- ^ update index
+  -> IO LoopLevel
+getLoopLevelAtStage func var stageIndex =
+  withFunc func $ \f -> asVarOrRVar var $ \i ->
+    wrapCxxLoopLevel
+      =<< [C.throwBlock| Halide::LoopLevel* {
+            return handle_halide_exceptions([=](){
+              return new Halide::LoopLevel{*$(const Halide::Func* f),
+                                           *$(const Halide::VarOrRVar* i),
+                                           $(int k)};
+            });
+          } |]
+  where
+    k = fromIntegral stageIndex
+
+-- | Same as 'getLoopLevelAtStage' except that the stage is @-1@.
+getLoopLevel :: (KnownNat n, IsHalideType a) => Func t n a -> Expr Int32 -> IO LoopLevel
+getLoopLevel f i = getLoopLevelAtStage f i (-1)
+
+-- | Allocate storage for this function within a particular loop level.
+--
+-- Scheduling storage is optional, and can be used to separate the loop level at which storage is allocated
+-- from the loop level at which computation occurs to trade off between locality and redundant work.
+--
+-- For more info, see [Halide::Func::store_at](https://halide-lang.org/docs/class_halide_1_1_func.html#a417c08f8aa3a5cdf9146fba948b65193).
+storeAt :: (KnownNat n, IsHalideType a) => Func 'FuncTy n a -> LoopLevel -> IO (Func 'FuncTy n a)
+storeAt func level = do
+  withFunc func $ \f ->
+    withCxxLoopLevel level $ \l ->
+      [CU.exp| void { $(Halide::Func* f)->store_at(*$(const Halide::LoopLevel* l)) } |]
+  pure func
+
+-- | Schedule a function to be computed within the iteration over a given loop level.
+--
+-- For more info, see [Halide::Func::compute_at](https://halide-lang.org/docs/class_halide_1_1_func.html#a800cbcc3ca5e3d3fa1707f6e1990ec83).
+computeAt :: (KnownNat n, IsHalideType a) => Func 'FuncTy n a -> LoopLevel -> IO (Func 'FuncTy n a)
+computeAt func level = do
+  withFunc func $ \f ->
+    withCxxLoopLevel level $ \l ->
+      [CU.exp| void { $(Halide::Func* f)->compute_at(*$(const Halide::LoopLevel* l)) } |]
+  pure func

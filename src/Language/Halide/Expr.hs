@@ -18,6 +18,7 @@ module Language.Halide.Expr
   , Int32
   , mkExpr
   , mkVar
+  , mkRVar
   , setName
   , cast
   , printed
@@ -63,6 +64,7 @@ import Language.Halide.Context
 import Language.Halide.Type
 import Language.Halide.Utils
 import System.IO.Unsafe (unsafePerformIO)
+import Prelude hiding (min)
 
 importHalide
 
@@ -78,6 +80,8 @@ instance IsHalideType Bool where
   toCxxExpr x = [CU.exp| Halide::Expr* { new Halide::Expr{cast(Halide::UInt(1), Halide::Expr{$(int b)})} } |]
     where
       b = fromIntegral (fromEnum x)
+
+type instance FromTuple (Expr a) = Arguments '[Expr a]
 
 -- | A scalar expression in Halide.
 --
@@ -123,6 +127,23 @@ mkVar name =
   wrapCxxVar
     =<< [CU.exp| Halide::Var* {
           new Halide::Var{std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}} } |]
+  where
+    s = T.encodeUtf8 name
+
+--
+--
+mkRVar :: Text -> Expr Int32 -> Expr Int32 -> IO (Expr Int32)
+mkRVar name min extent =
+  asExpr min $ \min' ->
+    asExpr extent $ \extent' ->
+      wrapCxxRVar
+        =<< [CU.exp| Halide::RVar* {
+              new Halide::RVar{static_cast<Halide::RVar>(Halide::RDom{
+                *$(const Halide::Expr* min'),
+                *$(const Halide::Expr* extent'),
+                std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}
+                })}
+            } |]
   where
     s = T.encodeUtf8 name
 
@@ -320,10 +341,11 @@ wrapCxxVar = fmap Var . newForeignPtr deleter
 -- | Wrap a raw @Halide::RVar@ pointer in a Haskell value.
 --
 -- __Note:__ 'Var' objects correspond to expressions of type 'Int32'.
--- wrapCxxRVar :: Ptr CxxRVar -> IO (Expr Int32)
--- wrapCxxRVar = fmap RVar . newForeignPtr deleter
---   where
---     deleter = [C.funPtr| void deleteExpr(Halide::RVar *p) { delete p; } |]
+wrapCxxRVar :: Ptr CxxRVar -> IO (Expr Int32)
+wrapCxxRVar = fmap RVar . newForeignPtr deleter
+  where
+    deleter = [C.funPtr| void deleteExpr(Halide::RVar *p) { delete p; } |]
+
 class HasHalideType a where
   getHalideType :: a -> IO HalideType
 
