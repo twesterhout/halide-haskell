@@ -25,6 +25,7 @@ module Language.Halide.Expr
   , equal
   , bool
   , evaluate
+  , undef
 
     -- * Internal
   , exprToForeignPtr
@@ -146,6 +147,18 @@ mkRVar name min extent =
             } |]
   where
     s = T.encodeUtf8 name
+
+-- | Return an undef value of the given type.
+--
+-- For more information, see [@Halide::undef@](https://halide-lang.org/docs/namespace_halide.html#a9389bcacbed602df70eae94826312e03).
+undef :: forall a. IsHalideType a => Expr a
+undef = unsafePerformIO $
+  with (halideTypeFor (Proxy @a)) $ \tp ->
+    wrapCxxExpr
+      =<< [CU.exp| Halide::Expr* {
+            new Halide::Expr{Halide::undef(
+              Halide::Type{*$(const halide_type_t* tp)})} } |]
+{-# NOINLINE undef #-}
 
 -- | Create a named reduction variable.
 -- mkRVar :: Text -> IO (Expr Int32)

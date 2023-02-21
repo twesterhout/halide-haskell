@@ -125,7 +125,7 @@ test-suite halide-haskell-test
   build-depends:
     , halide-haskell
     , hspec
-    , hspec-discover
+    , HUnit
     , inline-c
     , inline-c-cpp
     , QuickCheck
