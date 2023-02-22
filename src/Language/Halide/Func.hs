@@ -24,6 +24,7 @@ module Language.Halide.Func
   , scalar
   , define
   , (!)
+  , realize
 
     -- * Scheduling
   , Schedulable (..)
@@ -63,6 +64,7 @@ module Language.Halide.Func
   )
 where
 
+import Control.Monad.ST (RealWorld)
 import Data.IORef
 import Data.Kind (Type)
 import Data.Proxy
@@ -1062,10 +1064,35 @@ prettyLoopNest func = withFunc func $ \f ->
           });
         } |]
 
+-- | Evaluate this function over a rectangular domain.
+realize
+  :: forall n a t b
+   . (KnownNat n, IsHalideType a)
+  => Func t n a
+  -- ^ Function to evaluate
+  -> [Int]
+  -- ^ Domain over which to evaluate
+  -> (Ptr (HalideBuffer n a) -> IO b)
+  -- ^ What to do with the buffer afterwards. Note that the buffer is allocated only temporary,
+  -- so do not return it directly.
+  -> IO b
+realize func shape action =
+  withFunc func $ \f ->
+    allocaCpuBuffer shape $ \buf -> do
+      let raw = castPtr buf
+      [C.throwBlock| void {
+        handle_halide_exceptions([=](){
+          $(Halide::Func* f)->realize(
+            Halide::Pipeline::RealizationArg{$(halide_buffer_t* raw)});
+        });
+      } |]
+      action buf
+
 -- | Evaluate this function over a one-dimensional domain and return the
 -- resulting buffer or buffers.
 realize1D
-  :: IsHalideType a
+  :: forall a t
+   . IsHalideType a
   => Int
   -- ^ @size@ of the domain. The function will be evaluated on @[0, ..., size -1]@
   -> Func t 1 a
@@ -1073,7 +1100,7 @@ realize1D
   -> IO (Vector a)
 realize1D size func = do
   buf <- SM.new size
-  withHalideBuffer buf $ \x -> do
+  withHalideBuffer @_ @1 @a buf $ \x -> do
     let b = castPtr x
     withFunc func $ \f ->
       [CU.exp| void {

@@ -6,19 +6,11 @@
 
 module Language.Halide.FuncSpec (spec) where
 
-import Control.Monad (forM_)
 import Control.Monad.ST (RealWorld)
-import Data.Functor ((<&>))
-import Data.Int
-import qualified Data.Text as T
-import qualified Data.Text.IO as T
 import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Storable.Mutable as SM
-import qualified Language.C.Inline.Cpp.Exception as C
-import qualified Language.C.Inline.Unsafe as CU
 import Language.Halide
 import Language.Halide.Context
-import Language.Halide.Func
 import Test.Hspec hiding (parallel)
 import Utils
 
@@ -49,8 +41,7 @@ spec = do
         s `shouldNotContainText` "[0, 3]"
 
       void $
-        pure func
-          >>= split TailShiftInwards i (i, ii) 4
+        split TailShiftInwards i (i, ii) 4 func
           >>= vectorize ii
 
       -- now, the inner loop is vectorized
@@ -73,8 +64,7 @@ spec = do
         s `shouldNotContainText` "[0, 2]"
 
       void $
-        pure func
-          >>= split TailGuardWithIf i (i, ii) 3
+        split TailGuardWithIf i (i, ii) 3 func
           >>= unroll ii
 
       -- now, the inner loop is unrolled
@@ -102,7 +92,7 @@ spec = do
         s & "for z" `appearsBeforeText` "for y"
         s & "for y" `appearsBeforeText` "for x"
 
-      reorder (z, x, y) func
+      void $ reorder (z, x, y) func
 
       -- now we expect
       --
@@ -130,7 +120,7 @@ spec = do
 
       outer <- mkVar "outer"
       inner <- mkVar "inner"
-      split TailGuardWithIf x (outer, inner) 7 func
+      void $ split TailGuardWithIf x (outer, inner) 7 func
 
       -- now we expect
       --
@@ -155,7 +145,7 @@ spec = do
         s `shouldNotContainText` "common"
 
       common <- mkVar "common"
-      fuse (x, y) common func
+      void $ fuse (x, y) common func
 
       -- now we expect
       --
@@ -174,8 +164,9 @@ spec = do
       prettyLoopNest func >>= \s ->
         s `shouldNotContainText` "parallel"
 
-      parallel x func
-        >>= serial y
+      void $
+        parallel x func
+          >>= serial y
 
       prettyLoopNest func >>= \s ->
         s `shouldContainText` "parallel x"
@@ -190,7 +181,7 @@ spec = do
         prettyLoopNest func >>= \s -> do
           s `shouldNotContainText` "gpu_block"
           s `shouldNotContainText` "Default_GPU"
-        gpuBlocks DeviceDefaultGPU (x, y) func
+        void $ gpuBlocks DeviceDefaultGPU (x, y) func
         prettyLoopNest func >>= \s -> do
           s `shouldContainText` "gpu_block y<Default_GPU>"
           s `shouldContainText` "gpu_block x<Default_GPU>"
@@ -203,7 +194,7 @@ spec = do
         prettyLoopNest func >>= \s -> do
           s `shouldNotContainText` "gpu_block"
           s `shouldNotContainText` "CUDA"
-        gpuBlocks DeviceCUDA y func
+        void $ gpuBlocks DeviceCUDA y func
         prettyLoopNest func >>= \s -> do
           s `shouldContainText` "gpu_block y<CUDA>"
 
@@ -217,7 +208,7 @@ spec = do
         prettyLoopNest func >>= \s -> do
           s `shouldNotContainText` "gpu_thread"
           s `shouldNotContainText` "Default_GPU"
-        gpuThreads DeviceDefaultGPU (x, y) func
+        void $ gpuThreads DeviceDefaultGPU (x, y) func
         prettyLoopNest func >>= \s -> do
           s `shouldContainText` "gpu_thread y<Default_GPU>"
           s `shouldContainText` "gpu_thread x<Default_GPU>"
@@ -231,75 +222,9 @@ spec = do
           s `shouldNotContainText` "gpu_block"
           s `shouldNotContainText` "gpu_thread"
           s `shouldNotContainText` "CUDA"
-        gpuBlocks DeviceCUDA y func
-          >>= gpuThreads DeviceCUDA x
+        void $
+          gpuBlocks DeviceCUDA y func
+            >>= gpuThreads DeviceCUDA x
         prettyLoopNest func >>= \s -> do
           s `shouldContainText` "gpu_block y<CUDA>"
           s `shouldContainText` "gpu_thread x<CUDA>"
-
--- :: (IndexTuple i ts, 1 <= Length ts, Length ts <= 3) => DeviceAPI -> i -> f n a -> IO (f n a)
--- gpuThreads :: (IndexTuple i ts, 1 <= Length ts, Length ts <= 3) => DeviceAPI -> i -> f n a -> IO (f n a)
-
--- describe "reductions" $ do
---   it "does reductions" $ do
---     let
---       builder (buffer @2 @Float "a" -> a) b = do
---         i <- mkVar "i"
---         j <- mkVar "j"
---         sumSize <- dim 0 a <&> (.extent)
---         k <- mkRVar "k" 0 sumSize
---         c <- define "C" (i, j) 0
---         update c (i, j) $ c ! (i, j) + a ! (i, k) * b ! (k, j)
---         s <- prettyLoopNest c
---         T.putStrLn s
---         pure c
---     copy <- mkKernel builder
---     pure ()
--- -- let src = S.generate 3 ((+ 1) . fromIntegral)
--- -- <- Matrix 3 3 <$> SM.new (S.length src * S.length src)
--- -- withHalideBuffer src $ \srcPtr ->
--- --   withHalideBuffer dest $ \destPtr ->
--- --     copy srcPtr destPtr
--- -- S.unsafeFreeze (matrixData dest) `shouldReturn` [1, 0, 0, 0, 2, 0, 0, 0, 3]
-
--- describe "gpuBlocks" $ do
---   it "binds indices to gpu block indices" $ do
---     let builder (src :: Func 'ParamTy 1 Int64) = do
---           i <- mkVar "i"
---           j <- mkVar "j"
---           dest <-
---             define "matrix" (i, j) $
---               bool (equal i j) (src ! i) 0
---           _ <-
---             pure dest
---               >>= gpuBlocks (i, j)
---               >>= computeRoot
---           s <- prettyLoopNest dest
---           s `shouldSatisfy` T.isInfixOf "gpu_block i"
---           s `shouldSatisfy` T.isInfixOf "gpu_block j"
---           _ <-
---             (src `asUsedBy` dest)
---               >>= copyToDevice DeviceDefaultGPU
---               >>= computeRoot
---           asUsed dest >>= copyToHost
---     case gpuTarget of
---       Nothing -> T.putStrLn "\nSkipping gpuBlocks test, because no GPU target is available"
---       Just target -> do
---         copy <- mkKernelForTarget (setFeature FeatureDebug target) builder
---         let src :: S.Vector Int64
---             src = S.generate 3 fromIntegral
---         dest <- Matrix 3 3 <$> SM.new (S.length src * S.length src)
---         withHalideBuffer src $ \srcPtr ->
---           withHalideBuffer dest $ \destPtr ->
---             copy srcPtr destPtr
---         print =<< S.unsafeFreeze (matrixData dest)
-
--- s <- compileToLoweredStmt StmtText (setFeature FeatureNoAsserts hostTarget) builder
--- T.putStrLn s
-
--- s `shouldSatisfy` T.isInfixOf "ramp(dest1"
-
---  `shouldReturn` src
-
--- s <- compileToLoweredStmt StmtText (setFeature FeatureNoAsserts hostTarget) builder
--- T.putStrLn s

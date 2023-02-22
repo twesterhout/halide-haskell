@@ -1,5 +1,8 @@
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE TemplateHaskell #-}
+
 -- |
 -- Module      : Language.Halide.Buffer
 -- Description : Buffers
@@ -20,49 +23,59 @@ module Language.Halide.Buffer
   , HalideDimension (..)
   , HalideDeviceInterface
   , IsHalideBuffer (..)
+  , isDeviceDirty
+  , isHostDirty
+  , bufferCopyToHost
 
     -- * Constructing
-    --
+
+  --
+
     -- | We define helper functions to easily construct 'HalideBuffer's from CPU pointers.
   , bufferFromPtrShapeStrides
   , bufferFromPtrShape
+  , rowMajorStrides
+  , colMajorStrides
+  , allocaCpuBuffer
+  , IsListPeek (..)
   )
 where
 
-import Control.Monad (unless, when)
+import Control.Monad (forM, unless, when)
 import Control.Monad.ST (RealWorld)
 import Data.Bits
+import Data.Foldable (foldl')
 import Data.Int
 import Data.Kind (Type)
+import qualified Data.List as List
 import Data.Proxy
 import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Storable.Mutable as SM
-import qualified Language.C.Inline as C
-import qualified Language.C.Inline.Unsafe as CU
 import Data.Word
 import Foreign.Marshal.Array
 import Foreign.Marshal.Utils
-import Foreign.Ptr (Ptr, castPtr, nullPtr)
+import Foreign.Ptr
 import Foreign.Storable
 import GHC.Stack (HasCallStack)
 import GHC.TypeNats
-import Language.Halide.Type
+import qualified Language.C.Inline as C
+import qualified Language.C.Inline.Cpp.Exception as C
+import qualified Language.C.Inline.Unsafe as CU
 import Language.Halide.Context
+import Language.Halide.Type
 
 -- | Information about a dimension in a buffer.
 --
 -- It is the Haskell analogue of [@halide_dimension_t@](https://halide-lang.org/docs/structhalide__dimension__t.html).
---
 data HalideDimension = HalideDimension
-  { 
-    -- | Starting index.
-    halideDimensionMin :: {-# UNPACK #-} !Int32
-    -- | Length of the dimension.
+  { halideDimensionMin :: {-# UNPACK #-} !Int32
+  -- ^ Starting index.
   , halideDimensionExtent :: {-# UNPACK #-} !Int32
-    -- | Stride along this dimension.
+  -- ^ Length of the dimension.
   , halideDimensionStride :: {-# UNPACK #-} !Int32
-    -- | Extra flags.
+  -- ^ Stride along this dimension.
   , halideDimensionFlags :: {-# UNPACK #-} !Word32
+  -- ^ Extra flags.
   }
   deriving stock (Read, Show, Eq)
 
@@ -99,6 +112,9 @@ simpleDimension extent stride = HalideDimension 0 (toInt32 extent) (toInt32 stri
 
 rowMajorStrides :: Integral a => [a] -> [a]
 rowMajorStrides = drop 1 . scanr (*) 1
+
+colMajorStrides :: Integral a => [a] -> [a]
+colMajorStrides = scanl (*) 1 . init
 
 -- | Haskell analogue of [@halide_device_interface_t@](https://halide-lang.org/docs/structhalide__device__interface__t.html).
 data HalideDeviceInterface
@@ -187,13 +203,14 @@ bufferFromPtrShapeStrides p shape stride action =
             }
     with buffer $ \bufferPtr -> do
       r <- action (castPtr bufferPtr)
-      hasDataOnDevice <- toEnum . fromIntegral
-        <$> [CU.exp| bool { $(halide_buffer_t* bufferPtr)->device } |]
+      hasDataOnDevice <-
+        toEnum . fromIntegral
+          <$> [CU.exp| bool { $(halide_buffer_t* bufferPtr)->device } |]
       when hasDataOnDevice $
         error "the Buffer still references data on the device; did you forget to call copyToHost?"
       pure r
 
--- | Similar to 'bufferFromPtrShapeStrides', but assumes row-major ordering of data.
+-- | Similar to 'bufferFromPtrShapeStrides', but assumes column-major ordering of data.
 bufferFromPtrShape
   :: forall n a b
    . (KnownNat n, IsHalideType a)
@@ -203,11 +220,11 @@ bufferFromPtrShape
   -- ^ Extents (in number of elements, __not__ in bytes)
   -> (Ptr (HalideBuffer n a) -> IO b)
   -> IO b
-bufferFromPtrShape p shape = bufferFromPtrShapeStrides p shape (rowMajorStrides shape)
+bufferFromPtrShape p shape = bufferFromPtrShapeStrides p shape (colMajorStrides shape)
 
 -- | Specifies that a type @t@ can be used as an @n@-dimensional Halide buffer
 -- with elements of type @a@.
-class (KnownNat n, IsHalideType a) => IsHalideBuffer t n a | t -> n, t -> a where
+class (KnownNat n, IsHalideType a) => IsHalideBuffer t n a where
   withHalideBuffer :: t -> (Ptr (HalideBuffer n a) -> IO b) -> IO b
 
 -- | Storable vectors are one-dimensional buffers.
@@ -221,3 +238,132 @@ instance IsHalideType a => IsHalideBuffer (S.MVector RealWorld a) 1 a where
   withHalideBuffer v f =
     SM.unsafeWith v $ \dataPtr ->
       bufferFromPtrShape dataPtr [SM.length v] f
+
+instance IsHalideType a => IsHalideBuffer [a] 1 a where
+  withHalideBuffer v = withHalideBuffer (S.fromList v)
+
+instance IsHalideType a => IsHalideBuffer [[a]] 2 a where
+  withHalideBuffer xs f = do
+    let d0 = length xs
+        d1 = if d0 == 0 then 0 else length (head xs)
+        -- we want column-major ordering, so transpose first
+        v = S.fromList (List.concat (List.transpose xs))
+    when (S.length v /= d0 * d1) $
+      error "list doesn't have a regular shape (i.e. rows have varying number of elements)"
+    S.unsafeWith v $ \cpuPtr ->
+      bufferFromPtrShape cpuPtr [d0, d1] f
+
+instance IsHalideType a => IsHalideBuffer [[[a]]] 3 a where
+  withHalideBuffer xs f = do
+    let d0 = length xs
+        d1 = if d0 == 0 then 0 else length (head xs)
+        d2 = if d1 == 0 then 0 else length (head (head xs))
+        -- we want column-major ordering, so transpose first
+        v =
+          S.fromList
+            . List.concat
+            . List.concatMap List.transpose
+            . List.transpose
+            . fmap List.transpose
+            $ xs
+    when (S.length v /= d0 * d1 * d2) $
+      error "list doesn't have a regular shape (i.e. rows have varying number of elements)"
+    S.unsafeWith v $ \cpuPtr ->
+      bufferFromPtrShape cpuPtr [d0, d1, d2] f
+
+whenM :: Monad m => m Bool -> m () -> m ()
+whenM cond f =
+  cond >>= \case
+    True -> f
+    False -> pure ()
+
+allocaCpuBuffer
+  :: forall n a b
+   . (HasCallStack, KnownNat n, IsHalideType a)
+  => [Int]
+  -> (Ptr (HalideBuffer n a) -> IO b)
+  -> IO b
+allocaCpuBuffer shape action =
+  allocaArray numElements $ \cpuPtr ->
+    bufferFromPtrShape cpuPtr shape $ \buf -> do
+      r <- action buf
+      whenM (isDeviceDirty (castPtr buf)) $
+        error $
+          "device_dirty is set on a CPU-only buffer; "
+            <> "did you forget a copyToHost in your pipeline?"
+      pure r
+  where
+    numElements = foldl' (*) 1 shape
+
+-- | Do we have changes on the device the have not been copied to the host?
+isDeviceDirty :: Ptr RawHalideBuffer -> IO Bool
+isDeviceDirty p =
+  toBool <$> [CU.exp| bool { $(const halide_buffer_t* p)->device_dirty() } |]
+
+-- | Do we have changes on the device the have not been copied to the host?
+isHostDirty :: Ptr RawHalideBuffer -> IO Bool
+isHostDirty p =
+  toBool <$> [CU.exp| bool { $(const halide_buffer_t* p)->host_dirty() } |]
+
+bufferCopyToHost :: Ptr RawHalideBuffer -> IO ()
+bufferCopyToHost p =
+  [C.throwBlock| void {
+    auto& buf = *$(halide_buffer_t* p);
+    if (buf.device_dirty()) {
+      if (buf.device_interface == nullptr) {
+        throw std::runtime_error{"bufferCopyToHost: device_dirty is set, "
+                                 "but device_interface is NULL"};
+      }
+      if (buf.host == nullptr) {
+        throw std::runtime_error{"bufferCopyToHost: host is NULL; "
+                                 "did you forget to allocate memory?"};
+      }
+      buf.device_interface->copy_to_host(nullptr, &buf);
+    }
+  } |]
+
+class IsListPeek a where
+  type ListPeekElem a :: Type
+  peekToList :: HasCallStack => Ptr a -> IO [ListPeekElem a]
+
+instance IsHalideType a => IsListPeek (HalideBuffer 1 a) where
+  type ListPeekElem (HalideBuffer 1 a) = a
+  peekToList p = do
+    whenM (isDeviceDirty (castPtr p)) $
+      error "cannot peek data from device; call bufferCopyToHost first"
+    raw <- peek (castPtr @_ @RawHalideBuffer p)
+    (HalideDimension min0 extent0 stride0 _) <- peekElemOff (halideBufferDim raw) 0
+    let ptr0 = castPtr @_ @a (halideBufferHost raw)
+    forM [0 .. extent0 - 1] $ \i0 ->
+      peekElemOff ptr0 (fromIntegral (min0 + stride0 * i0))
+
+instance IsHalideType a => IsListPeek (HalideBuffer 2 a) where
+  type ListPeekElem (HalideBuffer 2 a) = [a]
+  peekToList p = do
+    whenM (isDeviceDirty (castPtr p)) $
+      error "cannot peek data from device; call bufferCopyToHost first"
+    raw <- peek (castPtr @_ @RawHalideBuffer p)
+    (HalideDimension min0 extent0 stride0 _) <- peekElemOff (halideBufferDim raw) 0
+    (HalideDimension min1 extent1 stride1 _) <- peekElemOff (halideBufferDim raw) 1
+    let ptr0 = castPtr @_ @a (halideBufferHost raw)
+    forM [0 .. extent0 - 1] $ \i0 -> do
+      let ptr1 = ptr0 `advancePtr` fromIntegral (min0 + stride0 * i0)
+      forM [0 .. extent1 - 1] $ \i1 ->
+        peekElemOff ptr1 (fromIntegral (min1 + stride1 * i1))
+
+instance IsHalideType a => IsListPeek (HalideBuffer 3 a) where
+  type ListPeekElem (HalideBuffer 3 a) = [[a]]
+  peekToList p = do
+    whenM (isDeviceDirty (castPtr p)) $
+      error "cannot peek data from device; call bufferCopyToHost first"
+    raw <- peek (castPtr @_ @RawHalideBuffer p)
+    (HalideDimension min0 extent0 stride0 _) <- peekElemOff (halideBufferDim raw) 0
+    (HalideDimension min1 extent1 stride1 _) <- peekElemOff (halideBufferDim raw) 1
+    (HalideDimension min2 extent2 stride2 _) <- peekElemOff (halideBufferDim raw) 2
+    let ptr0 = castPtr @_ @a (halideBufferHost raw)
+    forM [0 .. extent0 - 1] $ \i0 -> do
+      let ptr1 = ptr0 `advancePtr` fromIntegral (min0 + stride0 * i0)
+      forM [0 .. extent1 - 1] $ \i1 -> do
+        let ptr2 = ptr1 `advancePtr` fromIntegral (min1 + stride1 * i1)
+        forM [0 .. extent2 - 1] $ \i2 ->
+          peekElemOff ptr2 (fromIntegral (min2 + stride2 * i2))

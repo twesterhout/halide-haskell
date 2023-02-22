@@ -3,24 +3,9 @@
 
 module Language.Halide.KernelSpec (spec) where
 
-import Control.Monad.ST (RealWorld)
-import qualified Data.Text as T
-import qualified Data.Vector.Storable as S
-import qualified Data.Vector.Storable.Mutable as SM
 import Language.Halide
 import Test.Hspec
-
-data Matrix v a = Matrix
-  { matrixRows :: !Int
-  , matrixCols :: !Int
-  , matrixData :: !(v a)
-  }
-  deriving stock (Show, Eq)
-
-instance IsHalideType a => IsHalideBuffer (Matrix (SM.MVector RealWorld) a) 2 a where
-  withHalideBuffer (Matrix n m v) f =
-    SM.unsafeWith v $ \dataPtr ->
-      bufferFromPtrShapeStrides dataPtr [n, m] [1, n] f
+import Utils
 
 spec :: Spec
 spec = do
@@ -29,14 +14,14 @@ spec = do
       vectorPlus <- mkKernel $ \a b -> do
         i <- mkVar "i"
         define "out" i $ a ! i + b ! i
-      let a = S.replicate 10 (1 :: Float)
-          b = S.replicate 10 (2 :: Float)
-      out <- SM.new 10
+      let n = 10
+          a = replicate 10 (1 :: Float)
+          b = replicate 10 (2 :: Float)
       withHalideBuffer a $ \a' ->
         withHalideBuffer b $ \b' ->
-          withHalideBuffer out $ \out' ->
+          allocaCpuBuffer [n] $ \out' -> do
             vectorPlus a' b' out'
-      S.unsafeFreeze out `shouldReturn` S.zipWith (+) a b
+            peekToList out' `shouldReturn` zipWith (+) a b
 
     it "compiles a kernel that generates a scaled diagonal matrix declaratively" $ do
       scaledDiagonal <- mkKernel $ \(scale :: Expr Double) v -> do
@@ -47,12 +32,12 @@ spec = do
             (i `equal` j)
             (v ! i / scale)
             0
-      let a = S.fromList [1.0, 2.0, 3.0]
-      out <- Matrix 3 3 <$> SM.replicate 9 0
+      let a :: [Double]
+          a = [1.0, 2.0, 3.0]
       withHalideBuffer a $ \a' ->
-        withHalideBuffer out $ \out' ->
+        allocaCpuBuffer [3, 3] $ \out' -> do
           scaledDiagonal 2 a' out'
-      S.unsafeFreeze (matrixData out) `shouldReturn` S.fromList [0.5, 0, 0, 0, 1, 0, 0, 0, 1.5]
+          peekToList out' `shouldReturn` [[0.5, 0, 0], [0, 1, 0], [0, 0, 1.5]]
 
     it "compiles a kernel that generates a scaled diagonal matrix statefully" $ do
       scaledDiagonal <- mkKernel $ \(scale :: Expr Double) v -> do
@@ -61,28 +46,21 @@ spec = do
         out <- define "out" (i, j) 0
         update out (i, i) (v ! i / scale)
         pure out
-      let a = S.fromList [1.0, 2.0, 3.0]
-      out <- Matrix 3 3 <$> SM.replicate 9 0
+      let a :: [Double]
+          a = [1.0, 2.0, 3.0]
       withHalideBuffer a $ \a' ->
-        withHalideBuffer out $ \out' ->
+        allocaCpuBuffer [3, 3] $ \out' -> do
           scaledDiagonal 2 a' out'
-      S.unsafeFreeze (matrixData out) `shouldReturn` S.fromList [0.5, 0, 0, 0, 1, 0, 0, 0, 1.5]
+          peekToList out' `shouldReturn` [[0.5, 0, 0], [0, 1, 0], [0, 0, 1.5]]
 
   describe "compileToLoweredStmt" $ do
     it "compiles to lowered stmt file" $ do
-      let target =
+      let builder (buffer "src" -> src) (scalar @Float "c" -> c) = do
+            i <- mkVar "i"
+            define "dest1234" i $ c * src ! i
+          target =
             setFeature FeatureNoAsserts . setFeature FeatureNoBoundsQuery $
               hostTarget
-      s <- compileToLoweredStmt StmtText target $
-        \(buffer "src" -> src) (scalar @Float "c" -> c) -> do
-          -- setName src "src"
-          i <- mkVar "i"
-          define "dest1234" i $ c * src ! i
-      -- T.putStrLn s
-      s `shouldSatisfy` T.isInfixOf "func dest1234 (src, c, dest1234) {"
-      s `shouldSatisfy` T.isInfixOf "produce dest1234 {"
-      s2 <- compileToLoweredStmt StmtText target $
-        \src (c :: Expr Float) -> do
-          i <- mkVar "i"
-          define "dest5678" i $ c * src ! i
-      s2 `shouldSatisfy` T.isInfixOf "produce dest5678 {"
+      s <- compileToLoweredStmt StmtText target builder
+      s `shouldContainText` "func dest1234 (src, c, dest1234) {"
+      s `shouldContainText` "produce dest1234 {"
