@@ -1,10 +1,12 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -17,8 +19,9 @@
 -- Description : Compiling functions to kernels
 -- Copyright   : (c) Tom Westerhout, 2023
 module Language.Halide.Kernel
-  ( mkKernel
-  , mkKernelForTarget
+  ( compile
+  , compileForTarget
+  , compileToCallable
   , compileToLoweredStmt
   , StmtOutputFormat (..)
   )
@@ -74,8 +77,8 @@ setArgvStorage (ArgvStorage argv scalarStorage) inputs outputs = do
   let argvPtr = P.mutablePrimArrayContents argv
       scalarStoragePtr = P.mutablePrimArrayContents scalarStorage
       go :: All ValidArgument ts' => Int -> Arguments ts' -> IO Int
-      go i Nil = pure i
-      go i ((x :: t) ::: xs) = do
+      go !i Nil = pure i
+      go !i ((x :: t) ::: xs) = do
         fillSlot
           (castPtr $ argvPtr `P.advancePtr` i)
           (castPtr $ scalarStoragePtr `P.advancePtr` i)
@@ -95,19 +98,22 @@ instance IsHalideType t => ValidArgument t where
   fillSlot argv scalarStorage x = do
     poke (castPtr scalarStorage :: Ptr t) x
     poke (castPtr argv :: Ptr (Ptr ())) scalarStorage
+  {-# INLINE fillSlot #-}
 
 instance {-# OVERLAPPING #-} ValidArgument (Ptr CxxUserContext) where
   fillSlot :: Ptr () -> Ptr () -> Ptr CxxUserContext -> IO ()
   fillSlot argv scalarStorage x = do
     poke (castPtr scalarStorage :: Ptr (Ptr CxxUserContext)) x
     poke (castPtr argv :: Ptr (Ptr ())) scalarStorage
+  {-# INLINE fillSlot #-}
 
 instance {-# OVERLAPPING #-} ValidArgument (Ptr (HalideBuffer n a)) where
   fillSlot :: Ptr () -> Ptr () -> Ptr (HalideBuffer n a) -> IO ()
   fillSlot argv _ x = do
     poke (castPtr argv :: Ptr (Ptr (HalideBuffer n a))) x
+  {-# INLINE fillSlot #-}
 
-class ValidParameter (t :: Type) where
+class ValidArgument (Lowered t) => ValidParameter (t :: Type) where
   appendToArgList :: Ptr (CxxVector CxxArgument) -> t -> IO ()
   prepareParameter :: IO t
 
@@ -158,10 +164,10 @@ prepareCxxArguments args action = do
   let count = fromIntegral (natVal (Proxy @(Length ts)))
       allocate =
         [CU.block| std::vector<Halide::Argument>* {
-        auto p = new std::vector<Halide::Argument>{};
-        p->reserve($(size_t count));
-        return p;
-      } |]
+          auto p = new std::vector<Halide::Argument>{};
+          p->reserve($(size_t count));
+          return p;
+        } |]
       destroy p = [CU.exp| void { delete $(std::vector<Halide::Argument>* p) } |]
   bracket allocate destroy $ \v -> do
     let go :: All ValidParameter ts' => Arguments ts' -> IO ()
@@ -180,87 +186,77 @@ newEmptyCxxUserContext :: IO (ForeignPtr CxxUserContext)
 newEmptyCxxUserContext =
   wrapCxxUserContext =<< [CU.exp| Halide::JITUserContext* { new Halide::JITUserContext{} } |]
 
-deleteCxxCallable :: FunPtr (Ptr CxxCallable -> IO ())
-deleteCxxCallable = [C.funPtr| void deleteCallable(Halide::Callable* p) { delete p; } |]
+wrapCxxCallable :: Ptr CxxCallable -> IO (Callable inputs outputs)
+wrapCxxCallable = fmap Callable . newForeignPtr deleter
+  where
+    deleter = [C.funPtr| void deleteCallable(Halide::Callable* p) { delete p; } |]
 
-wrapCxxCallable :: Ptr CxxCallable -> IO (ForeignPtr CxxCallable)
-wrapCxxCallable = newForeignPtr deleteCxxCallable
-
-type family Lowered (t :: [Type]) :: [Type] where
+type family Lowered (t :: k) :: k where
+  Lowered (Expr a) = a
+  Lowered (Func t n a) = Ptr (HalideBuffer n a)
   Lowered '[] = '[]
   Lowered (Expr a ': ts) = (a ': Lowered ts)
   Lowered (Func t n a ': ts) = (Ptr (HalideBuffer n a) ': Lowered ts)
 
-buildFunc
-  :: forall f ts t n a r
-   . ( FunctionArguments f ~ ts
-     , FunctionReturn f ~ r
-     , UnCurry f ts r
-     , r ~ IO (Func t n a)
-     , PrepareParameters ts
-     )
-  => f
-  -> IO (Arguments ts, Func t n a)
+class (FunctionReturn f ~ IO (Func t n a), IsHalideType a, KnownNat n) => ReturnsFunc f t n a | f -> t n a
+
+instance (FunctionReturn f ~ IO (Func t n a), IsHalideType a, KnownNat n) => ReturnsFunc f t n a
+
+type IsFuncBuilder f t n a =
+  ( All ValidParameter (FunctionArguments f)
+  , All ValidArgument (Lowered (FunctionArguments f))
+  , UnCurry f (FunctionArguments f) (FunctionReturn f)
+  , PrepareParameters (FunctionArguments f)
+  , ReturnsFunc f t n a
+  , KnownNat (Length (FunctionArguments f))
+  , KnownNat (Length (Lowered (FunctionArguments f)))
+  )
+
+buildFunc :: (IsFuncBuilder f t n a) => f -> IO (Arguments (FunctionArguments f), Func t n a)
 buildFunc builder = do
   parameters <- prepareParameters
   func <- uncurryG builder parameters
   pure (parameters, func)
 
--- | Convert a function that builds a Halide 'Func' into a normal Haskell
--- function acccepting scalars and 'HalideBuffer's.
-mkKernel
-  :: forall f kernel k ts t n a r
-   . ( FunctionArguments f ~ ts
-     , FunctionReturn f ~ r
-     , UnCurry f ts r
-     , r ~ IO (Func t n a)
-     , KnownNat n
-     , IsHalideType a
-     , Length ts ~ k
-     , KnownNat k
-     , PrepareParameters ts
-     , All ValidParameter ts
-     , All ValidArgument (Lowered ts)
-     , Curry (Lowered ts) (Ptr (HalideBuffer n a) -> IO ()) kernel
-     )
-  => f
-  -> IO kernel
-mkKernel = mkKernelForTarget hostTarget
+newtype Callable (inputs :: [Type]) (output :: Type) = Callable (ForeignPtr CxxCallable)
 
-mkKernelForTarget
-  :: forall f kernel k ts t n a r
-   . ( FunctionArguments f ~ ts
-     , FunctionReturn f ~ r
-     , UnCurry f ts r
-     , r ~ IO (Func t n a)
-     , KnownNat n
-     , IsHalideType a
-     , Length ts ~ k
-     , KnownNat k
-     , PrepareParameters ts
-     , All ValidParameter ts
-     , All ValidArgument (Lowered ts)
-     , Curry (Lowered ts) (Ptr (HalideBuffer n a) -> IO ()) kernel
+compileToCallable
+  :: forall n a f t inputs output
+   . ( IsFuncBuilder f t n a
+     , Lowered (FunctionArguments f) ~ inputs
+     , Ptr (HalideBuffer n a) ~ output
      )
   => Target
   -> f
+  -> IO (Callable inputs output)
+compileToCallable target builder = do
+  (args, func) <- buildFunc builder
+  prepareCxxArguments args $ \args' ->
+    withFunc func $ \func' ->
+      withCxxTarget target $ \target' ->
+        wrapCxxCallable
+          =<< [C.throwBlock| Halide::Callable* {
+                return handle_halide_exceptions([=]() {
+                  return new Halide::Callable{
+                    $(Halide::Func* func')->compile_to_callable(
+                      *$(const std::vector<Halide::Argument>* args'),
+                      *$(const Halide::Target* target'))};
+                });
+              } |]
+
+callableToFunction
+  :: forall inputs output kernel
+   . ( Curry inputs (output -> IO ()) kernel
+     , KnownNat (Length inputs)
+     , All ValidArgument inputs
+     , ValidArgument output
+     )
+  => Callable inputs output
   -> IO kernel
-mkKernelForTarget target builder = do
-  (parameters, func) <- buildFunc builder
-  callable <-
-    prepareCxxArguments parameters $ \v ->
-      withFunc func $ \f ->
-        withCxxTarget target $ \t ->
-          wrapCxxCallable
-            =<< [C.throwBlock| Halide::Callable* {
-                  return handle_halide_exceptions([=]() {
-                    return new Halide::Callable{$(Halide::Func* f)->compile_to_callable(
-                      *$(const std::vector<Halide::Argument>* v),
-                      *$(const Halide::Target* t))};
-                  });
-                } |]
+callableToFunction (Callable callable) = do
   context <- newEmptyCxxUserContext
-  let argc = 1 + fromIntegral (natVal (Proxy @k)) + 1
+  -- +1 comes from CxxUserContext and another +1 comes from output
+  let argc = 2 + fromIntegral (natVal (Proxy @(Length inputs)))
   storage@(ArgvStorage argv scalarStorage) <- newArgvStorage (fromIntegral argc)
   let argvPtr = P.mutablePrimArrayContents argv
       contextPtr = unsafeForeignPtrToPtr context
@@ -277,7 +273,28 @@ mkKernelForTarget target builder = do
         touch scalarStorage
         touch context
         touch callable
-  pure (curryG @(Lowered ts) @(Ptr (HalideBuffer n a) -> IO ()) kernel)
+  pure $ curryG @inputs @(output -> IO ()) kernel
+
+-- | Convert a function that builds a Halide 'Func' into a normal Haskell
+-- function acccepting scalars and 'HalideBuffer's.
+compile
+  :: forall n a t f kernel
+   . ( IsFuncBuilder f t n a
+     , Curry (Lowered (FunctionArguments f)) (Ptr (HalideBuffer n a) -> IO ()) kernel
+     )
+  => f
+  -> IO kernel
+compile = compileForTarget hostTarget
+
+compileForTarget
+  :: forall n a t f kernel
+   . ( IsFuncBuilder f t n a
+     , Curry (Lowered (FunctionArguments f)) (Ptr (HalideBuffer n a) -> IO ()) kernel
+     )
+  => Target
+  -> f
+  -> IO kernel
+compileForTarget target builder = compileToCallable target builder >>= callableToFunction
 
 data StmtOutputFormat = StmtText | StmtHTML
   deriving stock (Show, Eq)
@@ -293,23 +310,7 @@ instance Enum StmtOutputFormat where
     | otherwise = error $ "invalid StmtOutputFormat " <> show k
 
 compileToLoweredStmt
-  :: forall f k ts t n a r
-   . ( FunctionArguments f ~ ts
-     , FunctionReturn f ~ r
-     , UnCurry f ts r
-     , r ~ IO (Func t n a)
-     , KnownNat n
-     , IsHalideType a
-     , Length ts ~ k
-     , KnownNat k
-     , PrepareParameters ts
-     , All ValidParameter ts
-     , All ValidArgument (Lowered ts)
-     )
-  => StmtOutputFormat
-  -> Target
-  -> f
-  -> IO Text
+  :: forall n a t f. (IsFuncBuilder f t n a) => StmtOutputFormat -> Target -> f -> IO Text
 compileToLoweredStmt format target builder = do
   withSystemTempDirectory "halide-haskell" $ \dir -> do
     let s = encodeUtf8 (pack (dir <> "/code.stmt"))

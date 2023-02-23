@@ -18,7 +18,7 @@ module Language.Halide.Trace
   , setCustomTrace
   , traceStores
   , traceLoads
-  , traceIterationOrder
+  , collectIterationOrder
   )
 where
 
@@ -167,15 +167,20 @@ traceLoads f = do
     [CU.exp| void { $(Halide::Func* f')->trace_loads() } |]
   pure f
 
-traceIterationOrder :: (KnownNat n, IsHalideType a) => TraceEventCode -> Func t n a -> IO b -> IO ([[Int]], b)
-traceIterationOrder c f action = do
-  case c of
-    TraceLoad -> void (traceLoads f)
-    TraceStore -> void (traceStores f)
-    _ -> pure ()
+collectIterationOrder
+  :: (KnownNat n, IsHalideType a)
+  => (TraceEventCode -> Bool)
+  -> Func t n a
+  -> IO b
+  -> IO ([[Int]], b)
+collectIterationOrder cond f action = do
+  -- case c of
+  --   TraceLoad -> void (traceLoads f)
+  --   TraceStore -> void (traceStores f)
+  --   _ -> pure ()
   m <- newMVar []
   let tracer (TraceEvent _ c' (Just payload))
-        | c' == c = modifyMVar_ m $ pure . (payload.coordinates :)
+        | cond c' = modifyMVar_ m $ pure . (payload.coordinates :)
       tracer _ = pure ()
   setCustomTrace tracer f $ do
     r <- action

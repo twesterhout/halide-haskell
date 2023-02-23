@@ -23,7 +23,8 @@ spec = do
           pure (x, y, gradient)
         getIterationOrder shape f =
           fmap fst $
-            traceIterationOrder TraceStore f $ do
+            collectIterationOrder (TraceStore ==) f $ do
+              traceStores f
               realize f shape (void . pure)
         traceM_ x = trace ("\n" <> x) $ pure ()
 

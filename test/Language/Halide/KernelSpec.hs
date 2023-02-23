@@ -9,9 +9,9 @@ import Utils
 
 spec :: Spec
 spec = do
-  describe "mkKernel" $ do
+  describe "compile" $ do
     it "compiles a kernel that adds two vectors together" $ do
-      vectorPlus <- mkKernel $ \a b -> do
+      vectorPlus <- compile $ \a b -> do
         i <- mkVar "i"
         define "out" i $ a ! i + b ! i
       let n = 10
@@ -24,7 +24,7 @@ spec = do
             peekToList out' `shouldReturn` zipWith (+) a b
 
     it "compiles a kernel that generates a scaled diagonal matrix declaratively" $ do
-      scaledDiagonal <- mkKernel $ \(scale :: Expr Double) v -> do
+      scaledDiagonal <- compile $ \(scale :: Expr Double) v -> do
         i <- mkVar "i"
         j <- mkVar "j"
         define "out" (i, j) $
@@ -40,7 +40,7 @@ spec = do
           peekToList out' `shouldReturn` [[0.5, 0, 0], [0, 1, 0], [0, 0, 1.5]]
 
     it "compiles a kernel that generates a scaled diagonal matrix statefully" $ do
-      scaledDiagonal <- mkKernel $ \(scale :: Expr Double) v -> do
+      scaledDiagonal <- compile $ \(scale :: Expr Double) v -> do
         i <- mkVar "i"
         j <- mkVar "j"
         out <- define "out" (i, j) 0
