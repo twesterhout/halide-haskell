@@ -8,7 +8,7 @@ import System.IO.Unsafe (unsafePerformIO)
 mkVectorPlus :: forall a. (IsHalideType a, Num a) => IO (S.Vector a -> S.Vector a -> S.Vector a)
 mkVectorPlus = do
   -- First, compile the kernel
-  kernel <- mkKernel $ \a b -> do
+  kernel <- compile $ \a b -> do
     -- Create an index variable
     i <- mkVar "i"
     -- Define the resulting function. We call it "out".

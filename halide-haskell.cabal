@@ -70,6 +70,7 @@ library
     Language.Halide.Kernel
     Language.Halide.LoopLevel
     Language.Halide.Prelude
+    Language.Halide.RedundantConstraints
     Language.Halide.Schedule
     Language.Halide.Target
     Language.Halide.Trace

@@ -52,6 +52,7 @@ import Language.Halide.Buffer
 import Language.Halide.Context
 import Language.Halide.Expr
 import Language.Halide.Func
+import Language.Halide.RedundantConstraints
 import Language.Halide.Target
 import Language.Halide.Type
 import System.IO.Temp (withSystemTempDirectory)
@@ -221,7 +222,7 @@ buildFunc builder = do
 newtype Callable (inputs :: [Type]) (output :: Type) = Callable (ForeignPtr CxxCallable)
 
 compileToCallable
-  :: forall n a f t inputs output
+  :: forall n a t f inputs output
    . ( IsFuncBuilder f t n a
      , Lowered (FunctionArguments f) ~ inputs
      , Ptr (HalideBuffer n a) ~ output
@@ -243,6 +244,8 @@ compileToCallable target builder = do
                       *$(const Halide::Target* target'))};
                 });
               } |]
+  where
+    _ = keepRedundantConstraint (Proxy @(Ptr (HalideBuffer n a) ~ output))
 
 callableToFunction
   :: forall inputs output kernel
