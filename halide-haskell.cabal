@@ -72,6 +72,7 @@ library
     Language.Halide.Prelude
     Language.Halide.Schedule
     Language.Halide.Target
+    Language.Halide.Trace
     Language.Halide.Type
     Language.Halide.Utils
 
@@ -120,6 +121,8 @@ test-suite halide-haskell-test
     Language.Halide.LoopLevelSpec
     Language.Halide.ScheduleSpec
     Language.Halide.TargetSpec
+    Language.Halide.Tutorial01Spec
+    Language.Halide.Tutorial05Spec
     Utils
 
   build-depends:

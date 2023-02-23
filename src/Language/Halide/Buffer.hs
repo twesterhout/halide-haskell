@@ -49,6 +49,9 @@ import Data.Int
 import Data.Kind (Type)
 import qualified Data.List as List
 import Data.Proxy
+import Data.Text (Text)
+import qualified Data.Text as T
+import Data.Text.Encoding (encodeUtf8)
 import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Storable.Mutable as SM
 import Data.Word
@@ -138,6 +141,8 @@ data RawHalideBuffer = RawHalideBuffer
 -- buffers of the right type and dimensionality.
 newtype HalideBuffer (n :: Nat) (a :: Type) = HalideBuffer {unHalideBuffer :: RawHalideBuffer}
   deriving stock (Show, Eq)
+
+data CxxBuffer a
 
 importHalide
 

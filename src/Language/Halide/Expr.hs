@@ -30,12 +30,15 @@ module Language.Halide.Expr
     -- * Internal
   , exprToForeignPtr
   , wrapCxxExpr
+  , wrapCxxVar
+  , wrapCxxRVar
   , asExpr
   , asVar
   , asRVar
   , asVarOrRVar
   , asScalarParam
   , asVectorOf
+  , withMany
   , binaryOp
   , unaryOp
   , checkType
@@ -519,6 +522,19 @@ asVectorOf asPtr args action =
       -> IO a
     go Nil v = action v
     go (x ::: xs) v = asPtr x $ \p -> cxxVectorPushBack v p >> go xs v
+
+withMany
+  :: forall k t a
+   . (HasCxxVector k)
+  => (t -> (Ptr k -> IO a) -> IO a)
+  -> [t]
+  -> (Ptr (CxxVector k) -> IO a)
+  -> IO a
+withMany asPtr args action =
+  bracket (newCxxVector Nothing) deleteCxxVector (go args)
+  where
+    go [] v = action v
+    go (x : xs) v = asPtr x $ \p -> cxxVectorPushBack v p >> go xs v
 
 -- | Use the underlying @Halide::Var@ in an 'IO' action.
 asVar :: HasCallStack => Expr Int32 -> (Ptr CxxVar -> IO b) -> IO b

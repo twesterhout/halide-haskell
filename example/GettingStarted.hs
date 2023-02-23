@@ -5,7 +5,7 @@ import qualified Data.Vector.Storable.Mutable as SM
 import Language.Halide
 import System.IO.Unsafe (unsafePerformIO)
 
-mkVectorPlus :: (IsHalideType a, Num a) => IO (S.Vector a -> S.Vector a -> S.Vector a)
+mkVectorPlus :: forall a. (IsHalideType a, Num a) => IO (S.Vector a -> S.Vector a -> S.Vector a)
 mkVectorPlus = do
   -- First, compile the kernel
   kernel <- mkKernel $ \a b -> do
@@ -17,9 +17,9 @@ mkVectorPlus = do
   -- Create a Haskell function that will invoke the kernel
   pure $ \v1 v2 -> unsafePerformIO $ do
     out <- SM.new (S.length v1)
-    withHalideBuffer v1 $ \a ->
-      withHalideBuffer v2 $ \b ->
-        withHalideBuffer out $ \out' ->
+    withHalideBuffer @_ @1 @a v1 $ \a ->
+      withHalideBuffer @_ @1 @a v2 $ \b ->
+        withHalideBuffer @_ @1 @a out $ \out' ->
           kernel a b out'
     S.unsafeFreeze out
 

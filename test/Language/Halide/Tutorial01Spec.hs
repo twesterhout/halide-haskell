@@ -2,7 +2,6 @@ module Language.Halide.Tutorial01Spec (spec) where
 
 import Language.Halide
 import Test.Hspec
-import Utils
 
 spec :: Spec
 spec = do

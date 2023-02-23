@@ -92,7 +92,7 @@ spec = do
         s & "for z" `appearsBeforeText` "for y"
         s & "for y" `appearsBeforeText` "for x"
 
-      void $ reorder (z, x, y) func
+      void $ reorder [z, x, y] func
 
       -- now we expect
       --

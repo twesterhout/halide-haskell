@@ -44,6 +44,7 @@ module Language.Halide.Func
   , dim
   , estimate
   , bound
+  , getArgs
 
     -- * Update definitions
   , update
@@ -64,6 +65,8 @@ module Language.Halide.Func
   )
 where
 
+import Control.Exception (bracket)
+import Control.Monad (forM)
 import Control.Monad.ST (RealWorld)
 import Data.IORef
 import Data.Kind (Type)
@@ -209,7 +212,7 @@ class (KnownNat n, IsHalideType a) => Schedulable f n a where
   unroll :: VarOrRVar -> f n a -> IO (f n a)
 
   -- | Reorder variables to have the given nesting order, from innermost out.
-  reorder :: (IndexTuple i ts, Length ts ~ n) => i -> f n a -> IO (f n a)
+  reorder :: [VarOrRVar] -> f n a -> IO (f n a)
 
   -- | Split a dimension into inner and outer subdimensions with the given names, where the inner dimension
   -- iterates from @0@ to @factor-1@.
@@ -261,7 +264,7 @@ instance (KnownNat n, IsHalideType a) => Schedulable Stage n a where
         } |]
     pure stage
   reorder args stage = do
-    asVectorOf @((~) (Expr Int32)) asVarOrRVar (fromTuple args) $ \args' -> do
+    withMany asVarOrRVar args $ \args' -> do
       withCxxStage stage $ \stage' ->
         [C.throwBlock| void {
           handle_halide_exceptions([=]() {
@@ -576,6 +579,20 @@ bound var min extent func =
     [CU.exp| void {
       $(Halide::Func* f)->bound(
         *$(Halide::Var* i), *$(Halide::Expr* minExpr), *$(Halide::Expr* extentExpr)) } |]
+
+getArgs :: (KnownNat n, IsHalideType a) => Func t n a -> IO [Expr Int32]
+getArgs func =
+  withFunc func $ \func' -> do
+    let allocate =
+          [CU.exp| std::vector<Halide::Var>* { 
+            new std::vector<Halide::Var>{$(const Halide::Func* func')->args()} } |]
+        destroy v = [CU.exp| void { delete $(std::vector<Halide::Var>* v) } |]
+    bracket allocate destroy $ \v -> do
+      n <- [CU.exp| size_t { $(const std::vector<Halide::Var>* v)->size() } |]
+      forM [0 .. n - 1] $ \i ->
+        wrapCxxVar
+          =<< [CU.exp| Halide::Var* { 
+                new Halide::Var{$(const std::vector<Halide::Var>* v)->at($(size_t i))} } |]
 
 -- | Tell Halide that the following dimensions correspond to GPU block indices.
 --
