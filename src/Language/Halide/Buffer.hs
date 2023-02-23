@@ -9,35 +9,39 @@
 -- Copyright   : (c) Tom Westerhout, 2021-2023
 --
 -- A buffer in Halide is a __view__ of some multidimensional array. Buffers can reference data that's
--- located on a CPU, GPU, or another device. In the C interface of Halide, buffers are described by
--- the C struct [@halide_buffer_t@](https://halide-lang.org/docs/structhalide__buffer__t.html). On the
--- Haskell side, we choose to define two types: 'RawHalideBuffer' and 'HalideBuffer'. 'RawHalideBuffer'
--- is the low-level untyped version, and 'HalideBuffer' builds on top of it and stores the element type
--- and the number of dimensions at the type level. Prefer 'HalideBuffer' whenever possible.
---
--- You can tell Halide how to work with your custom multidimensional arrays by defining an instance of
--- 'IsHalideBuffer'.
+-- located on a CPU, GPU, or another device. Halide pipelines use buffers for both input and output arguments.
 module Language.Halide.Buffer
-  ( RawHalideBuffer (..)
-  , HalideBuffer (..)
-  , HalideDimension (..)
-  , HalideDeviceInterface
-  , IsHalideBuffer (..)
-  , isDeviceDirty
-  , isHostDirty
-  , bufferCopyToHost
-
-    -- * Constructing
+  ( -- * Buffers
 
   --
 
-    -- | We define helper functions to easily construct 'HalideBuffer's from CPU pointers.
+    -- | In the C interface of Halide, buffers are described by the C struct
+    -- [@halide_buffer_t@](https://halide-lang.org/docs/structhalide__buffer__t.html). On the Haskell side,
+    -- we have 'HalideBuffer'.
+    HalideBuffer (..)
+    -- | To easily test out your pipeline, there are helper functions to create 'HalideBuffer's without
+    -- worrying about the low-level representation.
+  , allocaCpuBuffer
+    -- | Buffers can also be converted to lists to easily print them for debugging.
+  , IsListPeek (..)
+    -- | For production usage however, you don't want to work with lists. Instead, you probably want Halide
+    -- to work with your existing array data types. For this, we define 'IsHalideBuffer' typeclass that
+    -- teaches Halide how to convert your data into a 'HalideBuffer'. Depending on how you implement the
+    -- instance, this can be very efficient, because it need not involve any memory copying.
+  , IsHalideBuffer (..)
+    -- | There are also helper functions to simplify writing instances of 'IsHalideBuffer'.
   , bufferFromPtrShapeStrides
   , bufferFromPtrShape
+
+    -- * Internals
+  , RawHalideBuffer (..)
+  , HalideDimension (..)
+  , HalideDeviceInterface
   , rowMajorStrides
   , colMajorStrides
-  , allocaCpuBuffer
-  , IsListPeek (..)
+  , isDeviceDirty
+  , isHostDirty
+  , bufferCopyToHost
   )
 where
 
@@ -49,9 +53,6 @@ import Data.Int
 import Data.Kind (Type)
 import qualified Data.List as List
 import Data.Proxy
-import Data.Text (Text)
-import qualified Data.Text as T
-import Data.Text.Encoding (encodeUtf8)
 import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Storable.Mutable as SM
 import Data.Word
@@ -113,16 +114,29 @@ simpleDimension :: Int -> Int -> HalideDimension
 simpleDimension extent stride = HalideDimension 0 (toInt32 extent) (toInt32 stride) 0
 {-# INLINE simpleDimension #-}
 
-rowMajorStrides :: Integral a => [a] -> [a]
+-- | Get strides corresponding to row-major ordering
+rowMajorStrides
+  :: Integral a
+  => [a]
+  -- ^ Extents
+  -> [a]
 rowMajorStrides = drop 1 . scanr (*) 1
 
-colMajorStrides :: Integral a => [a] -> [a]
+-- | Get strides corresponding to column-major ordering.
+colMajorStrides
+  :: Integral a
+  => [a]
+  -- ^ Extents
+  -> [a]
 colMajorStrides = scanl (*) 1 . init
 
 -- | Haskell analogue of [@halide_device_interface_t@](https://halide-lang.org/docs/structhalide__device__interface__t.html).
 data HalideDeviceInterface
 
--- | Haskell analogue of [@halide_buffer_t@](https://halide-lang.org/docs/structhalide__buffer__t.html).
+-- | The low-level untyped Haskell analogue of [@halide_buffer_t@](https://halide-lang.org/docs/structhalide__buffer__t.html).
+--
+-- It's quite difficult to use 'RawHalideBuffer' correctly, and misusage can result in crashes and
+-- segmentation faults. Hence, prefer the higher-level 'HalideBuffer' wrapper for all your code
 data RawHalideBuffer = RawHalideBuffer
   { halideBufferDevice :: !Word64
   , halideBufferDeviceInterface :: !(Ptr HalideDeviceInterface)
@@ -135,14 +149,11 @@ data RawHalideBuffer = RawHalideBuffer
   }
   deriving stock (Show, Eq)
 
--- | An @n@-dimensional buffer of elements of type @a.
+-- | An @n@-dimensional buffer of elements of type @a@.
 --
--- A wrapper around 'RawHalideBuffer' that ensures that Halide kernels receive
--- buffers of the right type and dimensionality.
+-- Most pipelines use @'Ptr' ('HalideBuffer' n a)@ for input and output array arguments.
 newtype HalideBuffer (n :: Nat) (a :: Type) = HalideBuffer {unHalideBuffer :: RawHalideBuffer}
   deriving stock (Show, Eq)
-
-data CxxBuffer a
 
 importHalide
 
@@ -217,8 +228,7 @@ bufferFromPtrShapeStrides p shape stride action =
 
 -- | Similar to 'bufferFromPtrShapeStrides', but assumes column-major ordering of data.
 bufferFromPtrShape
-  :: forall n a b
-   . (KnownNat n, IsHalideType a)
+  :: (HasCallStack, KnownNat n, IsHalideType a)
   => Ptr a
   -- ^ CPU pointer to the data
   -> [Int]
@@ -227,26 +237,27 @@ bufferFromPtrShape
   -> IO b
 bufferFromPtrShape p shape = bufferFromPtrShapeStrides p shape (colMajorStrides shape)
 
--- | Specifies that a type @t@ can be used as an @n@-dimensional Halide buffer
--- with elements of type @a@.
+-- | Specifies that a type @t@ can be used as an @n@-dimensional Halide buffer with elements of type @a@.
 class (KnownNat n, IsHalideType a) => IsHalideBuffer t n a where
   withHalideBuffer :: t -> (Ptr (HalideBuffer n a) -> IO b) -> IO b
 
--- | Storable vectors are one-dimensional buffers.
+-- | Storable vectors are one-dimensional buffers. This involves no copying.
 instance IsHalideType a => IsHalideBuffer (S.Vector a) 1 a where
   withHalideBuffer v f =
     S.unsafeWith v $ \dataPtr ->
       bufferFromPtrShape dataPtr [S.length v] f
 
--- | Storable vectors are one-dimensional buffers.
+-- | Storable vectors are one-dimensional buffers. This involves no copying.
 instance IsHalideType a => IsHalideBuffer (S.MVector RealWorld a) 1 a where
   withHalideBuffer v f =
     SM.unsafeWith v $ \dataPtr ->
       bufferFromPtrShape dataPtr [SM.length v] f
 
+-- | Lists can also act as Halide buffers. __Use for testing only.__
 instance IsHalideType a => IsHalideBuffer [a] 1 a where
   withHalideBuffer v = withHalideBuffer (S.fromList v)
 
+-- | Lists can also act as Halide buffers. __Use for testing only.__
 instance IsHalideType a => IsHalideBuffer [[a]] 2 a where
   withHalideBuffer xs f = do
     let d0 = length xs
@@ -258,6 +269,7 @@ instance IsHalideType a => IsHalideBuffer [[a]] 2 a where
     S.unsafeWith v $ \cpuPtr ->
       bufferFromPtrShape cpuPtr [d0, d1] f
 
+-- | Lists can also act as Halide buffers. __Use for testing only.__
 instance IsHalideType a => IsHalideBuffer [[[a]]] 3 a where
   withHalideBuffer xs f = do
     let d0 = length xs
@@ -282,6 +294,15 @@ whenM cond f =
     True -> f
     False -> pure ()
 
+-- | Temporary allocate a CPU buffer.
+--
+-- This is useful for testing and debugging when you need to allocate an output buffer for your pipeline. E.g.
+--
+-- @
+-- 'allocaCpuBuffer' [3, 3] $ \out -> do
+--   myKernel out                -- fill the buffer
+--   print =<< 'peekToList' out  -- print it for debugging
+-- @
 allocaCpuBuffer
   :: forall n a b
    . (HasCallStack, KnownNat n, IsHalideType a)
@@ -310,6 +331,7 @@ isHostDirty :: Ptr RawHalideBuffer -> IO Bool
 isHostDirty p =
   toBool <$> [CU.exp| bool { $(const halide_buffer_t* p)->host_dirty() } |]
 
+-- | Copy the underlying memory from device to host.
 bufferCopyToHost :: Ptr RawHalideBuffer -> IO ()
 bufferCopyToHost p =
   [C.throwBlock| void {
@@ -327,6 +349,8 @@ bufferCopyToHost p =
     }
   } |]
 
+-- | Specifies that @a@ can be converted to a list. This is very similar to 'GHC.Exts.IsList' except that
+-- we read the list from a @'Ptr'@ rather than converting directly.
 class IsListPeek a where
   type ListPeekElem a :: Type
   peekToList :: HasCallStack => Ptr a -> IO [ListPeekElem a]
