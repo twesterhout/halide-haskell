@@ -80,6 +80,7 @@ library
   build-depends:
     , bytestring
     , constraints
+    , filepath
     , inline-c
     , inline-c-cpp
     , primitive

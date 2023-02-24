@@ -58,6 +58,8 @@ importHalide =
     <$> sequence
       [ C.context =<< halideCxt
       , C.include "<Halide.h>"
+      , C.include "<cxxabi.h>"
+      , C.include "<dlfcn.h>"
       , defineExceptionHandler
       ]
 

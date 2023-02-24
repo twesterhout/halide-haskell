@@ -12,12 +12,13 @@ module Utils
   , stderr
   , HasEpsilon
   , eps
+  , showInCodeLenses
   )
 where
 
 import Control.Monad (void)
 import Data.Function ((&))
-import Data.Text (Text)
+import Data.Text (Text, unpack)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import Language.Halide.Target
@@ -61,3 +62,6 @@ shouldApproxBe :: (Ord a, Num a, Show a) => a -> a -> a -> a -> Expectation
 shouldApproxBe rtol atol a b
   | approx rtol atol a b = pure ()
   | otherwise = assertFailure $ "expected " <> show a <> ", but got " <> show b
+
+showInCodeLenses :: Text -> IO String
+showInCodeLenses v = error (unpack v)

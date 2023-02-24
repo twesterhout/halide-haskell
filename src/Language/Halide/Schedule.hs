@@ -12,17 +12,20 @@ module Language.Halide.Schedule
   , getStageSchedule
   -- , getDims
   , getSplits
-  , applyAutoscheduler
+  , AutoScheduler (..)
+  , loadAutoScheduler
+  , applyAutoScheduler
+  , getHalideLibraryPath
   )
 where
 
 import Data.ByteString (packCString)
-import Data.Text (Text)
+import Data.Text (Text, pack, unpack)
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import Foreign.C.Types (CInt (..))
 import Foreign.ForeignPtr
 import Foreign.Marshal
-import Foreign.Ptr (Ptr)
+import Foreign.Ptr (Ptr, nullPtr)
 import Foreign.Storable
 import GHC.Records (HasField (..))
 import GHC.TypeLits
@@ -35,7 +38,9 @@ import Language.Halide.Func
 import Language.Halide.Target
 import Language.Halide.Type
 import Language.Halide.Utils
+import System.FilePath (takeDirectory)
 import System.IO.Unsafe
+import System.Posix.DynamicLinker
 import Prelude hiding (tail)
 
 -- | Type of dimension that tells which transformations are legal on it.
@@ -275,23 +280,52 @@ getSplits (StageSchedule fp) = unsafePerformIO $
       } |]
       peekArray n p
 
-applyAutoscheduler :: (KnownNat n, IsHalideType a) => Func t n a -> Text -> Target -> IO ()
-applyAutoscheduler func name target = do
-  let s = encodeUtf8 name
+getHalideLibraryPath :: IO (Maybe Text)
+getHalideLibraryPath = do
+  ptr <-
+    [CU.block| std::string* {
+      Dl_info info;
+      if (dladdr((void const*)&Halide::load_plugin, &info) != 0 && info.dli_sname != nullptr) {
+        auto symbol = dlsym(RTLD_NEXT, info.dli_sname);
+        if (dladdr(symbol, &info) != 0 && info.dli_fname != nullptr) {
+          return new std::string{info.dli_fname};
+        }
+      }
+      return nullptr;
+    } |]
+  if ptr == nullPtr
+    then pure Nothing
+    else Just . pack . takeDirectory . unpack <$> peekAndDeleteCxxString ptr
+
+data AutoScheduler
+  = Adams2019
+  | Li2018
+  | Mullapudi2016
+  deriving stock (Eq, Show)
+
+loadAutoScheduler :: AutoScheduler -> IO ()
+loadAutoScheduler scheduler = do
+  lib <- getHalideLibraryPath
+  print lib
+  let prepare s
+        | Just dir <- lib = dir <> "/lib" <> s <> ".so"
+        | Nothing <- lib = "lib" <> s <> ".so"
+      path = prepare $
+        case scheduler of
+          Adams2019 -> "autoschedule_adams2019"
+          Li2018 -> "autoschedule_li2018"
+          Mullapudi2016 -> "autoschedule_mullapudi2016"
+  _ <- dlopen (unpack path) [RTLD_LAZY]
+  pure ()
+
+applyAutoScheduler :: (KnownNat n, IsHalideType a) => AutoScheduler -> Target -> Func t n a -> IO ()
+applyAutoScheduler scheduler target func = do
+  let s = encodeUtf8 . pack . show $ scheduler
   withFunc func $ \f ->
     withCxxTarget target $ \t -> do
       [C.throwBlock| void {
         handle_halide_exceptions([=](){
           auto name = std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)};
-          if (name == "Adams2019") {
-            Halide::load_plugin("autoschedule_adams2019");
-          }
-          else if (name == "Li2018") {
-            Halide::load_plugin("autoschedule_li2018");
-          }
-          else if (name == "Mullapudi2016") {
-            Halide::load_plugin("autoschedule_mullapudi2016");
-          }
           auto pipeline = Halide::Pipeline{*$(Halide::Func* f)};
           auto params = Halide::AutoschedulerParams{name};
           auto results = pipeline.apply_autoscheduler(*$(Halide::Target* t), params);
