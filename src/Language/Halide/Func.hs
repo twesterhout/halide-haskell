@@ -242,7 +242,7 @@ class (KnownNat n, IsHalideType a) => Schedulable f n a where
   -- given LoopLevel.
   --
   -- For more info, see [Halide::Stage::compute_with](https://halide-lang.org/docs/class_halide_1_1_stage.html#a82a2ae25a009d6a2d52cb407a25f0a5b).
-  computeWith :: LoopAlignStrategy -> LoopLevel -> f n a -> IO (f n a)
+  computeWith :: LoopAlignStrategy -> f n a -> LoopLevel t -> IO ()
 
 instance (KnownNat n, IsHalideType a) => Schedulable Stage n a where
   vectorize var stage = do
@@ -382,7 +382,7 @@ instance (KnownNat n, IsHalideType a) => Schedulable Stage n a where
           });
         } |]
     pure stage
-  computeWith (fromIntegral . fromEnum -> align) level stage = do
+  computeWith (fromIntegral . fromEnum -> align) stage level = do
     withCxxStage stage $ \stage' ->
       withCxxLoopLevel level $ \level' ->
         [C.throwBlock| void {
@@ -392,7 +392,6 @@ instance (KnownNat n, IsHalideType a) => Schedulable Stage n a where
               static_cast<Halide::LoopAlignStrategy>($(int align)));
           });
         } |]
-    pure stage
 
 viaStage1
   :: (KnownNat n, IsHalideType b)
@@ -454,7 +453,7 @@ instance (KnownNat n, IsHalideType a) => Schedulable (Func t) n a where
   specializeFail msg func = getStage func >>= specializeFail msg
   gpuBlocks = viaStage2 gpuBlocks
   gpuThreads = viaStage2 gpuThreads
-  computeWith = viaStage2 computeWith
+  computeWith a f l = getStage f >>= \f' -> computeWith a f' l
 
 instance Enum TailStrategy where
   fromEnum =
@@ -1188,22 +1187,26 @@ getLoopLevelAtStage
   -> Expr Int32
   -> Int
   -- ^ update index
-  -> IO LoopLevel
+  -> IO (LoopLevel 'LockedTy)
 getLoopLevelAtStage func var stageIndex =
-  withFunc func $ \f -> asVarOrRVar var $ \i ->
-    wrapCxxLoopLevel
-      =<< [C.throwBlock| Halide::LoopLevel* {
-            return handle_halide_exceptions([=](){
-              return new Halide::LoopLevel{*$(const Halide::Func* f),
-                                           *$(const Halide::VarOrRVar* i),
-                                           $(int k)};
-            });
-          } |]
+  withFunc func $ \f -> asVarOrRVar var $ \i -> do
+    (SomeLoopLevel level) <-
+      wrapCxxLoopLevel
+        =<< [C.throwBlock| Halide::LoopLevel* {
+              return handle_halide_exceptions([=](){
+                return new Halide::LoopLevel{*$(const Halide::Func* f),
+                                             *$(const Halide::VarOrRVar* i),
+                                             $(int k)};
+              });
+            } |]
+    case level of
+      LoopLevel _ -> pure level
+      _ -> error $ "getLoopLevelAtStage: got " <> show level <> ", but expected a LoopLevel 'LockedTy"
   where
     k = fromIntegral stageIndex
 
 -- | Same as 'getLoopLevelAtStage' except that the stage is @-1@.
-getLoopLevel :: (KnownNat n, IsHalideType a) => Func t n a -> Expr Int32 -> IO LoopLevel
+getLoopLevel :: (KnownNat n, IsHalideType a) => Func t n a -> Expr Int32 -> IO (LoopLevel 'LockedTy)
 getLoopLevel f i = getLoopLevelAtStage f i (-1)
 
 -- | Allocate storage for this function within a particular loop level.
@@ -1212,7 +1215,7 @@ getLoopLevel f i = getLoopLevelAtStage f i (-1)
 -- from the loop level at which computation occurs to trade off between locality and redundant work.
 --
 -- For more info, see [Halide::Func::store_at](https://halide-lang.org/docs/class_halide_1_1_func.html#a417c08f8aa3a5cdf9146fba948b65193).
-storeAt :: (KnownNat n, IsHalideType a) => Func 'FuncTy n a -> LoopLevel -> IO (Func 'FuncTy n a)
+storeAt :: (KnownNat n, IsHalideType a) => Func 'FuncTy n a -> LoopLevel t -> IO (Func 'FuncTy n a)
 storeAt func level = do
   withFunc func $ \f ->
     withCxxLoopLevel level $ \l ->
@@ -1222,7 +1225,7 @@ storeAt func level = do
 -- | Schedule a function to be computed within the iteration over a given loop level.
 --
 -- For more info, see [Halide::Func::compute_at](https://halide-lang.org/docs/class_halide_1_1_func.html#a800cbcc3ca5e3d3fa1707f6e1990ec83).
-computeAt :: (KnownNat n, IsHalideType a) => Func 'FuncTy n a -> LoopLevel -> IO (Func 'FuncTy n a)
+computeAt :: (KnownNat n, IsHalideType a) => Func 'FuncTy n a -> LoopLevel t -> IO (Func 'FuncTy n a)
 computeAt func level = do
   withFunc func $ \f ->
     withCxxLoopLevel level $ \l ->

@@ -210,6 +210,7 @@ class HasCxxVector a where
   cxxVectorSize :: Ptr (CxxVector a) -> IO Int
   cxxVectorPushBack :: Ptr (CxxVector a) -> Ptr a -> IO ()
   cxxVectorData :: Ptr (CxxVector a) -> IO (Ptr a)
+  peekCxxVector :: Storable a => Ptr (CxxVector a) -> IO [a]
 
 -- | Template Haskell splice that defines an instance of 'HasCxxVector' for a given C type name.
 instanceHasCxxVector :: String -> TH.DecsQ
@@ -232,6 +233,15 @@ instanceHasCxxVector cType =
         cxxVectorSize vec = fromIntegral <$> [CU.exp| size_t { @VEC(vec)->size() } |]
         cxxVectorPushBack vec x = [CU.exp| void { @VEC(vec)->push_back(*$(@T()* x)) } |]
         cxxVectorData vec = [CU.exp| @T()* { @VEC(vec)->data() } |]
+        peekCxxVector vec = do
+          n <- cxxVectorSize vec
+          allocaArray n $ \out -> do
+            [CU.block| void {
+              auto const& vec = *@VEC(vec);
+              auto* out = $(@T()* out);
+              std::copy(std::begin(vec), std::end(vec), out);
+            } |]
+            peekArray n out
       |]
 
 -- | List of all supported types.

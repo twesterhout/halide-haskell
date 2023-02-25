@@ -40,6 +40,7 @@ module Language.Halide.Expr
   , wrapCxxExpr
   , wrapCxxVar
   , wrapCxxRVar
+  , wrapCxxVarOrRVar
   , asExpr
   , asVar
   , asRVar
@@ -64,7 +65,7 @@ import qualified Data.Text.Encoding as T
 import qualified Data.Vector.Storable.Mutable as SM
 import Foreign.C.Types (CDouble)
 import Foreign.ForeignPtr
-import Foreign.Marshal (alloca, with)
+import Foreign.Marshal (alloca, allocaArray, peekArray, toBool, with)
 import Foreign.Ptr (Ptr, castPtr)
 import Foreign.Storable (peek)
 import GHC.Stack (HasCallStack)
@@ -354,6 +355,16 @@ wrapCxxRVar :: Ptr CxxRVar -> IO (Expr Int32)
 wrapCxxRVar = fmap RVar . newForeignPtr deleter
   where
     deleter = [C.funPtr| void deleteExpr(Halide::RVar *p) { delete p; } |]
+
+wrapCxxVarOrRVar :: Ptr CxxVarOrRVar -> IO (Expr Int32)
+wrapCxxVarOrRVar p = do
+  isRVar <- toBool <$> [CU.exp| bool { $(const Halide::VarOrRVar* p)->is_rvar } |]
+  expr <-
+    if isRVar
+      then wrapCxxRVar =<< [CU.exp| Halide::RVar* { new Halide::RVar{$(const Halide::VarOrRVar* p)->rvar} } |]
+      else wrapCxxVar =<< [CU.exp| Halide::Var* { new Halide::Var{$(const Halide::VarOrRVar* p)->var} } |]
+  [CU.exp| void { delete $(const Halide::VarOrRVar* p) } |]
+  pure expr
 
 class HasHalideType a where
   getHalideType :: a -> IO HalideType

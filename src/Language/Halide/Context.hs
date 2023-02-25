@@ -99,6 +99,9 @@ halideTypePairs = do
         , ("Halide::LoopLevel", "CxxLoopLevel")
         , ("Halide::Stage", "CxxStage")
         , ("Halide::Buffer", "CxxBuffer")
+        , ("Halide::Internal::FusedPair", "FusedPair")
+        , ("Halide::Internal::ReductionVariable", "ReductionVariable")
+        , ("Halide::Internal::PrefetchDirective", "PrefetchDirective")
         , ("halide_trace_event_t", "TraceEvent")
         ]
     optional :: (CIdentifier, String) -> Q [(CIdentifier, TypeQ)]
