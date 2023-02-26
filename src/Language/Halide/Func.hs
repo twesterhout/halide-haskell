@@ -45,6 +45,7 @@ module Language.Halide.Func
   , estimate
   , bound
   , getArgs
+  -- , deepCopy
 
     -- * Update definitions
   , update
@@ -592,6 +593,27 @@ getArgs func =
         wrapCxxVar
           =<< [CU.exp| Halide::Var* { 
                 new Halide::Var{$(const std::vector<Halide::Var>* v)->at($(size_t i))} } |]
+
+-- deepCopy :: (KnownNat n, IsHalideType a) => Func 'FuncTy n a -> IO (Func 'FuncTy n a)
+-- deepCopy func = withFunc func $ \func' ->
+--  wrapCxxFunc
+--    =<< [C.throwBlock| Halide::Func* {
+--          return handle_halide_exceptions([=](){
+--            using namespace Halide;
+--            using namespace Halide::Internal;
+--            auto const& original = *$(const Halide::Func* func');
+--            auto wrapper = Func{original.name() + "_wrapper"};
+--            std::map<FunctionPtr, FunctionPtr> remapping;
+--            original.function().deep_copy(wrapper.name(), wrapper.function().get_contents(), remapping);
+--            // TODO: I don't quite understand this part... it's copy-pasted from src/Func.cpp in Halide
+--            // Fix up any self-references in the clone.
+--            FunctionPtr self_reference = wrapper.function().get_contents();
+--            self_reference.weaken();
+--            remapping.emplace(original.function().get_contents(), self_reference);
+--            wrapper.function().substitute_calls(remapping);
+--            return new Func{std::move(wrapper)};
+--          });
+--        } |]
 
 -- | Tell Halide that the following dimensions correspond to GPU block indices.
 --

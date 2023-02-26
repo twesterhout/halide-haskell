@@ -2,6 +2,7 @@
 
 module Language.Halide.ScheduleSpec (spec) where
 
+import Control.Monad (when)
 import Control.Monad.ST (RealWorld)
 import Data.Int
 import qualified Data.Text as T
@@ -32,24 +33,29 @@ spec :: Spec
 spec = do
   describe "prints schedules" $ do
     it "of auto-scheduled pipelines" $ do
-      let builder :: Target -> Func 'ParamTy 1 Int64 -> IO (Func 'FuncTy 1 Float)
-          builder target src = do
+      let builder :: Bool -> Target -> Func 'ParamTy 1 Int64 -> IO (Func 'FuncTy 1 Float)
+          builder useAutoScheduler target src = do
             i <- mkVar "i"
             dest <- define "dest1" i $ sin (cast @Float (src ! i))
             -- dim 0 src >>= setEstimate 0 1000
-            dim 0 src >>= setMin 0 >>= setStride 1 >>= print
+            -- dim 0 src >>= setMin 0 >>= setStride 1 >>= print
             -- schedule <- do
             estimate i 0 1000 dest
 
-            loadAutoScheduler Adams2019
-            applyAutoScheduler Adams2019 target dest
-            T.putStrLn =<< prettyLoopNest dest
+            when useAutoScheduler $ do
+              loadAutoScheduler Adams2019
+              T.putStrLn =<< applyAutoScheduler Adams2019 target dest
+            print =<< getStageSchedule =<< getStage dest
+            -- print =<< getStageSchedule =<< getStage dest
+
+            -- T.putStrLn =<< prettyLoopNest dest
+            -- T.putStrLn =<< prettyLoopNest clone
             -- schedule <- getStageSchedule dest
             -- print schedule.dims
             -- print =<< (getSplits <$> getStageSchedule dest)
             pure dest
       let target = hostTarget -- setFeature FeatureOpenCL hostTarget
-      copy <- compileForTarget target (builder target)
+      copy <- compileForTarget target (builder True target)
       -- let src :: S.Vector Int64
       --     src = S.generate 100 fromIntegral
       pure ()

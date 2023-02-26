@@ -34,6 +34,7 @@ module Language.Halide.Expr
     -- call 'evaluate' on it. In such cases, it can be wrapped with 'printed' to indicate to Halide that the
     -- value of the expression should be dumped to screen when it's computed.
   , printed
+  , toIntImm
 
     -- * Internal
   , exprToForeignPtr
@@ -41,6 +42,7 @@ module Language.Halide.Expr
   , wrapCxxVar
   , wrapCxxRVar
   , wrapCxxVarOrRVar
+  , wrapCxxParameter
   , asExpr
   , asVar
   , asRVar
@@ -66,7 +68,7 @@ import qualified Data.Vector.Storable.Mutable as SM
 import Foreign.C.Types (CDouble)
 import Foreign.ForeignPtr
 import Foreign.Marshal (alloca, allocaArray, peekArray, toBool, with)
-import Foreign.Ptr (Ptr, castPtr)
+import Foreign.Ptr (Ptr, castPtr, nullPtr)
 import Foreign.Storable (peek)
 import GHC.Stack (HasCallStack)
 import qualified Language.C.Inline as C
@@ -218,6 +220,20 @@ evaluate expr =
         });
       } |]
     SM.read out 0
+
+toIntImm :: IsHalideType a => Expr a -> Maybe Int
+toIntImm expr = unsafePerformIO $
+  asExpr expr $ \expr' -> do
+    intPtr <-
+      [CU.block| const int64_t* {
+        auto expr = *$(const Halide::Expr* expr');
+        Halide::Internal::IntImm const* node = expr.as<Halide::Internal::IntImm>();
+        if (node == nullptr) return nullptr;
+        return &node->value;
+      } |]
+    if intPtr == nullPtr
+      then pure Nothing
+      else Just . fromIntegral <$> peek intPtr
 
 instance IsTuple (Arguments '[Expr a]) (Expr a) where
   toTuple (x ::: Nil) = x

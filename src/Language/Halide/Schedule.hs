@@ -14,7 +14,7 @@ module Language.Halide.Schedule
   , StorageDim (..)
   , FusedPair (..)
   , FuseLoopLevel (..)
-  , StageSchedule' (..)
+  , StageSchedule (..)
   , getStageSchedule
   -- , getStageSchedule
   -- , getFusedPairs
@@ -29,12 +29,14 @@ module Language.Halide.Schedule
   )
 where
 
+import Control.Monad (void)
 import Data.ByteString (packCString)
 import Data.Text (Text, pack, unpack)
+import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import Foreign.C.Types (CInt (..))
 import Foreign.ForeignPtr
-import Foreign.Marshal
+import Foreign.Marshal (allocaArray, peekArray, toBool)
 import Foreign.Ptr (Ptr, nullPtr)
 import Foreign.Storable
 import GHC.Records (HasField (..))
@@ -80,16 +82,16 @@ data SplitContents = SplitContents
   { old :: !Text
   , outer :: !Text
   , inner :: !Text
-  , factor :: !(Maybe Int)
+  , factor :: !(Expr Int32)
   , exact :: !Bool
   , tail :: !TailStrategy
   }
-  deriving stock (Show, Eq)
+  deriving stock (Show)
 
 data Split
   = SplitVar !SplitContents
   | FuseVars !FuseContents
-  deriving stock (Show, Eq)
+  deriving stock (Show)
 
 data Bound = Bound
   { var :: !Text
@@ -133,9 +135,7 @@ data PrefetchDirective = PrefetchDirective
   }
   deriving stock (Show)
 
-newtype StageSchedule = StageSchedule (ForeignPtr CxxStageSchedule)
-
-data StageSchedule' = StageSchedule'
+data StageSchedule = StageSchedule
   { rvars :: ![ReductionVariable]
   , splits :: ![Split]
   , dims :: ![Dim]
@@ -248,13 +248,25 @@ instance Storable PrefetchDirective where
     fromVar' <-
       peekCxxString
         =<< [CU.exp| const std::string* { &$(const Halide::Internal::PrefetchDirective* p)->from } |]
-    (offset' :: Expr Int32) <-
+    offset' <-
       wrapCxxExpr
         =<< [CU.exp| Halide::Expr* { new Halide::Expr{$(const Halide::Internal::PrefetchDirective* p)->offset} } |]
-    (strategy' :: PrefetchBoundStrategy) <-
+    strategy' <-
       toEnum . fromIntegral
         <$> [CU.exp| int { static_cast<int>($(const Halide::Internal::PrefetchDirective* p)->strategy) } |]
-    undefined
+    isDefined <-
+      toBool
+        <$> [CU.exp| bool { $(const Halide::Internal::PrefetchDirective* p)->param.defined() } |]
+    param' <-
+      if isDefined
+        then
+          fmap Just $
+            wrapCxxParameter
+              =<< [CU.exp| Halide::Internal::Parameter* {
+                    new Halide::Internal::Parameter{$(const Halide::Internal::PrefetchDirective* p)->param} } |]
+        else pure Nothing
+    pure $ PrefetchDirective funcName' atVar' fromVar' offset' strategy' param'
+  poke _ _ = error "Storable instance for PrefetchDirective does not implement poke"
 
 getReductionVariables :: Ptr CxxStageSchedule -> IO [ReductionVariable]
 getReductionVariables schedule =
@@ -288,7 +300,7 @@ getFusedPairs schedule = do
     =<< [CU.exp| const std::vector<Halide::Internal::FusedPair>* {
           &$(const Halide::Internal::StageSchedule* schedule)->fused_pairs() } |]
 
-peekStageSchedule :: Ptr CxxStageSchedule -> IO StageSchedule'
+peekStageSchedule :: Ptr CxxStageSchedule -> IO StageSchedule
 peekStageSchedule schedule = do
   rvars' <- getReductionVariables schedule
   splits' <- getSplits schedule
@@ -306,7 +318,7 @@ peekStageSchedule schedule = do
     toBool
       <$> [CU.exp| bool { $(const Halide::Internal::StageSchedule* schedule)->override_atomic_associativity_test() } |]
   pure $
-    StageSchedule'
+    StageSchedule
       { rvars = rvars'
       , splits = splits'
       , dims = dims'
@@ -347,19 +359,11 @@ peekInner :: Ptr Split -> IO Text
 peekInner p =
   peekCxxString =<< [CU.exp| const std::string* { &$(Halide::Internal::Split* p)->inner } |]
 
-peekFactor :: Ptr Split -> IO (Maybe Int)
+peekFactor :: Ptr Split -> IO (Expr Int32)
 peekFactor p =
-  toFactor
-    <$> [CU.block| int {
-          auto expr = $(Halide::Internal::Split* p)->factor;
-          Halide::Internal::IntImm const* node = expr.as<Halide::Internal::IntImm>();
-          if (node == nullptr) return -1;
-          return node->value;
-        } |]
-  where
-    toFactor n
-      | n < 0 = Nothing
-      | otherwise = Just (fromIntegral n)
+  wrapCxxExpr
+    =<< [C.exp| Halide::Expr* {
+          new Halide::Expr{$(Halide::Internal::Split* p)->factor} } |]
 
 instance Storable Split where
   sizeOf _ = fromIntegral [CU.pure| size_t { sizeof(Halide::Internal::Split) } |]
@@ -393,15 +397,15 @@ instance Storable Split where
     r
   poke _ = error "Storable instance for Split does not implement poke"
 
-wrapCxxStageSchedule :: Ptr CxxStageSchedule -> IO StageSchedule
-wrapCxxStageSchedule = fmap StageSchedule . newForeignPtr deleter
-  where
-    deleter =
-      [C.funPtr| void deleteSchedule(Halide::Internal::StageSchedule* p) {
-        std::cout << "deleting ..." << std::endl;
-        delete p; } |]
+-- wrapCxxStageSchedule :: Ptr CxxStageSchedule -> IO StageSchedule
+-- wrapCxxStageSchedule = fmap StageSchedule . newForeignPtr deleter
+--   where
+--     deleter =
+--       [C.funPtr| void deleteSchedule(Halide::Internal::StageSchedule* p) {
+--         std::cout << "deleting ..." << std::endl;
+--         delete p; } |]
 
-getStageSchedule :: (KnownNat n, IsHalideType a) => Stage n a -> IO StageSchedule'
+getStageSchedule :: (KnownNat n, IsHalideType a) => Stage n a -> IO StageSchedule
 getStageSchedule stage =
   withCxxStage stage $ \stage' ->
     peekStageSchedule
@@ -415,24 +419,24 @@ getStageSchedule stage =
 --       =<< [CU.exp| Halide::Internal::StageSchedule* {
 --             new Halide::Internal::StageSchedule{$(Halide::Func const* f)->get_schedule()} } |]
 
-instance HasField "dims" StageSchedule [Dim] where
-  getField (StageSchedule fp) = unsafePerformIO $
-    withForeignPtr fp $ \schedule -> do
-      n <-
-        fromIntegral
-          <$> [CU.exp| size_t { $(Halide::Internal::StageSchedule* schedule)->dims().size() } |]
-      allocaArray n $ \p -> do
-        [CU.block| void {
-          auto const& dims = $(Halide::Internal::StageSchedule* schedule)->dims();
-          auto* out = $(Halide::Internal::Dim* p);
-          std::copy(std::begin(dims), std::end(dims), out);
-          // auto const n = $(Halide::Internal::StageSchedule* schedule)->dims().size();
-          // for (auto i = 0; i < n; ++i) {
-          //   $(Halide::Internal::Dim* p)[i] =
-          //     $(Halide::Internal::StageSchedule* schedule)->dims()[i];
-          // }
-        } |]
-        peekArray n p
+-- instance HasField "dims" StageSchedule [Dim] where
+--   getField (StageSchedule fp) = unsafePerformIO $
+--     withForeignPtr fp $ \schedule -> do
+--       n <-
+--         fromIntegral
+--           <$> [CU.exp| size_t { $(Halide::Internal::StageSchedule* schedule)->dims().size() } |]
+--       allocaArray n $ \p -> do
+--         [CU.block| void {
+--           auto const& dims = $(Halide::Internal::StageSchedule* schedule)->dims();
+--           auto* out = $(Halide::Internal::Dim* p);
+--           std::copy(std::begin(dims), std::end(dims), out);
+--           // auto const n = $(Halide::Internal::StageSchedule* schedule)->dims().size();
+--           // for (auto i = 0; i < n; ++i) {
+--           //   $(Halide::Internal::Dim* p)[i] =
+--           //     $(Halide::Internal::StageSchedule* schedule)->dims()[i];
+--           // }
+--         } |]
+--         peekArray n p
 
 getHalideLibraryPath :: IO (Maybe Text)
 getHalideLibraryPath = do
@@ -471,20 +475,49 @@ loadAutoScheduler scheduler = do
   _ <- dlopen (unpack path) [RTLD_LAZY]
   pure ()
 
-applyAutoScheduler :: (KnownNat n, IsHalideType a) => AutoScheduler -> Target -> Func t n a -> IO ()
+applyAutoScheduler :: (KnownNat n, IsHalideType a) => AutoScheduler -> Target -> Func t n a -> IO Text
 applyAutoScheduler scheduler target func = do
   let s = encodeUtf8 . pack . show $ scheduler
   withFunc func $ \f ->
     withCxxTarget target $ \t -> do
-      [C.throwBlock| void {
-        handle_halide_exceptions([=](){
-          auto name = std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)};
-          auto pipeline = Halide::Pipeline{*$(Halide::Func* f)};
-          auto params = Halide::AutoschedulerParams{name};
-          auto results = pipeline.apply_autoscheduler(*$(Halide::Target* t), params);
-          std::cout << '\n' << results.schedule_source << std::endl;
-        });
-      } |]
+      peekAndDeleteCxxString
+        =<< [C.throwBlock| std::string* {
+              return handle_halide_exceptions([=](){
+                auto name = std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)};
+                auto pipeline = Halide::Pipeline{*$(Halide::Func* f)};
+                auto params = Halide::AutoschedulerParams{name};
+                auto results = pipeline.apply_autoscheduler(*$(Halide::Target* t), params);
+                return new std::string{std::move(results.schedule_source)};
+              });
+            } |]
+
+tryStripPrefix :: Text -> Text -> Text
+tryStripPrefix prefix str = maybe str id $ prefix `T.stripPrefix` str
+
+applySplit :: (KnownNat n, IsHalideType a) => Split -> Stage n a -> IO ()
+applySplit (SplitVar x) stage = do
+  oldVar <- mkVar x.old
+  outerVar <- mkVar $ (x.old <> ".") `tryStripPrefix` x.outer
+  innerVar <- mkVar $ (x.old <> ".") `tryStripPrefix` x.inner
+  void $ Language.Halide.Func.split x.tail oldVar (outerVar, innerVar) x.factor stage
+applySplit (FuseVars x) stage = undefined
+
+applySplits :: (KnownNat n, IsHalideType a) => [Split] -> Stage n a -> IO ()
+applySplits splits stage = mapM_ (\x -> applySplit x stage) splits
+
+-- data SplitContents = SplitContents
+--   { old :: !Text
+--   , outer :: !Text
+--   , inner :: !Text
+--   , factor :: !(Maybe Int)
+--   , exact :: !Bool
+--   , tail :: !TailStrategy
+--   }
+--   deriving stock (Show, Eq)
+--
+--
+-- applySplits :: [Split] -> Stage n a -> IO ()
+-- applySplits splits stage =
 
 -- v <-
 --   [CU.exp| Halide::Internal::Dim* {
