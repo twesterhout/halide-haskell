@@ -2,17 +2,12 @@
 
 module Language.Halide.BufferSpec (spec) where
 
-import Control.Monad (forM_)
 import Data.Int (Int64)
-import qualified Data.Text.IO as T
 import Foreign.Ptr (Ptr, nullPtr)
-import GHC.TypeLits
 import Language.Halide
-import Language.Halide.Schedule
 import Test.Hspec
 import Test.Hspec.QuickCheck
 import Test.QuickCheck
-import Utils
 
 newtype ListVector a = ListVector [a]
   deriving stock (Show)
