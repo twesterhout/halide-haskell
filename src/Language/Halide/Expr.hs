@@ -41,7 +41,6 @@ module Language.Halide.Expr
     -- * Internal
   , exprToForeignPtr
   , wrapCxxExpr
-  , constructCxxVar
   , wrapCxxRVar
   , wrapCxxVarOrRVar
   , wrapCxxParameter
@@ -85,6 +84,11 @@ import Prelude hiding (min)
 
 importHalide
 
+instanceCxxConstructible "Halide::Expr"
+instanceCxxConstructible "Halide::Var"
+instanceCxxConstructible "Halide::RVar"
+instanceCxxConstructible "Halide::VarOrRVar"
+
 defineIsHalideTypeInstances
 
 instanceHasCxxVector "Halide::Expr"
@@ -92,16 +96,15 @@ instanceHasCxxVector "Halide::Var"
 instanceHasCxxVector "Halide::RVar"
 instanceHasCxxVector "Halide::VarOrRVar"
 
-instanceCSized ("Halide::Expr", [t|CxxExpr|])
-instanceCSized ("Halide::Var", [t|CxxVar|])
-instanceCSized ("Halide::RVar", [t|CxxRVar|])
-instanceCSized ("Halide::VarOrRVar", [t|CxxVarOrRVar|])
+-- instanceCxxConstructible "Halide::Var"
+-- instanceCxxConstructible "Halide::RVar"
+-- instanceCxxConstructible "Halide::VarOrRVar"
 
 instance IsHalideType Bool where
   halideTypeFor _ = HalideType HalideTypeUInt 1 1
-  toCxxExpr x = [CU.exp| Halide::Expr* { new Halide::Expr{cast(Halide::UInt(1), Halide::Expr{$(int b)})} } |]
-    where
-      b = fromIntegral (fromEnum x)
+  toCxxExpr (fromIntegral . fromEnum -> x) =
+    cxxConstruct $ \ptr ->
+      [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{cast(Halide::UInt(1), Halide::Expr{$(int x)})} } |]
 
 type instance FromTuple (Expr a) = Arguments '[Expr a]
 
@@ -126,21 +129,13 @@ data Expr a
 
 -- | Create a scalar expression from a Haskell value.
 mkExpr :: (HasCallStack, IsHalideType a) => a -> Expr a
-mkExpr x = unsafePerformIO $! wrapCxxExpr =<< toCxxExpr x
+mkExpr x = unsafePerformIO $! Expr <$> toCxxExpr x
 
 -- | Create a named index variable.
 mkVar :: Text -> IO (Expr Int32)
-mkVar name =
-  constructCxxVar $ \ptr ->
-    [CU.exp| void {
+mkVar (T.encodeUtf8 -> s) = fmap Var . cxxConstruct $ \ptr ->
+  [CU.exp| void {
       new ($(Halide::Var* ptr)) Halide::Var{std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}} } |]
-  where
-    s = T.encodeUtf8 name
-
-constructCxxVar :: (Ptr CxxVar -> IO ()) -> IO (Expr Int32)
-constructCxxVar construct = Var <$> cxxConstruct deleter construct
-  where
-    deleter = [C.funPtr| void deleteExpr(Halide::Var *p) { p->~Var(); } |]
 
 -- | Wrap a raw @Halide::Var@ pointer in a Haskell value.
 --
@@ -400,7 +395,7 @@ wrapCxxVarOrRVar p = do
   expr <-
     if isRVar
       then wrapCxxRVar =<< [CU.exp| Halide::RVar* { new Halide::RVar{$(const Halide::VarOrRVar* p)->rvar} } |]
-      else constructCxxVar $ \ptr ->
+      else fmap Var . cxxConstruct $ \ptr ->
         [CU.exp| void { new ($(Halide::Var* ptr)) Halide::Var{$(const Halide::VarOrRVar* p)->var} } |]
   [CU.exp| void { delete $(const Halide::VarOrRVar* p) } |]
   pure expr

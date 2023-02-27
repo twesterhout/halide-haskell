@@ -47,9 +47,8 @@ module Language.Halide.Type
   , IsTuple (..)
   , FromTuple
   , ToTuple
-  , CSized (..)
-  , instanceCSized
-  , cxxConstruct
+  , instanceCxxConstructible
+  , CxxConstructible (..)
   -- defineCastableInstances,
   -- defineCurriedTypeFamily,
   -- defineUnCurriedTypeFamily,
@@ -63,6 +62,7 @@ import Data.Constraint
 import Data.Int
 import Data.Kind (Type)
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Word
 import Foreign.C.Types
 import Foreign.ForeignPtr
@@ -117,12 +117,13 @@ data CxxStageSchedule
 -- | Haskell counterpart of @std::string@
 data CxxString
 
-class CSized a where
-  cSizeOf :: Int
+class CxxConstructible a where
+  cxxSizeOf :: Int
+  cxxConstruct :: (Ptr a -> IO ()) -> IO (ForeignPtr a)
 
-cxxConstruct :: forall a. CSized a => FinalizerPtr a -> (Ptr a -> IO ()) -> IO (ForeignPtr a)
-cxxConstruct deleter constructor = do
-  fp <- mallocForeignPtrBytes (cSizeOf @a)
+cxxConstructWithDeleter :: Int -> FinalizerPtr a -> (Ptr a -> IO ()) -> IO (ForeignPtr a)
+cxxConstructWithDeleter size deleter constructor = do
+  fp <- mallocForeignPtrBytes size
   withForeignPtr fp constructor
   addForeignPtrFinalizer deleter fp
   pure fp
@@ -184,7 +185,7 @@ instance Storable HalideType where
 -- | Specifies that a type is supported by Halide.
 class Storable a => IsHalideType a where
   halideTypeFor :: proxy a -> HalideType
-  toCxxExpr :: a -> IO (Ptr CxxExpr)
+  toCxxExpr :: a -> IO (ForeignPtr CxxExpr)
 
 -- | Helper function to coerce 'Float' to 'CFloat' and 'Double' to 'CDouble'
 -- before passing them to inline-c quasiquotes. This is needed because inline-c
@@ -206,7 +207,9 @@ instanceIsHalideType (cType, hsType, typeCode) =
         halideTypeFor _ = HalideType typeCode bits 1
           where
             bits = fromIntegral $ 8 * sizeOf (undefined :: $hsType)
-        toCxxExpr y = [CU.exp| Halide::Expr* { new Halide::Expr{@T(x)} } |]
+        toCxxExpr y =
+          cxxConstruct $ \ptr ->
+            [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{@T(x)} } |]
           where
             x = $(optionallyCast cType hsType) y
       |]
@@ -215,13 +218,20 @@ instanceIsHalideType (cType, hsType, typeCode) =
 defineIsHalideTypeInstances :: TH.DecsQ
 defineIsHalideTypeInstances = concat <$> mapM instanceIsHalideType halideTypes
 
-instanceCSized :: (String, TH.TypeQ) -> TH.DecsQ
-instanceCSized (cType, hsType) =
+instanceCxxConstructible :: String -> TH.DecsQ
+instanceCxxConstructible cType =
   C.substitute
-    [("T", const cType)]
+    [ ("T", const cType)
+    , ("Deleter", const $ "deleter(" <> cType <> "* p)")
+    , ("Class", const . T.unpack . snd $ T.breakOnEnd "::" (T.pack cType))
+    ]
     [d|
-      instance CSized $hsType where
-        cSizeOf = fromIntegral [CU.pure| size_t { sizeof(@T()) } |]
+      instance CxxConstructible $(C.getHaskellType False cType) where
+        cxxSizeOf = fromIntegral [CU.pure| size_t { sizeof(@T()) } |]
+        cxxConstruct = cxxConstructWithDeleter size deleter
+          where
+            size = fromIntegral [CU.pure| size_t { sizeof(@T()) } |]
+            deleter = [C.funPtr| void @Deleter() { p->~@Class()(); } |]
       |]
 
 -- | Specifies that a given Haskell type can be used with @std::vector@.

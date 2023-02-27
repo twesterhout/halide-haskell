@@ -603,7 +603,7 @@ getArgs func =
     bracket allocate destroy $ \v -> do
       n <- [CU.exp| size_t { $(const std::vector<Halide::Var>* v)->size() } |]
       forM [0 .. n - 1] $ \i ->
-        constructCxxVar $ \ptr ->
+        fmap Var . cxxConstruct $ \ptr ->
           [CU.exp| void {
             new ($(Halide::Var* ptr)) Halide::Var{$(const std::vector<Halide::Var>* v)->at($(size_t i))} } |]
 

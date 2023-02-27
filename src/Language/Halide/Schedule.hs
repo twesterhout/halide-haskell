@@ -163,8 +163,6 @@ instanceHasCxxVector "Halide::Internal::Split"
 instanceHasCxxVector "Halide::Internal::FusedPair"
 instanceHasCxxVector "Halide::Internal::ReductionVariable"
 
-instanceCSized ("Halide::Internal::Dim", [t|Dim|])
-
 instance Enum ForType where
   toEnum k
     | fromIntegral k == [CU.pure| int { static_cast<int>(Halide::Internal::ForType::Serial) } |] =
