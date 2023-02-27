@@ -1,3 +1,4 @@
+{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE QuasiQuotes #-}
@@ -15,6 +16,8 @@ module Language.Halide.Schedule
   , FusedPair (..)
   , FuseLoopLevel (..)
   , StageSchedule (..)
+  , ReductionVariable (..)
+  , PrefetchDirective (..)
   , getStageSchedule
   -- , getStageSchedule
   -- , getFusedPairs
@@ -26,14 +29,19 @@ module Language.Halide.Schedule
   , loadAutoScheduler
   , applyAutoScheduler
   , getHalideLibraryPath
+  , applySplits
+  , applyDims
+  , applySchedule
   )
 where
 
 import Control.Monad (void)
 import Data.ByteString (packCString)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text, pack, unpack)
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
+import Debug.Trace
 import Foreign.C.Types (CInt (..))
 import Foreign.ForeignPtr
 import Foreign.Marshal (allocaArray, peekArray, toBool)
@@ -155,6 +163,8 @@ instanceHasCxxVector "Halide::Internal::Split"
 instanceHasCxxVector "Halide::Internal::FusedPair"
 instanceHasCxxVector "Halide::Internal::ReductionVariable"
 
+instanceCSized ("Halide::Internal::Dim", [t|Dim|])
+
 instance Enum ForType where
   toEnum k
     | fromIntegral k == [CU.pure| int { static_cast<int>(Halide::Internal::ForType::Serial) } |] =
@@ -257,15 +267,15 @@ instance Storable PrefetchDirective where
     isDefined <-
       toBool
         <$> [CU.exp| bool { $(const Halide::Internal::PrefetchDirective* p)->param.defined() } |]
-    param' <-
-      if isDefined
-        then
-          fmap Just $
-            wrapCxxParameter
-              =<< [CU.exp| Halide::Internal::Parameter* {
-                    new Halide::Internal::Parameter{$(const Halide::Internal::PrefetchDirective* p)->param} } |]
-        else pure Nothing
-    pure $ PrefetchDirective funcName' atVar' fromVar' offset' strategy' param'
+    -- param' <-
+    --   if isDefined
+    --     then
+    --       fmap Just $
+    --         wrapCxxParameter
+    --           =<< [CU.exp| Halide::Internal::Parameter* {
+    --                 new Halide::Internal::Parameter{$(const Halide::Internal::PrefetchDirective* p)->param} } |]
+    --     else pure Nothing
+    pure $ PrefetchDirective funcName' atVar' fromVar' offset' strategy' Nothing
   poke _ _ = error "Storable instance for PrefetchDirective does not implement poke"
 
 getReductionVariables :: Ptr CxxStageSchedule -> IO [ReductionVariable]
@@ -275,10 +285,13 @@ getReductionVariables schedule =
           &$(const Halide::Internal::StageSchedule* schedule)->rvars() } |]
 
 getSplits :: Ptr CxxStageSchedule -> IO [Split]
-getSplits schedule =
-  peekCxxVector
-    =<< [CU.exp| const std::vector<Halide::Internal::Split>* {
-          &$(const Halide::Internal::StageSchedule* schedule)->splits() } |]
+getSplits schedule = do
+  r <-
+    trace "getSplits.peekCxxVector" $
+      peekCxxVector
+        =<< [CU.exp| const std::vector<Halide::Internal::Split>* {
+            &$(const Halide::Internal::StageSchedule* schedule)->splits() } |]
+  trace "getSplits succeeded " $ pure r
 
 getDims :: Ptr CxxStageSchedule -> IO [Dim]
 getDims schedule =
@@ -302,12 +315,12 @@ getFusedPairs schedule = do
 
 peekStageSchedule :: Ptr CxxStageSchedule -> IO StageSchedule
 peekStageSchedule schedule = do
-  rvars' <- getReductionVariables schedule
-  splits' <- getSplits schedule
-  dims' <- getDims schedule
+  rvars' <- trace "getReductionVariables" $ getReductionVariables schedule
+  splits' <- trace "getSplits" $ getSplits schedule
+  dims' <- trace "getDims" $ getDims schedule
   let prefetches' = []
-  fuseLevel' <- getFuseLoopLevel schedule
-  fusedPairs' <- getFusedPairs schedule
+  fuseLevel' <- trace "getFuseLoopLevel" $ getFuseLoopLevel schedule
+  fusedPairs' <- trace "getFusedPairs" $ getFusedPairs schedule
   allowRaceConditions' <-
     toBool
       <$> [CU.exp| bool { $(const Halide::Internal::StageSchedule* schedule)->allow_race_conditions() } |]
@@ -317,18 +330,19 @@ peekStageSchedule schedule = do
   overrideAtomicAssociativityTest' <-
     toBool
       <$> [CU.exp| bool { $(const Halide::Internal::StageSchedule* schedule)->override_atomic_associativity_test() } |]
-  pure $
-    StageSchedule
-      { rvars = rvars'
-      , splits = splits'
-      , dims = dims'
-      , prefetches = prefetches'
-      , fuseLevel = fuseLevel'
-      , fusedPairs = fusedPairs'
-      , allowRaceConditions = allowRaceConditions'
-      , atomic = atomic'
-      , overrideAtomicAssociativityTest = overrideAtomicAssociativityTest'
-      }
+  trace "StageSchedule" $
+    pure $
+      StageSchedule
+        { rvars = rvars'
+        , splits = splits'
+        , dims = dims'
+        , prefetches = prefetches'
+        , fuseLevel = fuseLevel'
+        , fusedPairs = fusedPairs'
+        , allowRaceConditions = allowRaceConditions'
+        , atomic = atomic'
+        , overrideAtomicAssociativityTest = overrideAtomicAssociativityTest'
+        }
 
 instance Storable Dim where
   sizeOf _ = fromIntegral [CU.pure| size_t { sizeof(Halide::Internal::Dim) } |]
@@ -349,42 +363,47 @@ instance Storable Dim where
 
 peekOld :: Ptr Split -> IO Text
 peekOld p =
-  peekCxxString =<< [CU.exp| const std::string* { &$(Halide::Internal::Split* p)->old_var } |]
+  trace "peekOld" $
+    peekCxxString =<< [CU.exp| const std::string* { &$(const Halide::Internal::Split* p)->old_var } |]
 
 peekOuter :: Ptr Split -> IO Text
 peekOuter p =
-  peekCxxString =<< [CU.exp| const std::string* { &$(Halide::Internal::Split* p)->outer } |]
+  trace "peekOuter" $
+    peekCxxString =<< [CU.exp| const std::string* { &$(const Halide::Internal::Split* p)->outer } |]
 
 peekInner :: Ptr Split -> IO Text
 peekInner p =
-  peekCxxString =<< [CU.exp| const std::string* { &$(Halide::Internal::Split* p)->inner } |]
+  trace "peekInner" $
+    peekCxxString =<< [CU.exp| const std::string* { &$(const Halide::Internal::Split* p)->inner } |]
 
 peekFactor :: Ptr Split -> IO (Expr Int32)
 peekFactor p =
-  wrapCxxExpr
-    =<< [C.exp| Halide::Expr* {
-          new Halide::Expr{$(Halide::Internal::Split* p)->factor} } |]
+  trace "peekFactor" $
+    wrapCxxExpr
+      =<< [CU.exp| Halide::Expr* {
+          new Halide::Expr{$(const Halide::Internal::Split* p)->factor} } |]
 
 instance Storable Split where
   sizeOf _ = fromIntegral [CU.pure| size_t { sizeof(Halide::Internal::Split) } |]
   alignment _ = fromIntegral [CU.pure| size_t { alignof(Halide::Internal::Split) } |]
-  peek p = do
-    isRename <- toBool <$> [CU.exp| bool { $(Halide::Internal::Split* p)->is_rename() } |]
-    isSplit <- toBool <$> [CU.exp| bool { $(Halide::Internal::Split* p)->is_split() } |]
-    isFuse <- toBool <$> [CU.exp| bool { $(Halide::Internal::Split* p)->is_fuse() } |]
-    isPurify <- toBool <$> [CU.exp| bool { $(Halide::Internal::Split* p)->is_purify() } |]
+  peek p = trace "peek Split" $ do
+    isRename <- toBool <$> [CU.exp| bool { $(const Halide::Internal::Split* p)->is_rename() } |]
+    isSplit <- toBool <$> [CU.exp| bool { $(const Halide::Internal::Split* p)->is_split() } |]
+    isFuse <- toBool <$> [CU.exp| bool { $(const Halide::Internal::Split* p)->is_fuse() } |]
+    isPurify <- toBool <$> [CU.exp| bool { $(const Halide::Internal::Split* p)->is_purify() } |]
     let r
           | isSplit =
-              fmap SplitVar $
-                SplitContents
-                  <$> peekOld p
-                  <*> peekOuter p
-                  <*> peekInner p
-                  <*> peekFactor p
-                  <*> (toBool <$> [CU.exp| bool { $(Halide::Internal::Split* p)->exact } |])
-                  <*> fmap
-                    (toEnum . fromIntegral)
-                    [CU.exp| int { static_cast<int>($(Halide::Internal::Split* p)->tail) } |]
+              trace "SplitVar" $
+                fmap SplitVar $
+                  SplitContents
+                    <$> peekOld p
+                    <*> peekOuter p
+                    <*> peekInner p
+                    <*> peekFactor p
+                    <*> (toBool <$> [CU.exp| bool { $(const Halide::Internal::Split* p)->exact } |])
+                    <*> fmap
+                      (toEnum . fromIntegral)
+                      [CU.exp| int { static_cast<int>($(const Halide::Internal::Split* p)->tail) } |]
           | isFuse =
               fmap FuseVars $
                 FuseContents
@@ -492,18 +511,56 @@ applyAutoScheduler scheduler target func = do
             } |]
 
 tryStripPrefix :: Text -> Text -> Text
-tryStripPrefix prefix str = maybe str id $ prefix `T.stripPrefix` str
+tryStripPrefix prefix str = fromMaybe str (prefix `T.stripPrefix` str)
+
+makeUnqualified :: Text -> Text
+makeUnqualified = snd . T.breakOnEnd "."
 
 applySplit :: (KnownNat n, IsHalideType a) => Split -> Stage n a -> IO ()
 applySplit (SplitVar x) stage = do
-  oldVar <- mkVar x.old
-  outerVar <- mkVar $ (x.old <> ".") `tryStripPrefix` x.outer
-  innerVar <- mkVar $ (x.old <> ".") `tryStripPrefix` x.inner
+  oldVar <- mkVar (makeUnqualified x.old)
+  outerVar <- mkVar (makeUnqualified x.outer)
+  innerVar <- mkVar (makeUnqualified x.inner)
+  -- trace ("applyDim { old = " <> show oldVar <> ", outer = " <> show outerVar <> ", inner = " <> show innerVar <> " }") $
   void $ Language.Halide.Func.split x.tail oldVar (outerVar, innerVar) x.factor stage
-applySplit (FuseVars x) stage = undefined
+applySplit (FuseVars x) stage = do
+  newVar <- mkVar (makeUnqualified x.new)
+  innerVar <- mkVar (makeUnqualified x.inner)
+  outerVar <- mkVar (makeUnqualified x.outer)
+  -- trace ("applyDim { new = " <> show newVar <> ", inner = " <> show innerVar <> ", outer = " <> show outerVar <> " }") $
+  void $ Language.Halide.Func.fuse (innerVar, outerVar) newVar stage
 
 applySplits :: (KnownNat n, IsHalideType a) => [Split] -> Stage n a -> IO ()
-applySplits splits stage = mapM_ (\x -> applySplit x stage) splits
+applySplits xs stage = mapM_ (`applySplit` stage) xs
+
+applyDim :: (KnownNat n, IsHalideType a) => Dim -> Stage n a -> IO ()
+applyDim x stage = do
+  var' <- mkVar (makeUnqualified x.var)
+  -- trace ("applyDim var' = " <> show var') $
+  void $
+    case x.forType of
+      ForSerial -> pure stage
+      ForParallel -> parallel var' stage
+      ForVectorized -> vectorize var' stage
+      ForUnrolled -> unroll var' stage
+      ForExtern -> error "extern ForType is not yet supported by applyDim"
+      ForGPUBlock -> gpuBlocks x.deviceApi var' stage
+      ForGPUThread -> gpuThreads x.deviceApi var' stage
+      ForGPULane -> gpuLanes x.deviceApi var' stage
+
+applyDims :: (KnownNat n, IsHalideType a) => [Dim] -> Stage n a -> IO ()
+applyDims xs stage = do
+  mapM_ (`applyDim` stage) xs
+  vars <- mapM (mkVar . makeUnqualified . (.var)) xs
+  -- trace (show vars) $
+  --   void $
+  void $ reorder vars stage
+
+applySchedule :: (KnownNat n, IsHalideType a) => StageSchedule -> Stage n a -> IO ()
+applySchedule schedule stage = do
+  -- trace (show schedule) $ do
+  applySplits schedule.splits stage
+  applyDims schedule.dims stage
 
 -- data SplitContents = SplitContents
 --   { old :: !Text

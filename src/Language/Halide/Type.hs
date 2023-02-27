@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DeriveLift #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE InstanceSigs #-}
@@ -46,6 +47,9 @@ module Language.Halide.Type
   , IsTuple (..)
   , FromTuple
   , ToTuple
+  , CSized (..)
+  , instanceCSized
+  , cxxConstruct
   -- defineCastableInstances,
   -- defineCurriedTypeFamily,
   -- defineUnCurriedTypeFamily,
@@ -61,6 +65,7 @@ import Data.Kind (Type)
 import Data.Text (Text)
 import Data.Word
 import Foreign.C.Types
+import Foreign.ForeignPtr
 import Foreign.Ptr
 import Foreign.Storable
 import GHC.Stack (HasCallStack)
@@ -111,6 +116,16 @@ data CxxStageSchedule
 
 -- | Haskell counterpart of @std::string@
 data CxxString
+
+class CSized a where
+  cSizeOf :: Int
+
+cxxConstruct :: forall a. CSized a => FinalizerPtr a -> (Ptr a -> IO ()) -> IO (ForeignPtr a)
+cxxConstruct deleter constructor = do
+  fp <- mallocForeignPtrBytes (cSizeOf @a)
+  withForeignPtr fp constructor
+  addForeignPtrFinalizer deleter fp
+  pure fp
 
 -- data Split =
 --   SplitVar !Text !Text !Text !(Expr Int32) !
@@ -200,6 +215,15 @@ instanceIsHalideType (cType, hsType, typeCode) =
 defineIsHalideTypeInstances :: TH.DecsQ
 defineIsHalideTypeInstances = concat <$> mapM instanceIsHalideType halideTypes
 
+instanceCSized :: (String, TH.TypeQ) -> TH.DecsQ
+instanceCSized (cType, hsType) =
+  C.substitute
+    [("T", const cType)]
+    [d|
+      instance CSized $hsType where
+        cSizeOf = fromIntegral [CU.pure| size_t { sizeof(@T()) } |]
+      |]
+
 -- | Specifies that a given Haskell type can be used with @std::vector@.
 --
 -- E.g. if we have @HasCxxVector Int16@, then using @std::vector<int16_t>*@
@@ -239,7 +263,7 @@ instanceHasCxxVector cType =
             [CU.block| void {
               auto const& vec = *@VEC(vec);
               auto* out = $(@T()* out);
-              std::copy(std::begin(vec), std::end(vec), out);
+              std::uninitialized_copy(std::begin(vec), std::end(vec), out);
             } |]
             peekArray n out
       |]

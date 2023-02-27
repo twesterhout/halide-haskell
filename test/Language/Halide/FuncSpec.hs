@@ -7,6 +7,7 @@
 module Language.Halide.FuncSpec (spec) where
 
 import Control.Monad.ST (RealWorld)
+import qualified Data.Text.IO as T
 import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Storable.Mutable as SM
 import Language.Halide
@@ -24,7 +25,7 @@ data Matrix v a = Matrix
   deriving stock (Show, Eq)
 
 instance IsHalideType a => IsHalideBuffer (Matrix (SM.MVector RealWorld) a) 2 a where
-  withHalideBuffer (Matrix n m v) f =
+  withHalideBufferImpl (Matrix n m v) f =
     SM.unsafeWith v $ \dataPtr ->
       bufferFromPtrShapeStrides dataPtr [n, m] [1, n] f
 
@@ -228,3 +229,20 @@ spec = do
         prettyLoopNest func >>= \s -> do
           s `shouldContainText` "gpu_block y<CUDA>"
           s `shouldContainText` "gpu_thread x<CUDA>"
+
+  describe "reductions" $ do
+    it "computes reductions" $ do
+      asBufferParam @1 @Int32 ([1, 2, 3, 4, 5] :: [Int32]) $ \src -> do
+        n <- (.extent) <$> dim 0 src
+        r <- mkRVar "r" 0 n
+        i <- mkVar "i"
+        f <- define "sum" i 0
+        update f (0 :: Expr Int32) $ f ! (0 :: Expr Int32) + src ! r
+        realize f [1] peekToList `shouldReturn` ([15] :: [Int32])
+
+  describe "undef" $ do
+    it "allows to skip stores" $ do
+      i <- mkVar "i"
+      f <- define "f" i $ bool (i `greaterThan` 5) i 0
+      update f i $ bool ((f ! i) `equal` 0) (2 * i) undef
+      realize f [10] peekToList `shouldReturn` ([0, 2, 4, 6, 8, 10] <> [6 .. 9] :: [Int32])

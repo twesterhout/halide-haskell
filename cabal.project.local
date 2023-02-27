@@ -2,3 +2,5 @@ ignore-project: False
 tests: True
 test-options: "--color"
 test-show-details: streaming
+package halide-haskell
+  ghc-options: -g2

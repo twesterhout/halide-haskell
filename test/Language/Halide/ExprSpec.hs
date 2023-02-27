@@ -41,6 +41,11 @@ shouldEvaluateTo expr expected =
 
 spec :: Spec
 spec = do
+  describe "mkExpr" $ modifyMaxSuccess (const 10) $ do
+    let p :: forall a. (IsHalideType a, Eq a) => a -> Property
+        p x = monadicIO $ mkExpr x `evaluatesTo` x
+    prop "Bool" $ p @Bool
+
   describe "Num Expr" $ modifyMaxSuccess (const 10) $ do
     let whenNotOverflowing op x y check
           | isOverflowing op x y = pure ()
@@ -81,8 +86,9 @@ spec = do
   describe "Floating Expr" $ modifyMaxSuccess (const 10) $ do
     let p :: forall a. (IsHalideType a, Ord a, Floating a, HasEpsilon a) => a -> Property
         p x = monadicIO $ do
-          when (x > 0) $
+          when (x > 0) $ do
             log (mkExpr x) `evaluatesToApprox` log x
+            sqrt (mkExpr x) `evaluatesToApprox` sqrt x
           exp (mkExpr x) `evaluatesToApprox` exp x
           sin (mkExpr x) `evaluatesToApprox` sin x
           cos (mkExpr x) `evaluatesToApprox` cos x

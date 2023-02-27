@@ -25,6 +25,8 @@ module Language.Halide.Expr
   , mkRVar
   , cast
   , equal
+  , lessThan
+  , greaterThan
   , bool
   , undef
     -- | For debugging, it's often useful to observe the value of an expression when it's evaluated. If you
@@ -39,7 +41,7 @@ module Language.Halide.Expr
     -- * Internal
   , exprToForeignPtr
   , wrapCxxExpr
-  , wrapCxxVar
+  , constructCxxVar
   , wrapCxxRVar
   , wrapCxxVarOrRVar
   , wrapCxxParameter
@@ -90,6 +92,11 @@ instanceHasCxxVector "Halide::Var"
 instanceHasCxxVector "Halide::RVar"
 instanceHasCxxVector "Halide::VarOrRVar"
 
+instanceCSized ("Halide::Expr", [t|CxxExpr|])
+instanceCSized ("Halide::Var", [t|CxxVar|])
+instanceCSized ("Halide::RVar", [t|CxxRVar|])
+instanceCSized ("Halide::VarOrRVar", [t|CxxVarOrRVar|])
+
 instance IsHalideType Bool where
   halideTypeFor _ = HalideType HalideTypeUInt 1 1
   toCxxExpr x = [CU.exp| Halide::Expr* { new Halide::Expr{cast(Halide::UInt(1), Halide::Expr{$(int b)})} } |]
@@ -124,11 +131,24 @@ mkExpr x = unsafePerformIO $! wrapCxxExpr =<< toCxxExpr x
 -- | Create a named index variable.
 mkVar :: Text -> IO (Expr Int32)
 mkVar name =
-  wrapCxxVar
-    =<< [CU.exp| Halide::Var* {
-          new Halide::Var{std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}} } |]
+  constructCxxVar $ \ptr ->
+    [CU.exp| void {
+      new ($(Halide::Var* ptr)) Halide::Var{std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}} } |]
   where
     s = T.encodeUtf8 name
+
+constructCxxVar :: (Ptr CxxVar -> IO ()) -> IO (Expr Int32)
+constructCxxVar construct = Var <$> cxxConstruct deleter construct
+  where
+    deleter = [C.funPtr| void deleteExpr(Halide::Var *p) { p->~Var(); } |]
+
+-- | Wrap a raw @Halide::Var@ pointer in a Haskell value.
+--
+-- __Note:__ 'Var' objects correspond to expressions of type 'Int32'.
+-- wrapCxxVar :: Ptr CxxVar -> IO (Expr Int32)
+-- wrapCxxVar = fmap Var . newForeignPtr deleter
+--   where
+--     deleter = [C.funPtr| void deleteExpr(Halide::Var *p) { delete p; } |]
 
 --
 --
@@ -190,6 +210,16 @@ equal :: (HasCallStack, IsHalideType a) => Expr a -> Expr a -> Expr Bool
 equal a' b' = unsafePerformIO $!
   asExpr a' $ \a -> asExpr b' $ \b ->
     wrapCxxExpr =<< [CU.exp| Halide::Expr* { new Halide::Expr{(*$(Halide::Expr* a)) == (*$(Halide::Expr* b))} } |]
+
+lessThan :: (HasCallStack, IsHalideType a) => Expr a -> Expr a -> Expr Bool
+lessThan a' b' = unsafePerformIO $!
+  asExpr a' $ \a -> asExpr b' $ \b ->
+    wrapCxxExpr =<< [CU.exp| Halide::Expr* { new Halide::Expr{(*$(Halide::Expr* a)) < (*$(Halide::Expr* b))} } |]
+
+greaterThan :: (HasCallStack, IsHalideType a) => Expr a -> Expr a -> Expr Bool
+greaterThan a' b' = unsafePerformIO $!
+  asExpr a' $ \a -> asExpr b' $ \b ->
+    wrapCxxExpr =<< [CU.exp| Halide::Expr* { new Halide::Expr{(*$(Halide::Expr* a)) > (*$(Halide::Expr* b))} } |]
 
 -- | Similar to the standard @bool@ function from Prelude except that it's
 -- lifted to work with 'Expr' types.
@@ -356,14 +386,6 @@ wrapCxxExpr p = do
   where
     deleter = [C.funPtr| void deleteExpr(Halide::Expr *p) { delete p; } |]
 
--- | Wrap a raw @Halide::Var@ pointer in a Haskell value.
---
--- __Note:__ 'Var' objects correspond to expressions of type 'Int32'.
-wrapCxxVar :: Ptr CxxVar -> IO (Expr Int32)
-wrapCxxVar = fmap Var . newForeignPtr deleter
-  where
-    deleter = [C.funPtr| void deleteExpr(Halide::Var *p) { delete p; } |]
-
 -- | Wrap a raw @Halide::RVar@ pointer in a Haskell value.
 --
 -- __Note:__ 'Var' objects correspond to expressions of type 'Int32'.
@@ -378,7 +400,8 @@ wrapCxxVarOrRVar p = do
   expr <-
     if isRVar
       then wrapCxxRVar =<< [CU.exp| Halide::RVar* { new Halide::RVar{$(const Halide::VarOrRVar* p)->rvar} } |]
-      else wrapCxxVar =<< [CU.exp| Halide::Var* { new Halide::Var{$(const Halide::VarOrRVar* p)->var} } |]
+      else constructCxxVar $ \ptr ->
+        [CU.exp| void { new ($(Halide::Var* ptr)) Halide::Var{$(const Halide::VarOrRVar* p)->var} } |]
   [CU.exp| void { delete $(const Halide::VarOrRVar* p) } |]
   pure expr
 

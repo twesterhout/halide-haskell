@@ -57,6 +57,7 @@ module Language.Halide.Func
   , realize1D
 
     -- * Internal
+  , asBufferParam
   , withFunc
   , withBufferParam
   , wrapCxxFunc
@@ -68,7 +69,6 @@ where
 
 import Control.Exception (bracket)
 import Control.Monad (forM)
-import Control.Monad.ST (RealWorld)
 import Data.IORef
 import Data.Kind (Type)
 import Data.Proxy
@@ -238,6 +238,7 @@ class (KnownNat n, IsHalideType a) => Schedulable f n a where
   specializeFail :: Text -> f n a -> IO ()
   gpuBlocks :: (IndexTuple i ts, 1 <= Length ts, Length ts <= 3) => DeviceAPI -> i -> f n a -> IO (f n a)
   gpuThreads :: (IndexTuple i ts, 1 <= Length ts, Length ts <= 3) => DeviceAPI -> i -> f n a -> IO (f n a)
+  gpuLanes :: DeviceAPI -> VarOrRVar -> f n a -> IO (f n a)
 
   -- | Schedule the iteration over this stage to be fused with another stage from outermost loop to a
   -- given LoopLevel.
@@ -383,6 +384,17 @@ instance (KnownNat n, IsHalideType a) => Schedulable Stage n a where
           });
         } |]
     pure stage
+  gpuLanes (fromIntegral . fromEnum -> api) var stage = do
+    withCxxStage stage $ \stage' ->
+      asVarOrRVar var $ \var' ->
+        [C.throwBlock| void {
+          handle_halide_exceptions([=](){
+            $(Halide::Stage* stage')->gpu_lanes(
+              *$(const Halide::VarOrRVar* var'),
+              static_cast<Halide::DeviceAPI>($(int api)));
+          });
+        } |]
+    pure stage
   computeWith (fromIntegral . fromEnum -> align) stage level = do
     withCxxStage stage $ \stage' ->
       withCxxLoopLevel level $ \level' ->
@@ -454,6 +466,7 @@ instance (KnownNat n, IsHalideType a) => Schedulable (Func t) n a where
   specializeFail msg func = getStage func >>= specializeFail msg
   gpuBlocks = viaStage2 gpuBlocks
   gpuThreads = viaStage2 gpuThreads
+  gpuLanes = viaStage2 gpuLanes
   computeWith a f l = getStage f >>= \f' -> computeWith a f' l
 
 instance Enum TailStrategy where
@@ -590,9 +603,9 @@ getArgs func =
     bracket allocate destroy $ \v -> do
       n <- [CU.exp| size_t { $(const std::vector<Halide::Var>* v)->size() } |]
       forM [0 .. n - 1] $ \i ->
-        wrapCxxVar
-          =<< [CU.exp| Halide::Var* { 
-                new Halide::Var{$(const std::vector<Halide::Var>* v)->at($(size_t i))} } |]
+        constructCxxVar $ \ptr ->
+          [CU.exp| void {
+            new ($(Halide::Var* ptr)) Halide::Var{$(const std::vector<Halide::Var>* v)->at($(size_t i))} } |]
 
 -- deepCopy :: (KnownNat n, IsHalideType a) => Func 'FuncTy n a -> IO (Func 'FuncTy n a)
 -- deepCopy func = withFunc func $ \func' ->
@@ -1025,8 +1038,10 @@ update func args expr =
   withFunc func $ \f ->
     asVectorOf @((~) (Expr Int32)) asExpr (fromTuple args) $ \x ->
       asExpr expr $ \y ->
-        [CU.block| void {
-          $(Halide::Func* f)->operator()(*$(std::vector<Halide::Expr>* x)) = *$(Halide::Expr* y);
+        [C.throwBlock| void {
+          handle_halide_exceptions([=](){
+            $(Halide::Func* f)->operator()(*$(std::vector<Halide::Expr>* x)) = *$(Halide::Expr* y);
+          });
         } |]
 
 infix 9 !
@@ -1138,7 +1153,7 @@ realize1D
   -> IO (Vector a)
 realize1D size func = do
   buf <- SM.new size
-  withHalideBuffer @_ @1 @a buf $ \x -> do
+  withHalideBuffer @1 @a buf $ \x -> do
     let b = castPtr x
     withFunc func $ \f ->
       [CU.exp| void {
@@ -1253,3 +1268,14 @@ computeAt func level = do
     withCxxLoopLevel level $ \l ->
       [CU.exp| void { $(Halide::Func* f)->compute_at(*$(const Halide::LoopLevel* l)) } |]
   pure func
+
+asBufferParam :: forall n a t b. IsHalideBuffer t n a => t -> (Func 'ParamTy n a -> IO b) -> IO b
+asBufferParam arr action =
+  withHalideBuffer @n @a arr $ \arr' -> do
+    param <- mkBufferParameter @n @a Nothing
+    withForeignPtr param $ \param' ->
+      let buf = (castPtr arr' :: Ptr RawHalideBuffer)
+       in [CU.block| void {
+            $(Halide::ImageParam* param')->set(Halide::Buffer<>{*$(const halide_buffer_t* buf)});
+          } |]
+    action =<< Param <$> newIORef (Just param)

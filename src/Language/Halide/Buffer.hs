@@ -29,6 +29,7 @@ module Language.Halide.Buffer
     -- teaches Halide how to convert your data into a 'HalideBuffer'. Depending on how you implement the
     -- instance, this can be very efficient, because it need not involve any memory copying.
   , IsHalideBuffer (..)
+  , withHalideBuffer
     -- | There are also helper functions to simplify writing instances of 'IsHalideBuffer'.
   , bufferFromPtrShapeStrides
   , bufferFromPtrShape
@@ -47,7 +48,6 @@ where
 
 import Control.Monad (forM, unless, when)
 import Control.Monad.ST (RealWorld)
-import Data.Bits
 import Data.Foldable (foldl')
 import Data.Int
 import Data.Kind (Type)
@@ -102,16 +102,10 @@ instance Storable HalideDimension where
     pokeByteOff p 12 (halideDimensionFlags x)
   {-# INLINE poke #-}
 
-toInt32 :: (HasCallStack, Bits a, Integral a) => a -> Int32
-toInt32 x = case toIntegralSized x of
-  Just y -> y
-  Nothing -> error $ "integer overflow when converting " <> show (toInteger x) <> " to Int32"
-{-# INLINE toInt32 #-}
-
 -- | @simpleDimension extent stride@ creates a @HalideDimension@ of size @extent@ separated by
 -- @stride@.
 simpleDimension :: Int -> Int -> HalideDimension
-simpleDimension extent stride = HalideDimension 0 (toInt32 extent) (toInt32 stride) 0
+simpleDimension extent stride = HalideDimension 0 (fromIntegral extent) (fromIntegral stride) 0
 {-# INLINE simpleDimension #-}
 
 -- | Get strides corresponding to row-major ordering
@@ -213,7 +207,7 @@ bufferFromPtrShapeStrides p shape stride action =
             , halideBufferHost = castPtr p
             , halideBufferFlags = 0
             , halideBufferType = halideTypeFor (Proxy :: Proxy a)
-            , halideBufferDimensions = toInt32 n
+            , halideBufferDimensions = fromIntegral n
             , halideBufferDim = dim
             , halideBufferPadding = nullPtr
             }
@@ -239,27 +233,30 @@ bufferFromPtrShape p shape = bufferFromPtrShapeStrides p shape (colMajorStrides 
 
 -- | Specifies that a type @t@ can be used as an @n@-dimensional Halide buffer with elements of type @a@.
 class (KnownNat n, IsHalideType a) => IsHalideBuffer t n a where
-  withHalideBuffer :: t -> (Ptr (HalideBuffer n a) -> IO b) -> IO b
+  withHalideBufferImpl :: t -> (Ptr (HalideBuffer n a) -> IO b) -> IO b
+
+withHalideBuffer :: forall n a t b. IsHalideBuffer t n a => t -> (Ptr (HalideBuffer n a) -> IO b) -> IO b
+withHalideBuffer = withHalideBufferImpl @t @n @a
 
 -- | Storable vectors are one-dimensional buffers. This involves no copying.
 instance IsHalideType a => IsHalideBuffer (S.Vector a) 1 a where
-  withHalideBuffer v f =
+  withHalideBufferImpl v f =
     S.unsafeWith v $ \dataPtr ->
       bufferFromPtrShape dataPtr [S.length v] f
 
 -- | Storable vectors are one-dimensional buffers. This involves no copying.
 instance IsHalideType a => IsHalideBuffer (S.MVector RealWorld a) 1 a where
-  withHalideBuffer v f =
+  withHalideBufferImpl v f =
     SM.unsafeWith v $ \dataPtr ->
       bufferFromPtrShape dataPtr [SM.length v] f
 
 -- | Lists can also act as Halide buffers. __Use for testing only.__
 instance IsHalideType a => IsHalideBuffer [a] 1 a where
-  withHalideBuffer v = withHalideBuffer (S.fromList v)
+  withHalideBufferImpl v = withHalideBuffer (S.fromList v)
 
 -- | Lists can also act as Halide buffers. __Use for testing only.__
 instance IsHalideType a => IsHalideBuffer [[a]] 2 a where
-  withHalideBuffer xs f = do
+  withHalideBufferImpl xs f = do
     let d0 = length xs
         d1 = if d0 == 0 then 0 else length (head xs)
         -- we want column-major ordering, so transpose first
@@ -271,7 +268,7 @@ instance IsHalideType a => IsHalideBuffer [[a]] 2 a where
 
 -- | Lists can also act as Halide buffers. __Use for testing only.__
 instance IsHalideType a => IsHalideBuffer [[[a]]] 3 a where
-  withHalideBuffer xs f = do
+  withHalideBufferImpl xs f = do
     let d0 = length xs
         d1 = if d0 == 0 then 0 else length (head xs)
         d2 = if d1 == 0 then 0 else length (head (head xs))

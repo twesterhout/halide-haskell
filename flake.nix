@@ -175,6 +175,7 @@
                     nixpkgs-fmt
                     # For debugging Halide
                     gcc
+                    gdb
                   ]
                   ++ lib.optional withIntelOpenCL clinfo
                   ++ lib.optional withCuda inputs.nixGL.packages.${system}.nixGLDefault;

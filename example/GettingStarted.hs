@@ -17,9 +17,9 @@ mkVectorPlus = do
   -- Create a Haskell function that will invoke the kernel
   pure $ \v1 v2 -> unsafePerformIO $ do
     out <- SM.new (S.length v1)
-    withHalideBuffer @_ @1 @a v1 $ \a ->
-      withHalideBuffer @_ @1 @a v2 $ \b ->
-        withHalideBuffer @_ @1 @a out $ \out' ->
+    withHalideBuffer @1 @a v1 $ \a ->
+      withHalideBuffer @1 @a v2 $ \b ->
+        withHalideBuffer @1 @a out $ \out' ->
           kernel a b out'
     S.unsafeFreeze out
 
