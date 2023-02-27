@@ -40,7 +40,8 @@ module Language.Halide.Expr
 
     -- * Internal
   , exprToForeignPtr
-  , wrapCxxExpr
+  , cxxConstructExpr
+  -- , wrapCxxExpr
   , wrapCxxRVar
   , wrapCxxVarOrRVar
   , wrapCxxParameter
@@ -128,14 +129,14 @@ data Expr a
     ScalarParam (IORef (Maybe (ForeignPtr CxxParameter)))
 
 -- | Create a scalar expression from a Haskell value.
-mkExpr :: (HasCallStack, IsHalideType a) => a -> Expr a
+mkExpr :: IsHalideType a => a -> Expr a
 mkExpr x = unsafePerformIO $! Expr <$> toCxxExpr x
 
 -- | Create a named index variable.
 mkVar :: Text -> IO (Expr Int32)
 mkVar (T.encodeUtf8 -> s) = fmap Var . cxxConstruct $ \ptr ->
   [CU.exp| void {
-      new ($(Halide::Var* ptr)) Halide::Var{std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}} } |]
+    new ($(Halide::Var* ptr)) Halide::Var{std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}} } |]
 
 -- | Wrap a raw @Halide::Var@ pointer in a Haskell value.
 --
@@ -168,10 +169,10 @@ mkRVar name min extent =
 undef :: forall a. IsHalideType a => Expr a
 undef = unsafePerformIO $
   with (halideTypeFor (Proxy @a)) $ \tp ->
-    wrapCxxExpr
-      =<< [CU.exp| Halide::Expr* {
-            new Halide::Expr{Halide::undef(
-              Halide::Type{*$(const halide_type_t* tp)})} } |]
+    cxxConstructExpr $ \ptr ->
+      [CU.exp| void {
+        new ($(Halide::Expr* ptr))
+          Halide::Expr{Halide::undef(Halide::Type{*$(const halide_type_t* tp)})} } |]
 {-# NOINLINE undef #-}
 
 -- | Create a named reduction variable.
@@ -190,31 +191,38 @@ cast :: forall to from. (HasCallStack, IsHalideType to, IsHalideType from) => Ex
 cast expr = unsafePerformIO $!
   asExpr expr $ \e ->
     with (halideTypeFor (Proxy @to)) $ \t ->
-      wrapCxxExpr
-        =<< [CU.exp| Halide::Expr* { new Halide::Expr{
-              Halide::cast(Halide::Type{*$(halide_type_t* t)}, *$(Halide::Expr* e))} } |]
+      cxxConstructExpr $ \ptr ->
+        [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+          Halide::cast(Halide::Type{*$(halide_type_t* t)}, *$(Halide::Expr* e))} } |]
 
 -- | Print the expression to stdout when it's evaluated.
 --
 -- This is useful for debugging Halide pipelines.
 printed :: IsHalideType a => Expr a -> Expr a
-printed = unaryOp $ \e -> [CU.exp| Halide::Expr* { new Halide::Expr{print(*$(Halide::Expr* e))} } |]
+printed = unaryOp $ \e ptr ->
+  [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{print(*$(Halide::Expr* e))} } |]
 
 -- | Compare two scalar expressions for equality.
 equal :: (HasCallStack, IsHalideType a) => Expr a -> Expr a -> Expr Bool
 equal a' b' = unsafePerformIO $!
   asExpr a' $ \a -> asExpr b' $ \b ->
-    wrapCxxExpr =<< [CU.exp| Halide::Expr* { new Halide::Expr{(*$(Halide::Expr* a)) == (*$(Halide::Expr* b))} } |]
+    cxxConstructExpr $ \ptr ->
+      [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+        (*$(Halide::Expr* a)) == (*$(Halide::Expr* b))} } |]
 
 lessThan :: (HasCallStack, IsHalideType a) => Expr a -> Expr a -> Expr Bool
 lessThan a' b' = unsafePerformIO $!
   asExpr a' $ \a -> asExpr b' $ \b ->
-    wrapCxxExpr =<< [CU.exp| Halide::Expr* { new Halide::Expr{(*$(Halide::Expr* a)) < (*$(Halide::Expr* b))} } |]
+    cxxConstructExpr $ \ptr ->
+      [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+        (*$(Halide::Expr* a)) < (*$(Halide::Expr* b))} } |]
 
 greaterThan :: (HasCallStack, IsHalideType a) => Expr a -> Expr a -> Expr Bool
 greaterThan a' b' = unsafePerformIO $!
   asExpr a' $ \a -> asExpr b' $ \b ->
-    wrapCxxExpr =<< [CU.exp| Halide::Expr* { new Halide::Expr{(*$(Halide::Expr* a)) > (*$(Halide::Expr* b))} } |]
+    cxxConstructExpr $ \ptr ->
+      [CU.exp| void { new (($(Halide::Expr* ptr))) Halide::Expr{
+        (*$(Halide::Expr* a)) > (*$(Halide::Expr* b))} } |]
 
 -- | Similar to the standard @bool@ function from Prelude except that it's
 -- lifted to work with 'Expr' types.
@@ -223,11 +231,11 @@ bool condExpr trueExpr falseExpr = unsafePerformIO $!
   asExpr condExpr $ \p ->
     asExpr trueExpr $ \t ->
       asExpr falseExpr $ \f ->
-        wrapCxxExpr
-          =<< [CU.exp| Halide::Expr* {
-                new Halide::Expr{Halide::select(*$(Halide::Expr* p),
-                                                *$(Halide::Expr* t),
-                                                *$(Halide::Expr* f))} } |]
+        cxxConstructExpr $ \ptr ->
+          [CU.exp| void {
+            new ($(Halide::Expr* ptr)) Halide::Expr{
+              Halide::select(*$(Halide::Expr* p),
+                *$(Halide::Expr* t), *$(Halide::Expr* f))} } |]
 
 -- | Evaluate a scalar expression. It should contain no parameters.
 evaluate :: forall a. IsHalideType a => Expr a -> IO a
@@ -303,83 +311,93 @@ instance (IsHalideType a, Num a) => Num (Expr a) where
   fromInteger :: Integer -> Expr a
   fromInteger x = mkExpr (fromInteger x :: a)
   (+) :: Expr a -> Expr a -> Expr a
-  (+) = binaryOp $ \a b -> [CU.exp| Halide::Expr* { new Halide::Expr{*$(Halide::Expr* a) + *$(Halide::Expr* b)} } |]
+  (+) = binaryOp $ \a b ptr ->
+    [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{*$(Halide::Expr* a) + *$(Halide::Expr* b)} } |]
   (-) :: Expr a -> Expr a -> Expr a
-  (-) = binaryOp $ \a b -> [CU.exp| Halide::Expr* { new Halide::Expr{*$(Halide::Expr* a) - *$(Halide::Expr* b)} } |]
+  (-) = binaryOp $ \a b ptr ->
+    [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{*$(Halide::Expr* a) - *$(Halide::Expr* b)} } |]
   (*) :: Expr a -> Expr a -> Expr a
-  (*) = binaryOp $ \a b -> [CU.exp| Halide::Expr* { new Halide::Expr{*$(Halide::Expr* a) * *$(Halide::Expr* b)} } |]
+  (*) = binaryOp $ \a b ptr ->
+    [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{*$(Halide::Expr* a) * *$(Halide::Expr* b)} } |]
 
   abs :: Expr a -> Expr a
-  abs = unaryOp $ \a ->
+  abs = unaryOp $ \a ptr ->
     -- If the type is unsigned, then abs does nothing Also note that for signed
     -- integers, in Halide abs returns the unsigned version, so we manually
     -- cast it back.
-    [CU.block| Halide::Expr* {
+    [CU.block| void {
       if ($(Halide::Expr* a)->type().is_uint()) {
-        return new Halide::Expr{*$(Halide::Expr* a)};
+        new ($(Halide::Expr* ptr)) Halide::Expr{*$(Halide::Expr* a)};
       }
       else {
-        return new Halide::Expr{
+        new ($(Halide::Expr* ptr)) Halide::Expr{
           Halide::cast($(Halide::Expr* a)->type(), Halide::abs(*$(Halide::Expr* a)))};
       }
     } |]
   negate :: Expr a -> Expr a
-  negate = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{ -(*$(Halide::Expr* a))} } |]
+  negate = unaryOp $ \a ptr ->
+    [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{ -(*$(Halide::Expr* a))} } |]
   signum :: Expr a -> Expr a
   signum = error "Num instance of (Expr a) does not implement signum"
 
 instance (IsHalideType a, Fractional a) => Fractional (Expr a) where
   (/) :: Expr a -> Expr a -> Expr a
-  (/) = binaryOp $ \a b -> [CU.exp| Halide::Expr* { new Halide::Expr{*$(Halide::Expr* a) / *$(Halide::Expr* b)} } |]
+  (/) = binaryOp $ \a b ptr ->
+    [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{*$(Halide::Expr* a) / *$(Halide::Expr* b)} } |]
   fromRational :: Rational -> Expr a
   fromRational r = fromInteger (numerator r) / fromInteger (denominator r)
 
 instance (IsHalideType a, Floating a) => Floating (Expr a) where
   pi :: Expr a
-  pi = cast @a @CDouble . unsafePerformIO $! wrapCxxExpr =<< [CU.exp| Halide::Expr* { new Halide::Expr{M_PI} } |]
+  pi = cast @a @Double $! mkExpr (pi :: Double)
   exp :: Expr a -> Expr a
-  exp = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::exp(*$(Halide::Expr* a))} } |]
+  exp = unaryOp $ \a ptr -> [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{Halide::exp(*$(Halide::Expr* a))} } |]
   log :: Expr a -> Expr a
-  log = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::log(*$(Halide::Expr* a))} } |]
+  log = unaryOp $ \a ptr -> [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{Halide::log(*$(Halide::Expr* a))} } |]
   sqrt :: Expr a -> Expr a
-  sqrt = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::sqrt(*$(Halide::Expr* a))} } |]
+  sqrt = unaryOp $ \a ptr -> [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{Halide::sqrt(*$(Halide::Expr* a))} } |]
   (**) :: Expr a -> Expr a -> Expr a
-  (**) = binaryOp $ \a b ->
-    [CU.exp| Halide::Expr* { new Halide::Expr{Halide::pow(*$(Halide::Expr* a), *$(Halide::Expr* b))} } |]
+  (**) = binaryOp $ \a b ptr ->
+    [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{Halide::pow(*$(Halide::Expr* a), *$(Halide::Expr* b))} } |]
   sin :: Expr a -> Expr a
-  sin = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::sin(*$(Halide::Expr* a))} } |]
+  sin = unaryOp $ \a ptr -> [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{Halide::sin(*$(Halide::Expr* a))} } |]
   cos :: Expr a -> Expr a
-  cos = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::cos(*$(Halide::Expr* a))} } |]
+  cos = unaryOp $ \a ptr -> [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{Halide::cos(*$(Halide::Expr* a))} } |]
   tan :: Expr a -> Expr a
-  tan = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::tan(*$(Halide::Expr* a))} } |]
+  tan = unaryOp $ \a ptr -> [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{Halide::tan(*$(Halide::Expr* a))} } |]
   asin :: Expr a -> Expr a
-  asin = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::asin(*$(Halide::Expr* a))} } |]
+  asin = unaryOp $ \a ptr -> [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{Halide::asin(*$(Halide::Expr* a))} } |]
   acos :: Expr a -> Expr a
-  acos = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::acos(*$(Halide::Expr* a))} } |]
+  acos = unaryOp $ \a ptr -> [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{Halide::acos(*$(Halide::Expr* a))} } |]
   atan :: Expr a -> Expr a
-  atan = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::atan(*$(Halide::Expr* a))} } |]
+  atan = unaryOp $ \a ptr -> [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{Halide::atan(*$(Halide::Expr* a))} } |]
   sinh :: Expr a -> Expr a
-  sinh = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::sinh(*$(Halide::Expr* a))} } |]
+  sinh = unaryOp $ \a ptr -> [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{Halide::sinh(*$(Halide::Expr* a))} } |]
   cosh :: Expr a -> Expr a
-  cosh = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::cosh(*$(Halide::Expr* a))} } |]
+  cosh = unaryOp $ \a ptr -> [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{Halide::cosh(*$(Halide::Expr* a))} } |]
   tanh :: Expr a -> Expr a
-  tanh = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::tanh(*$(Halide::Expr* a))} } |]
+  tanh = unaryOp $ \a ptr -> [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{Halide::tanh(*$(Halide::Expr* a))} } |]
   asinh :: Expr a -> Expr a
-  asinh = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::asinh(*$(Halide::Expr* a))} } |]
+  asinh = unaryOp $ \a ptr -> [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{Halide::asinh(*$(Halide::Expr* a))} } |]
   acosh :: Expr a -> Expr a
-  acosh = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::acosh(*$(Halide::Expr* a))} } |]
+  acosh = unaryOp $ \a ptr -> [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{Halide::acosh(*$(Halide::Expr* a))} } |]
   atanh :: Expr a -> Expr a
-  atanh = unaryOp $ \a -> [CU.exp| Halide::Expr* { new Halide::Expr{Halide::atanh(*$(Halide::Expr* a))} } |]
+  atanh = unaryOp $ \a ptr -> [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{Halide::atanh(*$(Halide::Expr* a))} } |]
 
 -- | Wrap a raw @Halide::Expr@ pointer in a Haskell value.
 --
 -- __Note:__ This function checks the runtime type of the expression.
-wrapCxxExpr :: forall a. (HasCallStack, IsHalideType a) => Ptr CxxExpr -> IO (Expr a)
-wrapCxxExpr p = do
-  checkType @a p
-  Expr <$> newForeignPtr deleter p
-  where
-    deleter = [C.funPtr| void deleteExpr(Halide::Expr *p) { delete p; } |]
+-- wrapCxxExpr :: forall a. (HasCallStack, IsHalideType a) => Ptr CxxExpr -> IO (Expr a)
+-- wrapCxxExpr p = do
+--   checkType @a p
+--   Expr <$> newForeignPtr deleter p
+--   where
+--     deleter = [C.funPtr| void deleteExpr(Halide::Expr *p) { delete p; } |]
+cxxConstructExpr :: forall a. (HasCallStack, IsHalideType a) => (Ptr CxxExpr -> IO ()) -> IO (Expr a)
+cxxConstructExpr construct = do
+  fp <- cxxConstruct construct
+  withForeignPtr fp (checkType @a)
+  pure (Expr fp)
 
 -- | Wrap a raw @Halide::RVar@ pointer in a Haskell value.
 --
@@ -500,36 +518,30 @@ getScalarParameter name r = do
       writeIORef r (Just fp)
       pure fp
 
-cxxVarToExpr :: Ptr CxxVar -> IO (Ptr CxxExpr)
-cxxVarToExpr p =
-  [CU.exp| Halide::Expr* {
-    new Halide::Expr{static_cast<Halide::Expr>(*$(Halide::Var* p))} } |]
-
-cxxRVarToExpr :: Ptr CxxRVar -> IO (Ptr CxxExpr)
-cxxRVarToExpr p =
-  [CU.exp| Halide::Expr* {
-    new Halide::Expr{static_cast<Halide::Expr>(*$(Halide::RVar* p))} } |]
-
-cxxParameterToExpr :: Ptr CxxParameter -> IO (Ptr CxxExpr)
-cxxParameterToExpr p =
-  [CU.exp| Halide::Expr* {
-    new Halide::Expr{
-      Halide::Internal::Variable::make(
-        $(Halide::Internal::Parameter* p)->type(),
-        $(Halide::Internal::Parameter* p)->name(),
-        *$(Halide::Internal::Parameter* p))} } |]
-
 -- | Make sure that the expression is fully constructed. That means that if we
 -- are dealing with a 'ScalarParam' rather than an 'Expr', we force the
 -- construction of the underlying @Halide::Internal::Parameter@ and convert it
 -- to an 'Expr'.
 forceExpr :: forall a. (HasCallStack, IsHalideType a) => Expr a -> IO (Expr a)
 forceExpr x@(Expr _) = pure x
-forceExpr (Var fp) = withForeignPtr fp (cxxVarToExpr >=> wrapCxxExpr)
-forceExpr (RVar fp) = withForeignPtr fp (cxxRVarToExpr >=> wrapCxxExpr)
+forceExpr (Var fp) =
+  withForeignPtr fp $ \varPtr ->
+    cxxConstructExpr $ \ptr ->
+      [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+        static_cast<Halide::Expr>(*$(Halide::Var* varPtr))} } |]
+forceExpr (RVar fp) =
+  withForeignPtr fp $ \rvarPtr ->
+    cxxConstructExpr $ \ptr ->
+      [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+        static_cast<Halide::Expr>(*$(Halide::RVar* rvarPtr))} } |]
 forceExpr (ScalarParam r) =
-  getScalarParameter @a Nothing r
-    >>= \fp -> withForeignPtr fp (cxxParameterToExpr >=> wrapCxxExpr)
+  getScalarParameter @a Nothing r >>= \fp -> withForeignPtr fp $ \paramPtr ->
+    cxxConstructExpr $ \ptr ->
+      [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+        Halide::Internal::Variable::make(
+          $(Halide::Internal::Parameter* paramPtr)->type(),
+          $(Halide::Internal::Parameter* paramPtr)->name(),
+          *$(Halide::Internal::Parameter* paramPtr))} } |]
 
 -- | Use the underlying @Halide::Expr@ in an 'IO' action.
 asExpr :: IsHalideType a => Expr a -> (Ptr CxxExpr -> IO b) -> IO b
@@ -614,10 +626,15 @@ exprToForeignPtr x =
       _ -> error "this cannot happen"
 
 -- | Lift a unary function working with @Halide::Expr@ to work with 'Expr'.
-unaryOp :: (HasCallStack, IsHalideType a) => (Ptr CxxExpr -> IO (Ptr CxxExpr)) -> Expr a -> Expr a
-unaryOp f a = unsafePerformIO $! asExpr a f >>= wrapCxxExpr
+unaryOp :: IsHalideType a => (Ptr CxxExpr -> Ptr CxxExpr -> IO ()) -> Expr a -> Expr a
+unaryOp f a = unsafePerformIO $
+  asExpr a $ \aPtr ->
+    cxxConstructExpr $ \destPtr ->
+      f aPtr destPtr
 
 -- | Lift a binary function working with @Halide::Expr@ to work with 'Expr'.
-binaryOp :: (HasCallStack, IsHalideType a) => (Ptr CxxExpr -> Ptr CxxExpr -> IO (Ptr CxxExpr)) -> Expr a -> Expr a -> Expr a
-binaryOp f a b = unsafePerformIO $! asExpr a $ \aPtr -> asExpr b $ \bPtr ->
-  f aPtr bPtr >>= wrapCxxExpr
+binaryOp :: IsHalideType a => (Ptr CxxExpr -> Ptr CxxExpr -> Ptr CxxExpr -> IO ()) -> Expr a -> Expr a -> Expr a
+binaryOp f a b = unsafePerformIO $
+  asExpr a $ \aPtr -> asExpr b $ \bPtr ->
+    cxxConstructExpr $ \destPtr ->
+      f aPtr bPtr destPtr

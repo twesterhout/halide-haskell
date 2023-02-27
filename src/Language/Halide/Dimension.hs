@@ -48,21 +48,21 @@ newtype Dimension = Dimension (ForeignPtr CxxDimension)
 instance Show Dimension where
   showsPrec d dim =
     showParen (d > 10) $
-      showString "Dimension {min="
+      showString "Dimension { min="
         . shows dim.min
         . showString (", extent=" :: String)
         . shows dim.extent
         . showString (", stride=" :: String)
         . shows dim.stride
-        . showString "}"
+        . showString " }"
 
 instance HasField "min" Dimension (Expr Int32) where
   getField :: Dimension -> Expr Int32
   getField dim = unsafePerformIO $
     withCxxDimension dim $ \d ->
-      wrapCxxExpr
-        =<< [CU.exp| Halide::Expr* {
-              new Halide::Expr{$(const Halide::Internal::Dimension* d)->min()} } |]
+      cxxConstructExpr $ \ptr ->
+        [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+          $(const Halide::Internal::Dimension* d)->min()} } |]
 
 -- | Set the min in a given dimension to equal the given expression. Setting the mins to
 -- zero may simplify some addressing math.
@@ -80,9 +80,9 @@ instance HasField "extent" Dimension (Expr Int32) where
   getField :: Dimension -> Expr Int32
   getField dim = unsafePerformIO $
     withCxxDimension dim $ \d ->
-      wrapCxxExpr
-        =<< [CU.exp| Halide::Expr* {
-              new Halide::Expr{$(const Halide::Internal::Dimension* d)->extent()} } |]
+      cxxConstructExpr $ \ptr ->
+        [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+          $(const Halide::Internal::Dimension* d)->extent()} } |]
 
 -- | Set the extent in a given dimension to equal the given expression.
 --
@@ -101,17 +101,17 @@ instance HasField "max" Dimension (Expr Int32) where
   getField :: Dimension -> Expr Int32
   getField dim = unsafePerformIO $
     withCxxDimension dim $ \d ->
-      wrapCxxExpr
-        =<< [CU.exp| Halide::Expr* {
-              new Halide::Expr{$(Halide::Internal::Dimension* d)->max()} } |]
+      cxxConstructExpr $ \ptr ->
+        [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+          $(Halide::Internal::Dimension* d)->max()} } |]
 
 instance HasField "stride" Dimension (Expr Int32) where
   getField :: Dimension -> Expr Int32
   getField dim = unsafePerformIO $
     withCxxDimension dim $ \d ->
-      wrapCxxExpr
-        =<< [CU.exp| Halide::Expr* {
-              new Halide::Expr{$(Halide::Internal::Dimension* d)->stride()} } |]
+      cxxConstructExpr $ \ptr ->
+        [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+          $(Halide::Internal::Dimension* d)->stride()} } |]
 
 -- | Set the stride in a given dimension to equal the given expression.
 --

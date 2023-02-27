@@ -24,7 +24,6 @@ where
 
 import Control.Concurrent.MVar
 import Control.Exception (bracket, bracket_)
-import Control.Monad (void)
 import Data.ByteString (packCString)
 import Data.Int (Int32)
 import Data.Text (Text)

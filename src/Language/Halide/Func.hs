@@ -1064,10 +1064,9 @@ infix 9 !
   unsafePerformIO $
     withFunc func $ \f ->
       asVectorOf @((~) (Expr Int32)) asExpr (fromTuple args) $ \x ->
-        wrapCxxExpr
-          =<< [CU.exp| Halide::Expr* {
-            new Halide::Expr{$(Halide::Func* f)->operator()(*$(std::vector<Halide::Expr>* x))}
-          } |]
+        cxxConstructExpr $ \ptr ->
+          [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+            $(Halide::Func* f)->operator()(*$(std::vector<Halide::Expr>* x))} } |]
 
 -- | Get a particular dimension of a pipeline parameter.
 dim

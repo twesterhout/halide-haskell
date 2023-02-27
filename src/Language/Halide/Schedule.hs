@@ -235,11 +235,13 @@ instance Storable ReductionVariable where
       peekCxxString
         =<< [CU.exp| const std::string* { &$(const Halide::Internal::ReductionVariable* p)->var } |]
     minExpr <-
-      wrapCxxExpr
-        =<< [CU.exp| Halide::Expr* { new Halide::Expr{$(const Halide::Internal::ReductionVariable* p)->min} } |]
+      cxxConstructExpr $ \ptr ->
+        [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+          $(const Halide::Internal::ReductionVariable* p)->min} } |]
     extentExpr <-
-      wrapCxxExpr
-        =<< [CU.exp| Halide::Expr* { new Halide::Expr{$(const Halide::Internal::ReductionVariable* p)->extent} } |]
+      cxxConstructExpr $ \ptr ->
+        [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+          $(const Halide::Internal::ReductionVariable* p)->extent} } |]
     pure $ ReductionVariable varName minExpr extentExpr
   poke _ _ = error "Storable instance of ReductionVariable does not implement poke"
 
@@ -257,8 +259,9 @@ instance Storable PrefetchDirective where
       peekCxxString
         =<< [CU.exp| const std::string* { &$(const Halide::Internal::PrefetchDirective* p)->from } |]
     offset' <-
-      wrapCxxExpr
-        =<< [CU.exp| Halide::Expr* { new Halide::Expr{$(const Halide::Internal::PrefetchDirective* p)->offset} } |]
+      cxxConstructExpr $ \ptr ->
+        [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+          $(const Halide::Internal::PrefetchDirective* p)->offset} } |]
     strategy' <-
       toEnum . fromIntegral
         <$> [CU.exp| int { static_cast<int>($(const Halide::Internal::PrefetchDirective* p)->strategy) } |]
@@ -360,26 +363,19 @@ instance Storable Dim where
   poke _ = error "Storable instance for Dim does not implement poke"
 
 peekOld :: Ptr Split -> IO Text
-peekOld p =
-  trace "peekOld" $
-    peekCxxString =<< [CU.exp| const std::string* { &$(const Halide::Internal::Split* p)->old_var } |]
+peekOld p = peekCxxString =<< [CU.exp| const std::string* { &$(const Halide::Internal::Split* p)->old_var } |]
 
 peekOuter :: Ptr Split -> IO Text
-peekOuter p =
-  trace "peekOuter" $
-    peekCxxString =<< [CU.exp| const std::string* { &$(const Halide::Internal::Split* p)->outer } |]
+peekOuter p = peekCxxString =<< [CU.exp| const std::string* { &$(const Halide::Internal::Split* p)->outer } |]
 
 peekInner :: Ptr Split -> IO Text
-peekInner p =
-  trace "peekInner" $
-    peekCxxString =<< [CU.exp| const std::string* { &$(const Halide::Internal::Split* p)->inner } |]
+peekInner p = peekCxxString =<< [CU.exp| const std::string* { &$(const Halide::Internal::Split* p)->inner } |]
 
 peekFactor :: Ptr Split -> IO (Expr Int32)
 peekFactor p =
-  trace "peekFactor" $
-    wrapCxxExpr
-      =<< [CU.exp| Halide::Expr* {
-          new Halide::Expr{$(const Halide::Internal::Split* p)->factor} } |]
+  cxxConstructExpr $ \ptr ->
+    [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+      $(const Halide::Internal::Split* p)->factor} } |]
 
 instance Storable Split where
   sizeOf _ = fromIntegral [CU.pure| size_t { sizeof(Halide::Internal::Split) } |]
