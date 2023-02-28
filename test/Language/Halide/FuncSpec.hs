@@ -34,8 +34,9 @@ spec = do
   describe "indexing" $ do
     it "supports empty tuples" $ do
       let x = mkExpr (5 :: Double)
-      func <- define "func" () $ x * x - 2 * x + 5 + 3 / x
-      realize func [] peekToList `shouldReturn` [20.6]
+      f <- define "f" () $ x * x - 2 * x + 5 + 3 / x
+      g <- define "g" () $ f ! ()
+      realize g [] peekToList `shouldReturn` [20.6]
 
   describe "vectorize" $ do
     it "vectorizes loops" $ do
