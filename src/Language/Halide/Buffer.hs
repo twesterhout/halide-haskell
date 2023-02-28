@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE QuasiQuotes #-}
@@ -346,11 +347,29 @@ bufferCopyToHost p =
     }
   } |]
 
+checkNumberOfDimensions :: forall n. (HasCallStack, KnownNat n) => RawHalideBuffer -> IO ()
+checkNumberOfDimensions raw = do
+  unless (fromIntegral (natVal (Proxy @n)) == raw.halideBufferDimensions) $
+    error $
+      "type-level and runtime number of dimensions do not match: "
+        <> show (natVal (Proxy @n))
+        <> " != "
+        <> show raw.halideBufferDimensions
+
 -- | Specifies that @a@ can be converted to a list. This is very similar to 'GHC.Exts.IsList' except that
 -- we read the list from a @'Ptr'@ rather than converting directly.
 class IsListPeek a where
   type ListPeekElem a :: Type
   peekToList :: HasCallStack => Ptr a -> IO [ListPeekElem a]
+
+instance IsHalideType a => IsListPeek (HalideBuffer 0 a) where
+  type ListPeekElem (HalideBuffer 0 a) = a
+  peekToList p = do
+    whenM (isDeviceDirty (castPtr p)) $
+      error "cannot peek data from device; call bufferCopyToHost first"
+    raw <- peek (castPtr @_ @RawHalideBuffer p)
+    checkNumberOfDimensions @0 raw
+    fmap pure . peek $ castPtr @_ @a (halideBufferHost raw)
 
 instance IsHalideType a => IsListPeek (HalideBuffer 1 a) where
   type ListPeekElem (HalideBuffer 1 a) = a

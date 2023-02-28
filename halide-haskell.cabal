@@ -50,6 +50,7 @@ common common-options
     FlexibleInstances
     FunctionalDependencies
     MultiParamTypeClasses
+    OverloadedRecordDot
     OverloadedStrings
     ScopedTypeVariables
     TypeApplications

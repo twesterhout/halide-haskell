@@ -31,6 +31,12 @@ instance IsHalideType a => IsHalideBuffer (Matrix (SM.MVector RealWorld) a) 2 a 
 
 spec :: Spec
 spec = do
+  describe "indexing" $ do
+    it "supports empty tuples" $ do
+      let x = mkExpr (5 :: Double)
+      func <- define "func" () $ x * x - 2 * x + 5 + 3 / x
+      realize func [] peekToList `shouldReturn` [20.6]
+
   describe "vectorize" $ do
     it "vectorizes loops" $ do
       i <- mkVar "i"
