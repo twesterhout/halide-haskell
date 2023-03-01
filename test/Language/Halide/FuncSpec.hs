@@ -7,11 +7,8 @@
 module Language.Halide.FuncSpec (spec) where
 
 import Control.Monad.ST (RealWorld)
-import qualified Data.Text.IO as T
-import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Storable.Mutable as SM
 import Language.Halide
-import Language.Halide.Context
 import Test.Hspec hiding (parallel)
 import Utils
 
@@ -58,8 +55,8 @@ spec = do
         s `shouldContainText` "in [0, 3]"
 
       let n = 10
-      realize1D n func
-        `shouldReturn` S.generate n (\(fromIntegral -> k) -> (3 * k + 1) * (k - 5))
+      realize func [n] peekToList
+        `shouldReturn` [(3 * k + 1) * (k - 5) | k <- [0 .. fromIntegral n - 1]]
 
   describe "unroll" $ do
     it "unrolls loops" $ do
@@ -81,8 +78,8 @@ spec = do
         s `shouldContainText` "in [0, 2]"
 
       let n = 17
-      realize1D n func
-        `shouldReturn` S.generate n (\(fromIntegral -> k) -> (3 * k + 1) * (k - 5))
+      realize func [n] peekToList
+        `shouldReturn` [(3 * k + 1) * (k - 5) | k <- [0 .. fromIntegral n - 1]]
 
   describe "reorder" $ do
     it "reorders loops" $ do
@@ -250,6 +247,6 @@ spec = do
   describe "undef" $ do
     it "allows to skip stores" $ do
       i <- mkVar "i"
-      f <- define "f" i $ bool (i `greaterThan` 5) i 0
-      update f i $ bool ((f ! i) `equal` 0) (2 * i) undef
+      f <- define "f" i $ bool (i `gt` 5) i 0
+      update f i $ bool ((f ! i) `eq` 0) (2 * i) undef
       realize f [10] peekToList `shouldReturn` ([0, 2, 4, 6, 8, 10] <> [6 .. 9] :: [Int32])

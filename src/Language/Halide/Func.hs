@@ -196,9 +196,6 @@ data TailStrategy
     TailAuto
   deriving stock (Eq, Ord, Show)
 
--- | Either v'Var' or v'RVar'
-type VarOrRVar = Expr Int32
-
 -- | Specifies that @i@ is a tuple of @'Expr' Int32@.
 --
 -- @ts@ are deduced from @i@, so you don't have to specify them explicitly.
@@ -726,9 +723,9 @@ asUsed f =
 -- | Declare that this function should be implemented by a call to @halide_buffer_copy@ with the given
 -- target device API.
 --
--- Asserts that the Func has a pure definition which is a simple call to a single input, and no update
--- definitions. The wrapper Funcs returned by in() are suitable candidates. Consumes all pure variables,
--- and rewrites the Func to have an extern definition that calls halide_buffer_copy.
+-- Asserts that the @Func@ has a pure definition which is a simple call to a single input, and no update
+-- definitions. The wrapper @Func@s returned by 'asUsed' are suitable candidates. Consumes all pure variables,
+-- and rewrites the @Func@ to have an extern definition that calls @halide_buffer_copy@.
 copyToDevice :: (KnownNat n, IsHalideType a) => DeviceAPI -> Func t n a -> IO (Func t n a)
 copyToDevice deviceApi func = do
   withFunc func $ \f ->
@@ -741,7 +738,7 @@ copyToDevice deviceApi func = do
   where
     api = fromIntegral . fromEnum $ deviceApi
 
--- | Same as 'copyToDevice DeviceHost'
+-- | Same as @'copyToDevice' 'DeviceHost'@
 copyToHost :: (KnownNat n, IsHalideType a) => Func t n a -> IO (Func t n a)
 copyToHost = copyToDevice DeviceHost
 
@@ -903,102 +900,19 @@ forceFunc (Param r) = do
 funcToForeignPtr :: (KnownNat n, IsHalideType a) => Func t n a -> ForeignPtr CxxFunc
 funcToForeignPtr x = unsafePerformIO $! forceFunc x >>= \(Func fp) -> pure fp
 
--- applyFunc :: IsHalideType a => ForeignPtr CxxFunc -> [ForeignPtr CxxExpr] -> IO (Expr a)
--- applyFunc func args =
---   withForeignPtr func $ \f ->
---     withExprMany args $ \v ->
---       wrapCxxExpr
---         =<< [CU.exp| Halide::Expr* {
---               new Halide::Expr{(*$(Halide::Func* f))(*$(std::vector<Halide::Expr>* v))} } |]
-
--- defineFunc :: Text -> [ForeignPtr CxxExpr] -> ForeignPtr CxxExpr -> IO (ForeignPtr CxxFunc)
--- defineFunc name args expr = do
---   let s = T.encodeUtf8 name
---   withExprMany args $ \x ->
---     withForeignPtr expr $ \y ->
---       newForeignPtr deleteCxxFunc
---         =<< [CU.block| Halide::Func* {
---               Halide::Func f{std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}};
---               f(*$(std::vector<Halide::Expr>* x)) = *$(Halide::Expr* y);
---               return new Halide::Func{f};
---             } |]
---
--- updateFunc
---   :: ForeignPtr CxxFunc
---   -> [ForeignPtr CxxExpr]
---   -> ForeignPtr CxxExpr
---   -> IO ()
--- updateFunc func args expr = do
---   withForeignPtr func $ \f ->
---     withExprMany args $ \x ->
---       withForeignPtr expr $ \y ->
---         [CU.block| void {
---           $(Halide::Func* f)->operator()(*$(std::vector<Halide::Expr>* x)) = *$(Halide::Expr* y);
---         } |]
-
--- withVarOrRVarMany :: [Expr Int32] -> (Int -> Ptr (CxxVector CxxVarOrRVar) -> IO a) -> IO a
--- withVarOrRVarMany xs f =
---   bracket allocate destroy $ \v -> do
---     let go !k [] = f k v
---         go !k (y : ys) = withVarOrRVarMany y $ \p -> do
---           [CU.exp| void { $(std::vector<Halide::Expr>* v)->push_back(*$(Halide::VarOrRVar* p)) } |]
---           go (k + 1) ys
---     go 0 xs
---   where
---     count = fromIntegral (length xs)
---     allocate =
---       [CU.block| std::vector<Halide::VarOrRVar>* {
---         auto v = new std::vector<Halide::VarOrRVar>{};
---         v->reserve($(size_t count));
---         return v;
---       } |]
---     destroy v = [CU.exp| void { delete $(std::vector<Halide::VarOrRVar>* v) } |]
-
--- withExprMany :: [ForeignPtr CxxExpr] -> (Ptr (CxxVector CxxExpr) -> IO a) -> IO a
--- withExprMany xs f = do
---   let count = fromIntegral (length xs)
---       allocate =
---         [CU.block| std::vector<Halide::Expr>* {
---           auto v = new std::vector<Halide::Expr>{};
---           v->reserve($(size_t count));
---           return v;
---         } |]
---       destroy v = do
---         [CU.exp| void { delete $(std::vector<Halide::Expr>* v) } |]
---         forM_ xs touchForeignPtr
---   bracket allocate destroy $ \v -> do
---     forM_ xs $ \fp ->
---       let p = unsafeForeignPtrToPtr fp
---        in [CU.exp| void { $(std::vector<Halide::Expr>* v)->push_back(*$(Halide::Expr* p)) } |]
---     f v
-
--- | Specifies that a type can be used as an index to a Halide function.
--- class ValidIndex (a :: Type) (n :: Nat) | a -> n, n -> a where
---   toExprList :: a -> [ForeignPtr CxxExpr]
---
--- instance ValidIndex (Expr Int32) 1 where
---   toExprList a = [exprToForeignPtr a]
---
--- instance ValidIndex (Expr Int32, Expr Int32) 2 where
---   toExprList (a, b) = [exprToForeignPtr a, exprToForeignPtr b]
---
--- instance ValidIndex (Expr Int32, Expr Int32, Expr Int32) 3 where
---   toExprList (a1, a2, a3) = exprToForeignPtr <$> [a1, a2, a3]
---
--- instance ValidIndex (Expr Int32, Expr Int32, Expr Int32, Expr Int32) 4 where
---   toExprList (a1, a2, a3, a4) = exprToForeignPtr <$> [a1, a2, a3, a4]
---
--- instance ValidIndex (Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32) 5 where
---   toExprList (a1, a2, a3, a4, a5) = exprToForeignPtr <$> [a1, a2, a3, a4, a5]
-
 -- | Define a Halide function.
 --
 -- @define "f" i e@ defines a Halide function called "f" such that @f[i] = e@.
--- define :: (ValidIndex i n, IsHalideType a) => Text -> i -> Expr a -> IO (Func n a)
--- define name x y = Func <$> defineFunc name (toExprList x) (exprToForeignPtr y)
+--
+-- Here, @i@ is an @n@-element tuple of t'Var', i.e. the following are all valid:
+--
+-- >>> [x, y, z] <- mapM mkVar ["x", "y", "z"]
+-- >>> f1 <- define "f1" x (0 :: Expr Float)
+-- >>> f2 <- define "f2" (x, y) (0 :: Expr Float)
+-- >>> f3 <- define "f3" (x, y, z) (0 :: Expr Float)
 define
   :: ( IsTuple (Arguments ts) i
-     , All ((~) (Expr Int32)) ts
+     , All ((~) Var) ts
      , Length ts ~ n
      , KnownNat n
      , IsHalideType a
@@ -1021,8 +935,6 @@ define name args expr =
 -- | Create an update definition for a Halide function.
 --
 -- @update f i e@ creates an update definition for @f@ that performs @f[i] = e@.
--- update :: (ValidIndex i n, KnownNat n, IsHalideType a) => Func n a -> i -> Expr a -> IO ()
--- update func x y = updateFunc (funcToForeignPtr func) (toExprList x) (exprToForeignPtr y)
 update
   :: ( IsTuple (Arguments ts) i
      , All ((~) (Expr Int32)) ts
@@ -1048,8 +960,6 @@ infix 9 !
 
 -- | Apply a Halide function. Conceptually, @f ! i@ is equivalent to @f[i]@, i.e.
 -- indexing into a lazy array.
--- (!) :: (ValidIndex i n, KnownNat n, IsHalideType r) => Func n r -> i -> Expr r
--- (!) func args = unsafePerformIO $ applyFunc (funcToForeignPtr func) (toExprList args)
 (!)
   :: ( IsTuple (Arguments ts) i
      , All ((~) (Expr Int32)) ts
@@ -1186,9 +1096,14 @@ buffer name p@(Param r) = unsafePerformIO $ do
 -- >   i <- mkVar "i"
 -- >   define "dest" i $ a
 scalar :: forall a. IsHalideType a => Text -> Expr a -> Expr a
-scalar name p = unsafePerformIO $ do
-  setName p name
-  pure p
+scalar name (ScalarParam r) = unsafePerformIO $ do
+  readIORef r >>= \case
+    Just _ -> error "the name of this Expr has already been set"
+    Nothing -> do
+      fp <- mkScalarParameter @a (Just name)
+      writeIORef r (Just fp)
+  pure (ScalarParam r)
+scalar _ _ = error "cannot set the name of an expression that is not a parameter"
 
 wrapCxxStage :: (KnownNat n, IsHalideType a) => Ptr CxxStage -> IO (Stage n a)
 wrapCxxStage = fmap Stage . newForeignPtr deleter

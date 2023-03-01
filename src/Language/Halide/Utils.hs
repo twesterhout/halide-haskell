@@ -21,6 +21,8 @@ import Language.Halide.Type
 importHalide
 
 -- | Convert a pointer to @std::string@ into a string.
+--
+-- It properly handles unicode characters.
 peekCxxString :: Ptr CxxString -> IO Text
 peekCxxString p =
   fmap T.decodeUtf8 $

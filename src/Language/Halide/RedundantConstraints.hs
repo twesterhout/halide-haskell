@@ -3,12 +3,7 @@
 
 module Language.Halide.RedundantConstraints
   ( keepRedundantConstraint
-
-    -- * Convenience re-export
-  , Proxy (..)
   ) where
-
-import Data.Proxy
 
 -- | Can be used to silence individual "redundant constraint" warnings
 --

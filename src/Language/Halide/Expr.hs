@@ -14,19 +14,21 @@
 -- Description : Scalar expressions
 -- Copyright   : (c) Tom Westerhout, 2023
 module Language.Halide.Expr
-  ( -- * Scalar expressions
-
-    -- | The basic building block of Halide pipelines is 'Expr'. @'Expr' a@ represents a scalar expression of
-    -- type @a@.
-    Expr (..)
+  ( Expr (..)
+  , Var
+  , RVar
+  , VarOrRVar
   , Int32
   , mkExpr
   , mkVar
   , mkRVar
   , cast
-  , equal
-  , lessThan
-  , greaterThan
+  , eq
+  , neq
+  , lt
+  , lte
+  , gt
+  , gte
   , bool
   , undef
     -- | For debugging, it's often useful to observe the value of an expression when it's evaluated. If you
@@ -51,6 +53,7 @@ module Language.Halide.Expr
   , asVarOrRVar
   , asScalarParam
   , asVectorOf
+  , mkScalarParameter
   , withMany
   , binaryOp
   , unaryOp
@@ -59,7 +62,7 @@ module Language.Halide.Expr
 where
 
 import Control.Exception (bracket)
-import Control.Monad (unless, (>=>))
+import Control.Monad (unless)
 import Data.IORef
 import Data.Int (Int32)
 import Data.Proxy
@@ -67,7 +70,6 @@ import Data.Ratio (denominator, numerator)
 import Data.Text (Text, unpack)
 import qualified Data.Text.Encoding as T
 import qualified Data.Vector.Storable.Mutable as SM
-import Foreign.C.Types (CDouble)
 import Foreign.ForeignPtr
 import Foreign.Marshal (alloca, allocaArray, peekArray, toBool, with)
 import Foreign.Ptr (Ptr, castPtr, nullPtr)
@@ -111,10 +113,10 @@ type instance FromTuple (Expr a) = Arguments '[Expr a]
 
 -- | A scalar expression in Halide.
 --
--- This is a wrapper around [@Halide::Expr@](https://halide-lang.org/docs/struct_halide_1_1_expr.html) C++ type.
---
--- We want to derive 'Num', 'Floating' etc. instances for t'Expr', so we can't
--- encode v'Expr', 'Var' and 'RVar' as different types.
+-- To have a nice experience writing arithmetic expressions in terms of @Expr@s, we want to derive 'Num',
+-- 'Floating' etc. instances for @Expr@. Unfortunately, that means that we encode v'Expr', v'Var', v'RVar',
+-- and v'ScalarParam' by the same type, and passing an @Expr@ to a function that expects a @Var@ will produce
+-- a runtime error.
 data Expr a
   = -- | Scalar expression.
     Expr (ForeignPtr CxxExpr)
@@ -128,6 +130,15 @@ data Expr a
     -- call to 'asExpr'.
     ScalarParam (IORef (Maybe (ForeignPtr CxxParameter)))
 
+-- | A v'Var'.
+type Var = Expr Int32
+
+-- | An v'RVar'.
+type RVar = Expr Int32
+
+-- | Either v'Var' or v'RVar'.
+type VarOrRVar = Expr Int32
+
 -- | Create a scalar expression from a Haskell value.
 mkExpr :: IsHalideType a => a -> Expr a
 mkExpr x = unsafePerformIO $! Expr <$> toCxxExpr x
@@ -138,17 +149,15 @@ mkVar (T.encodeUtf8 -> s) = fmap Var . cxxConstruct $ \ptr ->
   [CU.exp| void {
     new ($(Halide::Var* ptr)) Halide::Var{std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}} } |]
 
--- | Wrap a raw @Halide::Var@ pointer in a Haskell value.
---
--- __Note:__ 'Var' objects correspond to expressions of type 'Int32'.
--- wrapCxxVar :: Ptr CxxVar -> IO (Expr Int32)
--- wrapCxxVar = fmap Var . newForeignPtr deleter
---   where
---     deleter = [C.funPtr| void deleteExpr(Halide::Var *p) { delete p; } |]
-
---
---
-mkRVar :: Text -> Expr Int32 -> Expr Int32 -> IO (Expr Int32)
+-- | Create a named reduction variable.
+mkRVar
+  :: Text
+  -- ^ name
+  -> Expr Int32
+  -- ^ min index
+  -> Expr Int32
+  -- ^ extent
+  -> IO (Expr Int32)
 mkRVar name min extent =
   asExpr min $ \min' ->
     asExpr extent $ \extent' ->
@@ -175,20 +184,11 @@ undef = unsafePerformIO $
           Halide::Expr{Halide::undef(Halide::Type{*$(const halide_type_t* tp)})} } |]
 {-# NOINLINE undef #-}
 
--- | Create a named reduction variable.
--- mkRVar :: Text -> IO (Expr Int32)
--- mkRVar name =
---   wrapCxxRVar
---     =<< [CU.exp| Halide::RVar* {
---           new Halide::RVar{std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}} } |]
---   where
---     s = T.encodeUtf8 name
-
 -- | Cast a scalar expression to a different type.
 --
--- Use TypeApplications with this function, e.g. 'cast @Float x'.
-cast :: forall to from. (HasCallStack, IsHalideType to, IsHalideType from) => Expr from -> Expr to
-cast expr = unsafePerformIO $!
+-- Use TypeApplications with this function, e.g. @cast \@Float x@.
+cast :: forall to from. (IsHalideType to, IsHalideType from) => Expr from -> Expr to
+cast expr = unsafePerformIO $
   asExpr expr $ \e ->
     with (halideTypeFor (Proxy @to)) $ \t ->
       cxxConstructExpr $ \ptr ->
@@ -202,32 +202,48 @@ printed :: IsHalideType a => Expr a -> Expr a
 printed = unaryOp $ \e ptr ->
   [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{print(*$(Halide::Expr* e))} } |]
 
--- | Compare two scalar expressions for equality.
-equal :: (HasCallStack, IsHalideType a) => Expr a -> Expr a -> Expr Bool
-equal a' b' = unsafePerformIO $!
-  asExpr a' $ \a -> asExpr b' $ \b ->
-    cxxConstructExpr $ \ptr ->
-      [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
-        (*$(Halide::Expr* a)) == (*$(Halide::Expr* b))} } |]
+infix 4 `eq`, `neq`, `lt`, `lte`, `gt`, `gte`
 
-lessThan :: (HasCallStack, IsHalideType a) => Expr a -> Expr a -> Expr Bool
-lessThan a' b' = unsafePerformIO $!
-  asExpr a' $ \a -> asExpr b' $ \b ->
-    cxxConstructExpr $ \ptr ->
-      [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
-        (*$(Halide::Expr* a)) < (*$(Halide::Expr* b))} } |]
+-- | '==' but lifted to return an 'Expr'.
+eq :: IsHalideType a => Expr a -> Expr a -> Expr Bool
+eq = binaryOp $ \a b ptr ->
+  [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+    (*$(Halide::Expr* a)) == (*$(Halide::Expr* b))} } |]
 
-greaterThan :: (HasCallStack, IsHalideType a) => Expr a -> Expr a -> Expr Bool
-greaterThan a' b' = unsafePerformIO $!
-  asExpr a' $ \a -> asExpr b' $ \b ->
-    cxxConstructExpr $ \ptr ->
-      [CU.exp| void { new (($(Halide::Expr* ptr))) Halide::Expr{
-        (*$(Halide::Expr* a)) > (*$(Halide::Expr* b))} } |]
+-- | '/=' but lifted to return an 'Expr'.
+neq :: IsHalideType a => Expr a -> Expr a -> Expr Bool
+neq = binaryOp $ \a b ptr ->
+  [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+    (*$(Halide::Expr* a)) != (*$(Halide::Expr* b))} } |]
 
--- | Similar to the standard @bool@ function from Prelude except that it's
+-- | '<' but lifted to return an 'Expr'.
+lt :: IsHalideType a => Expr a -> Expr a -> Expr Bool
+lt = binaryOp $ \a b ptr ->
+  [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+    (*$(Halide::Expr* a)) < (*$(Halide::Expr* b))} } |]
+
+-- | '<=' but lifted to return an 'Expr'.
+lte :: IsHalideType a => Expr a -> Expr a -> Expr Bool
+lte = binaryOp $ \a b ptr ->
+  [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+    (*$(Halide::Expr* a)) <= (*$(Halide::Expr* b))} } |]
+
+-- | '>' but lifted to return an 'Expr'.
+gt :: IsHalideType a => Expr a -> Expr a -> Expr Bool
+gt = binaryOp $ \a b ptr ->
+  [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+    (*$(Halide::Expr* a)) > (*$(Halide::Expr* b))} } |]
+
+-- | '>=' but lifted to return an 'Expr'.
+gte :: IsHalideType a => Expr a -> Expr a -> Expr Bool
+gte = binaryOp $ \a b ptr ->
+  [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+    (*$(Halide::Expr* a)) >= (*$(Halide::Expr* b))} } |]
+
+-- | Similar to the standard 'Prelude.bool' function from Prelude except that it's
 -- lifted to work with 'Expr' types.
-bool :: (HasCallStack, IsHalideType a) => Expr Bool -> Expr a -> Expr a -> Expr a
-bool condExpr trueExpr falseExpr = unsafePerformIO $!
+bool :: IsHalideType a => Expr Bool -> Expr a -> Expr a -> Expr a
+bool condExpr trueExpr falseExpr = unsafePerformIO $
   asExpr condExpr $ \p ->
     asExpr trueExpr $ \t ->
       asExpr falseExpr $ \f ->
@@ -294,18 +310,6 @@ instance IsHalideType a => Show (Expr a) where
             =<< [CU.exp| std::string* {
                   new std::string{$(const Halide::Internal::Parameter* x)->name()} } |]
       Nothing -> pure "ScalarParam"
-
--- | When 'Expr' is a 'ScalarParam', this function let's you set its name.
--- This name will be used in the code generated by Halide.
-instance IsHalideType a => Named (Expr a) where
-  setName :: HasCallStack => Expr a -> Text -> IO ()
-  setName (ScalarParam r) name = do
-    readIORef r >>= \case
-      Just _ -> error "the name of this Expr has already been set"
-      Nothing -> do
-        fp <- mkScalarParameter @a (Just name)
-        writeIORef r (Just fp)
-  setName _ _ = error "cannot set the name of an expression that is not a parameter"
 
 instance (IsHalideType a, Num a) => Num (Expr a) where
   fromInteger :: Integer -> Expr a
@@ -401,7 +405,7 @@ cxxConstructExpr construct = do
 
 -- | Wrap a raw @Halide::RVar@ pointer in a Haskell value.
 --
--- __Note:__ 'Var' objects correspond to expressions of type 'Int32'.
+-- __Note:__ v'RVar' objects correspond to expressions of type 'Int32'.
 wrapCxxRVar :: Ptr CxxRVar -> IO (Expr Int32)
 wrapCxxRVar = fmap RVar . newForeignPtr deleter
   where
@@ -464,7 +468,7 @@ instance HasHalideType (Ptr CxxParameter) where
 
 -- | Wrap a raw @Halide::Internal::Parameter@ pointer in a Haskell value.
 --
--- __Note:__ 'Var' objects correspond to expressions of type 'Int32'.
+-- __Note:__ v'Var' objects correspond to expressions of type 'Int32'.
 wrapCxxParameter :: Ptr CxxParameter -> IO (ForeignPtr CxxParameter)
 wrapCxxParameter = newForeignPtr deleter
   where
@@ -596,8 +600,8 @@ asRVar :: HasCallStack => Expr Int32 -> (Ptr CxxRVar -> IO b) -> IO b
 asRVar (RVar fp) = withForeignPtr fp
 asRVar _ = error "the expression is not an RVar"
 
--- | Use the underlying 'Var' or 'RVar' as @Halide::VarOrRVar@ in an 'IO' action.
-asVarOrRVar :: HasCallStack => Expr Int32 -> (Ptr CxxVarOrRVar -> IO b) -> IO b
+-- | Use the underlying v'Var' or v'RVar' as @Halide::VarOrRVar@ in an 'IO' action.
+asVarOrRVar :: HasCallStack => VarOrRVar -> (Ptr CxxVarOrRVar -> IO b) -> IO b
 asVarOrRVar x action = case x of
   Var fp ->
     let allocate p = [CU.exp| Halide::VarOrRVar* { new Halide::VarOrRVar{*$(Halide::Var* p)} } |]
@@ -633,7 +637,12 @@ unaryOp f a = unsafePerformIO $
       f aPtr destPtr
 
 -- | Lift a binary function working with @Halide::Expr@ to work with 'Expr'.
-binaryOp :: IsHalideType a => (Ptr CxxExpr -> Ptr CxxExpr -> Ptr CxxExpr -> IO ()) -> Expr a -> Expr a -> Expr a
+binaryOp
+  :: (IsHalideType a, IsHalideType b, IsHalideType c)
+  => (Ptr CxxExpr -> Ptr CxxExpr -> Ptr CxxExpr -> IO ())
+  -> Expr a
+  -> Expr b
+  -> Expr c
 binaryOp f a b = unsafePerformIO $
   asExpr a $ \aPtr -> asExpr b $ \bPtr ->
     cxxConstructExpr $ \destPtr ->

@@ -6,7 +6,6 @@ import Control.Monad (forM_)
 import qualified Data.Text.IO as T
 import GHC.TypeLits
 import Language.Halide
-import Language.Halide.Schedule
 import Test.Hspec
 import Test.Hspec.QuickCheck
 import Utils

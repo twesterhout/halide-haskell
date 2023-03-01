@@ -29,7 +29,7 @@ spec = do
         j <- mkVar "j"
         define "out" (i, j) $
           bool
-            (i `equal` j)
+            (i `eq` j)
             (v ! i / scale)
             0
       let a :: [Double]

@@ -2,7 +2,6 @@ module Language.Halide.Tutorial05Spec (spec) where
 
 import GHC.TypeLits (KnownNat)
 import Language.Halide
-import Language.Halide.Trace
 import Test.Hspec hiding (parallel)
 import Utils
 

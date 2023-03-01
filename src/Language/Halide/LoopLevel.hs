@@ -26,7 +26,7 @@ module Language.Halide.LoopLevel
 where
 
 import Control.Exception (bracket)
-import Data.Text (Text, unpack)
+import Data.Text (Text)
 import Foreign.ForeignPtr
 import Foreign.Marshal (toBool)
 import Foreign.Ptr (Ptr)

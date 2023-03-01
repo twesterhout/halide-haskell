@@ -30,9 +30,7 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import GHC.Exts (IsList (..))
 import GHC.Stack
-import Language.Halide.Expr
-import Language.Halide.Schedule
-import Language.Halide.Target
+import Language.Halide
 import System.IO (stderr)
 import Test.HUnit
 import Test.HUnit.Lang (FailureReason (..), HUnitFailure (..))
@@ -94,12 +92,12 @@ instance EqForTesting (Expr Int32) where
 instance EqForTesting SplitContents where
   a `equalForTesting` b =
     and
-      [ a.old == b.old
-      , a.outer == b.outer
-      , a.inner == b.inner
-      , a.factor `equalForTesting` b.factor
-      , a.exact == b.exact
-      , a.tail == b.tail
+      [ a.splitOld == b.splitOld
+      , a.splitOuter == b.splitOuter
+      , a.splitInner == b.splitInner
+      , a.splitFactor `equalForTesting` b.splitFactor
+      , a.splitExact == b.splitExact
+      , a.splitTail == b.splitTail
       ]
 
 instance EqForTesting Split where
@@ -108,16 +106,16 @@ instance EqForTesting Split where
   _ `equalForTesting` _ = False
 
 instance EqForTesting ReductionVariable where
-  a `equalForTesting` b = a.var == b.var && a.min `equalForTesting` b.min && a.extent `equalForTesting` b.extent
+  a `equalForTesting` b = a.varName == b.varName && a.minExpr `equalForTesting` b.minExpr && a.extentExpr `equalForTesting` b.extentExpr
 
 instance EqForTesting PrefetchDirective where
   a `equalForTesting` b =
     and
-      [ a.funcName == b.funcName
-      , a.atVar == b.atVar
-      , a.fromVar == b.fromVar
-      , a.offset `equalForTesting` b.offset
-      , a.strategy == b.strategy
+      [ a.prefetchFunc == b.prefetchFunc
+      , a.prefetchAt == b.prefetchAt
+      , a.prefetchFrom == b.prefetchFrom
+      , a.prefetchOffset `equalForTesting` b.prefetchOffset
+      , a.prefetchStrategy == b.prefetchStrategy
       ]
 
 instance EqForTesting StageSchedule where

@@ -61,8 +61,8 @@ common common-options
 library
   import:          common-options
   hs-source-dirs:  src
-  exposed-modules:
-    Language.Halide
+  exposed-modules: Language.Halide
+  other-modules:
     Language.Halide.Buffer
     Language.Halide.Context
     Language.Halide.Dimension

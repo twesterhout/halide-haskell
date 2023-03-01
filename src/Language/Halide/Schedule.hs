@@ -36,7 +36,6 @@ module Language.Halide.Schedule
 where
 
 import Control.Monad (void)
-import Data.Maybe (fromMaybe)
 import Data.Text (Text, pack, unpack)
 import qualified Data.Text as T
 import Data.Text.Encoding (encodeUtf8)
@@ -79,16 +78,18 @@ data ForType
 data Dim = Dim {var :: !Text, forType :: !ForType, deviceApi :: !DeviceAPI, dimType :: !DimType}
   deriving stock (Show, Eq)
 
-data FuseContents = FuseContents {outer :: !Text, inner :: !Text, new :: !Text}
+data FuseContents = FuseContents
+  { fuseOuter :: !Text
+  , fuseInner :: !Text, fuseNew :: !Text}
   deriving stock (Show, Eq)
 
 data SplitContents = SplitContents
-  { old :: !Text
-  , outer :: !Text
-  , inner :: !Text
-  , factor :: !(Expr Int32)
-  , exact :: !Bool
-  , tail :: !TailStrategy
+  { splitOld :: !Text
+  , splitOuter :: !Text
+  , splitInner :: !Text
+  , splitFactor :: !(Expr Int32)
+  , splitExact :: !Bool
+  , splitTail :: !TailStrategy
   }
   deriving stock (Show)
 
@@ -98,19 +99,19 @@ data Split
   deriving stock (Show)
 
 data Bound = Bound
-  { var :: !Text
-  , min :: !(Maybe (Expr Int32))
-  , extent :: !(Expr Int32)
-  , modulus :: !(Maybe (Expr Int32))
-  , remainder :: !(Maybe (Expr Int32))
+  { boundVar :: !Text
+  , boundMin :: !(Maybe (Expr Int32))
+  , boundExtent :: !(Expr Int32)
+  , boundModulus :: !(Maybe (Expr Int32))
+  , boundRemainder :: !(Maybe (Expr Int32))
   }
   deriving stock (Show)
 
 data StorageDim = StorageDim
-  { var :: !Text
-  , alignment :: !(Maybe (Expr Int32))
-  , bound :: !(Maybe (Expr Int32))
-  , fold :: !(Maybe (Expr Int32, Bool))
+  { storageVar :: !Text
+  , storageAlignment :: !(Maybe (Expr Int32))
+  , storageBound :: !(Maybe (Expr Int32))
+  , storageFold :: !(Maybe (Expr Int32, Bool))
   }
   deriving stock (Show)
 
@@ -120,7 +121,7 @@ data FusedPair = FusedPair !Text !(Text, Int) !(Text, Int)
 data FuseLoopLevel = FuseLoopLevel !SomeLoopLevel
   deriving stock (Show, Eq)
 
-data ReductionVariable = ReductionVariable {var :: !Text, min :: !(Expr Int32), extent :: !(Expr Int32)}
+data ReductionVariable = ReductionVariable {varName :: !Text, minExpr :: !(Expr Int32), extentExpr :: !(Expr Int32)}
   deriving stock (Show)
 
 data PrefetchBoundStrategy
@@ -130,12 +131,12 @@ data PrefetchBoundStrategy
   deriving stock (Show, Eq)
 
 data PrefetchDirective = PrefetchDirective
-  { funcName :: !Text
-  , atVar :: !Text
-  , fromVar :: !Text
-  , offset :: !(Expr Int32)
-  , strategy :: !PrefetchBoundStrategy
-  , fromParameter :: !(Maybe (ForeignPtr CxxParameter))
+  { prefetchFunc :: !Text
+  , prefetchAt :: !Text
+  , prefetchFrom :: !Text
+  , prefetchOffset :: !(Expr Int32)
+  , prefetchStrategy :: !PrefetchBoundStrategy
+  , prefetchParameter :: !(Maybe (ForeignPtr CxxParameter))
   }
   deriving stock (Show)
 
@@ -501,14 +502,14 @@ makeUnqualified = snd . T.breakOnEnd "."
 
 applySplit :: (KnownNat n, IsHalideType a) => Split -> Stage n a -> IO ()
 applySplit (SplitVar x) stage = do
-  oldVar <- mkVar (makeUnqualified x.old)
-  outerVar <- mkVar (makeUnqualified x.outer)
-  innerVar <- mkVar (makeUnqualified x.inner)
-  void $ Language.Halide.Func.split x.tail oldVar (outerVar, innerVar) x.factor stage
+  oldVar <- mkVar (makeUnqualified x.splitOld)
+  outerVar <- mkVar (makeUnqualified x.splitOuter)
+  innerVar <- mkVar (makeUnqualified x.splitInner)
+  void $ Language.Halide.Func.split x.splitTail oldVar (outerVar, innerVar) x.splitFactor stage
 applySplit (FuseVars x) stage = do
-  newVar <- mkVar (makeUnqualified x.new)
-  innerVar <- mkVar (makeUnqualified x.inner)
-  outerVar <- mkVar (makeUnqualified x.outer)
+  newVar <- mkVar (makeUnqualified x.fuseNew)
+  innerVar <- mkVar (makeUnqualified x.fuseInner)
+  outerVar <- mkVar (makeUnqualified x.fuseOuter)
   void $ Language.Halide.Func.fuse (innerVar, outerVar) newVar stage
 
 applySplits :: (KnownNat n, IsHalideType a) => [Split] -> Stage n a -> IO ()

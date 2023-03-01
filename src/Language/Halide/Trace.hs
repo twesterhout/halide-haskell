@@ -1,5 +1,4 @@
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -13,8 +12,6 @@ module Language.Halide.Trace
   ( TraceEvent (..)
   , TraceEventCode (..)
   , TraceLoadStoreContents (..)
-  , peekTraceEvent
-  , withTrace
   , setCustomTrace
   , traceStores
   , traceLoads
@@ -42,6 +39,7 @@ import Language.Halide.LoopLevel
 import Language.Halide.Type
 import Prelude hiding (min, tail)
 
+-- | Haskell counterpart of [@halide_trace_event_code_t@](https://halide-lang.org/docs/_halide_runtime_8h.html#a485130f12eb8bb5fa5a9478eeb6b0dfa).
 data TraceEventCode
   = TraceLoad
   | TraceStore
@@ -57,15 +55,15 @@ data TraceEventCode
   deriving stock (Show, Eq, Ord)
 
 data TraceLoadStoreContents = TraceLoadStoreContents
-  { value :: !(Ptr ())
+  { valuePtr :: !(Ptr ())
   , valueType :: !HalideType
   , coordinates :: ![Int]
   }
   deriving stock (Show)
 
 data TraceEvent = TraceEvent
-  { func :: !Text
-  , code :: !TraceEventCode
+  { funcName :: !Text
+  , eventCode :: !TraceEventCode
   , loadStoreContents :: !(Maybe TraceLoadStoreContents)
   }
   deriving stock (Show)
@@ -133,9 +131,9 @@ withTrace customTrace = bracket allocate destroy
 
 setCustomTrace
   :: (KnownNat n, IsHalideType a)
-  => (TraceEvent -> IO ())
-  -> Func t n a
-  -> IO b
+  => (TraceEvent -> IO ()) -- ^ Custom trace function
+  -> Func t n a -- ^ For which func to enable it
+  -> IO b -- ^ For the duration of which computation to enable it
   -> IO b
 setCustomTrace customTrace f action =
   withTrace customTrace $ \tracePtr ->
@@ -173,10 +171,6 @@ collectIterationOrder
   -> IO b
   -> IO ([[Int]], b)
 collectIterationOrder cond f action = do
-  -- case c of
-  --   TraceLoad -> void (traceLoads f)
-  --   TraceStore -> void (traceStores f)
-  --   _ -> pure ()
   m <- newMVar []
   let tracer (TraceEvent _ c' (Just payload))
         | cond c' = modifyMVar_ m $ pure . (payload.coordinates :)

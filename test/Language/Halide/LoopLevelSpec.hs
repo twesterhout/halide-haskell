@@ -5,22 +5,22 @@
 
 module Language.Halide.LoopLevelSpec (spec) where
 
-import Control.Exception (catch)
-import Control.Monad (void)
-import Control.Monad.ST (RealWorld)
-import Data.Function ((&))
-import Data.Int
-import Data.Text (Text)
-import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
-import qualified Data.Text.IO as T
-import qualified Data.Vector.Storable as S
-import qualified Data.Vector.Storable.Mutable as SM
-import qualified Language.C.Inline.Cpp.Exception as C
-import qualified Language.C.Inline.Unsafe as CU
+-- import Control.Exception (catch)
+-- import Control.Monad (void)
+-- import Control.Monad.ST (RealWorld)
+-- import Data.Function ((&))
+-- import Data.Int
+-- import Data.Text (Text)
+-- import qualified Data.Text as T
+-- import qualified Data.Text.Encoding as T
+-- import qualified Data.Text.IO as T
+-- import qualified Data.Vector.Storable as S
+-- import qualified Data.Vector.Storable.Mutable as SM
+-- import qualified Language.C.Inline.Cpp.Exception as C
+-- import qualified Language.C.Inline.Unsafe as CU
+-- import Language.Halide.Context
+-- import Language.Halide.LoopLevel
 import Language.Halide
-import Language.Halide.Context
-import Language.Halide.LoopLevel
 import Test.Hspec
 
 importHalide
