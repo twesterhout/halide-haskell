@@ -42,7 +42,6 @@ module Language.Halide.Type
   , Curry (..)
   , defineIsHalideTypeInstances
   , instanceHasCxxVector
-  , Named (..)
   , HasCxxVector (..)
   , IsTuple (..)
   , FromTuple
@@ -61,14 +60,12 @@ import Data.Coerce
 import Data.Constraint
 import Data.Int
 import Data.Kind (Type)
-import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Word
 import Foreign.C.Types
 import Foreign.ForeignPtr
 import Foreign.Ptr
 import Foreign.Storable
-import GHC.Stack (HasCallStack)
 import GHC.TypeLits
 import qualified Language.C.Inline as C
 import qualified Language.C.Inline.Unsafe as CU
@@ -366,11 +363,7 @@ instance Curry '[] r r where
 instance Curry args r f => Curry (a ': args) r (a -> f) where
   curryG f a = curryG (\args -> f (a ::: args))
 
--- | A typeclass for named parameters.
-class Named a where
-  -- | Set the name of a parameter.
-  setName :: HasCallStack => a -> Text -> IO ()
-
+-- | Type family that maps @'Arguments' ts@ to the corresponding tuple type.
 type family ToTuple t where
   ToTuple (Arguments '[]) = ()
   ToTuple (Arguments '[a1]) = a1
@@ -379,6 +372,8 @@ type family ToTuple t where
   ToTuple (Arguments '[a1, a2, a3, a4]) = (a1, a2, a3, a4)
   ToTuple (Arguments '[a1, a2, a3, a4, a5]) = (a1, a2, a3, a4, a5)
 
+-- | Type family that maps tuples to the corresponding @'Arguments' ts@ type. This is essentially the inverse
+-- of 'ToTuple'.
 type family FromTuple t
 
 type instance FromTuple () = Arguments '[]

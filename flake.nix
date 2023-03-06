@@ -168,6 +168,7 @@
                   withHoogle = true;
                   nativeBuildInputs = with pkgs; with ps; [
                     cabal-install
+                    doctest
                     haskell-language-server
                     # Formatters
                     fourmolu

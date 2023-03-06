@@ -24,6 +24,9 @@ module Language.Halide.Kernel
   , compileToCallable
   , compileToLoweredStmt
   , StmtOutputFormat (..)
+  , IsFuncBuilder
+  , ReturnsFunc
+  , Lowered
   )
 where
 
@@ -192,6 +195,7 @@ wrapCxxCallable = fmap Callable . newForeignPtr deleter
   where
     deleter = [C.funPtr| void deleteCallable(Halide::Callable* p) { delete p; } |]
 
+-- | Specifies how t'Expr' and t'Func' parameters become scalar and buffer arguments in compiled kernels.
 type family Lowered (t :: k) :: k where
   Lowered (Expr a) = a
   Lowered (Func t n a) = Ptr (HalideBuffer n a)
@@ -199,6 +203,7 @@ type family Lowered (t :: k) :: k where
   Lowered (Expr a ': ts) = (a ': Lowered ts)
   Lowered (Func t n a ': ts) = (Ptr (HalideBuffer n a) ': Lowered ts)
 
+-- | A constraint that specifies that the function @f@ returns @'IO' ('Func' t n a)@.
 class (FunctionReturn f ~ IO (Func t n a), IsHalideType a, KnownNat n) => ReturnsFunc f t n a | f -> t n a
 
 instance (FunctionReturn f ~ IO (Func t n a), IsHalideType a, KnownNat n) => ReturnsFunc f t n a
@@ -278,17 +283,43 @@ callableToFunction (Callable callable) = do
         touch callable
   pure $ curryG @inputs @(output -> IO ()) kernel
 
--- | Convert a function that builds a Halide 'Func' into a normal Haskell
--- function acccepting scalars and 'HalideBuffer's.
+-- | Convert a function that builds a Halide 'Func' into a normal Haskell function acccepting scalars and
+-- 'HalideBuffer's.
+--
+-- For example:
+--
+-- @
+-- builder :: Expr Float -> Func 'ParamTy 1 Float -> IO (Func 'FuncTy 1 Float)
+-- builder scale inputVector = do
+--   i <- 'mkVar' "i"
+--   scaledVector <- 'define' "scaledVector" i $ scale * inputVector '!' i
+--   pure scaledVector
+-- @
+--
+-- The @builder@ function accepts a scalar parameter and a vector and scales the vector by the given factor.
+-- We can now pass @builder@ to 'compile':
+--
+-- @
+-- scaler <- 'compile' builder
+-- 'withHalideBuffer' @1 @Float [1, 1, 1] $ \inputVector ->
+--   'allocaCpuBuffer' [3] $ \outputVector -> do
+--     -- invoke the kernel
+--     scaler 2.0 inputVector outputVector
+--     -- print the result
+--     print =<< 'peekToList' outputVector
+-- @
 compile
   :: forall n a t f kernel
    . ( IsFuncBuilder f t n a
      , Curry (Lowered (FunctionArguments f)) (Ptr (HalideBuffer n a) -> IO ()) kernel
      )
   => f
+  -- ^ Function to compile
   -> IO kernel
+  -- ^ Compiled kernel
 compile = compileForTarget hostTarget
 
+-- | Similar to 'compile', but the first argument lets you explicitly specify the compilation target.
 compileForTarget
   :: forall n a t f kernel
    . ( IsFuncBuilder f t n a
@@ -299,7 +330,12 @@ compileForTarget
   -> IO kernel
 compileForTarget target builder = compileToCallable target builder >>= callableToFunction
 
-data StmtOutputFormat = StmtText | StmtHTML
+-- | Format in which to return the lowered code.
+data StmtOutputFormat
+  = -- | plain text
+    StmtText
+  | -- | HTML
+    StmtHTML
   deriving stock (Show, Eq)
 
 instance Enum StmtOutputFormat where
@@ -312,6 +348,9 @@ instance Enum StmtOutputFormat where
     | fromIntegral k == [CU.pure| int { static_cast<int>(Halide::StmtOutputFormat::HTML) } |] = StmtHTML
     | otherwise = error $ "invalid StmtOutputFormat " <> show k
 
+-- | Get the internal representation of lowered code.
+--
+-- Useful for analyzing and debugging scheduling. Can emit HTML or plain text.
 compileToLoweredStmt
   :: forall n a t f. (IsFuncBuilder f t n a) => StmtOutputFormat -> Target -> f -> IO Text
 compileToLoweredStmt format target builder = do

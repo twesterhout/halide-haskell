@@ -236,6 +236,11 @@ bufferFromPtrShape p shape = bufferFromPtrShapeStrides p shape (colMajorStrides 
 class (KnownNat n, IsHalideType a) => IsHalideBuffer t n a where
   withHalideBufferImpl :: t -> (Ptr (HalideBuffer n a) -> IO b) -> IO b
 
+-- | Treat a type @t@ as a 'HalideBuffer' and use it in an 'IO' action.
+--
+-- This function is a simple wrapper around 'withHalideBufferImpl', except that the order of type parameters
+-- is reversed. If you have @TypeApplications@ extension enabled, this allows you to write
+-- @withHalideBuffer @3 @Float yourBuffer@ to specify that you want a 3-dimensional buffer of @Float@.
 withHalideBuffer :: forall n a t b. IsHalideBuffer t n a => t -> (Ptr (HalideBuffer n a) -> IO b) -> IO b
 withHalideBuffer = withHalideBufferImpl @t @n @a
 

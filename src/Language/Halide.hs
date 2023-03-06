@@ -72,24 +72,42 @@ module Language.Halide
   , bufferFromPtrShape
 
     -- * Running the pipelines
+
+    -- | There are a few ways how one can run a Halide pipeline.
+    --
+    -- The simplest way to build a t'Func' and then call 'realize' to evaluate it over a rectangular domain.
   , realize
+  , asBufferParam
+    -- | The drawback of calling 'realize' all the time is that it's impossible to pass parameters to pipelines.
+    -- We can define pipelines that operate on buffers using 'asBufferParam', but we have to recompile the
+    -- pipeline for every new buffer.
+    --
+    -- A better way to handle pipeline parameters is to define a /Haskell/ function that accepts t'Expr's
+    -- and t'Func's as arguments and returns a 'Func'. We can then pass this function to 'compile'
+    -- (or 'compileForTarget'), and it compile it into a /Haskell/ function that can now be invoked with
+    -- normal scalars instead of t'Expr's and @Ptr 'HalideBuffer'@s instead of 'Func's.
   , compile
 
     -- ** Parameters
-  , scalar
+
+    -- | Similar to how we can specify the name of a variable in 'mkVar' (or 'mkRVar') or function in 'define',
+    -- one can also specify the name of a pipeline parameter. This is achieved by using the @ViewPatterns@
+    -- extension together with the 'scalar' and 'buffer' helper functions.
   , buffer
+  , scalar
+    -- | Another common thing to do with the parameters is to explicitly specify their shapes. For this, we expose the 'Dimension' type:
   , Dimension (..)
+  , dim
   , setMin
   , setExtent
   , setStride
   , setEstimate
-  , asBufferParam
 
     -- ** Targets
-  , compileForTarget
+  , Target (..)
   , hostTarget
   , gpuTarget
-  , Target (..)
+  , compileForTarget
   , DeviceAPI (..)
   , TargetFeature (..)
   , setFeature
@@ -112,7 +130,6 @@ module Language.Halide
   , copyToHost
   , storeAt
   , computeAt
-  , dim
   , estimate
   , bound
 
@@ -134,8 +151,15 @@ module Language.Halide
   , traceLoads
   , collectIterationOrder
 
-    -- * Internal
+    -- * Type helpers
   , IsTuple (..)
+  , ToTuple
+  , FromTuple
+  , IndexTuple
+  , Length
+  , All
+
+    -- * Internal
   , compileToCallable
   , testCUDA
   , testOpenCL
@@ -149,9 +173,26 @@ module Language.Halide
   , isHostDirty
   , bufferCopyToHost
   , module Language.Halide.Schedule
+  , IsFuncBuilder
+  , ReturnsFunc
+  , FunctionArguments
+  , FunctionReturn
+  , Curry (..)
+  , UnCurry (..)
+  , Lowered
 
     -- ** inline-c helpers
   , importHalide
+  , CxxExpr
+  , CxxVar
+  , CxxRVar
+  , CxxParameter
+  , CxxFunc
+  , CxxImageParam
+  , CxxStage
+  , CxxDimension
+  , CxxTarget
+  , CxxLoopLevel
 
     -- * Convenience re-exports
   , Int32

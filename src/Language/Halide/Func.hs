@@ -54,9 +54,9 @@ module Language.Halide.Func
 
     -- * Debugging
   , prettyLoopNest
-  , realize1D
 
     -- * Internal
+  , IndexTuple
   , asBufferParam
   , withFunc
   , withBufferParam
@@ -74,9 +74,6 @@ import Data.Kind (Type)
 import Data.Proxy
 import Data.Text (Text)
 import qualified Data.Text.Encoding as T
-import Data.Vector.Storable (Vector)
-import qualified Data.Vector.Storable as S
-import qualified Data.Vector.Storable.Mutable as SM
 import Foreign.ForeignPtr
 import Foreign.Marshal (toBool, with)
 import Foreign.Ptr (Ptr, castPtr)
@@ -590,7 +587,10 @@ bound var min extent func =
       $(Halide::Func* f)->bound(
         *$(Halide::Var* i), *$(Halide::Expr* minExpr), *$(Halide::Expr* extentExpr)) } |]
 
-getArgs :: (KnownNat n, IsHalideType a) => Func t n a -> IO [Expr Int32]
+-- | Get the index arguments of the function.
+--
+-- The returned list contains exactly @n@ elements.
+getArgs :: (KnownNat n, IsHalideType a) => Func t n a -> IO [Var]
 getArgs func =
   withFunc func $ \func' -> do
     let allocate =
@@ -603,86 +603,6 @@ getArgs func =
         fmap Var . cxxConstruct $ \ptr ->
           [CU.exp| void {
             new ($(Halide::Var* ptr)) Halide::Var{$(const std::vector<Halide::Var>* v)->at($(size_t i))} } |]
-
--- deepCopy :: (KnownNat n, IsHalideType a) => Func 'FuncTy n a -> IO (Func 'FuncTy n a)
--- deepCopy func = withFunc func $ \func' ->
---  wrapCxxFunc
---    =<< [C.throwBlock| Halide::Func* {
---          return handle_halide_exceptions([=](){
---            using namespace Halide;
---            using namespace Halide::Internal;
---            auto const& original = *$(const Halide::Func* func');
---            auto wrapper = Func{original.name() + "_wrapper"};
---            std::map<FunctionPtr, FunctionPtr> remapping;
---            original.function().deep_copy(wrapper.name(), wrapper.function().get_contents(), remapping);
---            // TODO: I don't quite understand this part... it's copy-pasted from src/Func.cpp in Halide
---            // Fix up any self-references in the clone.
---            FunctionPtr self_reference = wrapper.function().get_contents();
---            self_reference.weaken();
---            remapping.emplace(original.function().get_contents(), self_reference);
---            wrapper.function().substitute_calls(remapping);
---            return new Func{std::move(wrapper)};
---          });
---        } |]
-
--- | Tell Halide that the following dimensions correspond to GPU block indices.
---
--- This is useful for scheduling stages that will run serially within each GPU block.
--- If the selected target is not ptx, this just marks those dimensions as parallel.
--- gpuBlocks'
---   :: ( KnownNat n
---      , IsHalideType a
---      , IsTuple (Arguments ts) i
---      , All ((~) (Expr Int32)) ts
---      , Length ts <= 3
---      , 1 <= Length ts
---      )
---   => DeviceAPI
---   -> i
---   -> Func t n a
---   -> IO (Func t n a)
--- gpuBlocks' deviceApi vars func = do
---   withFunc func $ \f ->
---     asVectorOf @((~) (Expr Int32)) asVarOrRVar (fromTuple vars) $ \i -> do
---       [C.throwBlock| void {
---         handle_halide_exceptions([=](){
---           auto const& v = *$(std::vector<Halide::VarOrRVar>* i);
---           auto& fn = *$(Halide::Func* f);
---           auto const device = static_cast<Halide::DeviceAPI>($(int api));
---           if (v.size() == 1) {
---             fn.gpu_blocks(v.at(0), device);
---           }
---           else if (v.size() == 2) {
---             fn.gpu_blocks(v.at(0), v.at(1), device);
---           }
---           else if (v.size() == 3) {
---             fn.gpu_blocks(v.at(0), v.at(1), v.at(2), device);
---           }
---           else {
---             throw std::runtime_error{"unexpected v.size() in gpuBlocks'"};
---           }
---         });
---       } |]
---   pure func
---   where
---     api = fromIntegral . fromEnum $ deviceApi
-
--- | Same as 'gpuBlocks'', but uses 'DeviceDefaultGPU'.
---
--- This is useful for scheduling stages that will run serially within each GPU block.
--- If the selected target is not ptx, this just marks those dimensions as parallel.
--- gpuBlocks
---   :: ( KnownNat n
---      , IsHalideType a
---      , IsTuple (Arguments ts) i
---      , All ((~) (Expr Int32)) ts
---      , Length ts <= 3
---      , 1 <= Length ts
---      )
---   => i
---   -> Func t n a
---   -> IO (Func t n a)
--- gpuBlocks = gpuBlocks' DeviceDefaultGPU
 
 -- | Compute all of this function once ahead of time.
 --
@@ -1050,39 +970,43 @@ realize func shape action =
       } |]
       action buf
 
--- | Evaluate this function over a one-dimensional domain and return the
+-- \| Evaluate this function over a one-dimensional domain and return the
 -- resulting buffer or buffers.
-realize1D
-  :: forall a t
-   . IsHalideType a
-  => Int
-  -- ^ @size@ of the domain. The function will be evaluated on @[0, ..., size -1]@
-  -> Func t 1 a
-  -- ^ Function to evaluate
-  -> IO (Vector a)
-realize1D size func = do
-  buf <- SM.new size
-  withHalideBuffer @1 @a buf $ \x -> do
-    let b = castPtr x
-    withFunc func $ \f ->
-      [CU.exp| void {
-        $(Halide::Func* f)->realize(
-          Halide::Pipeline::RealizationArg{$(halide_buffer_t* b)}) } |]
-  S.unsafeFreeze buf
+-- realize1D
+--   :: forall a t
+--    . IsHalideType a
+--   => Int
+--   -- ^ @size@ of the domain. The function will be evaluated on @[0, ..., size -1]@
+--   -> Func t 1 a
+--   -- ^ Function to evaluate
+--   -> IO (Vector a)
+-- realize1D size func = do
+--   buf <- SM.new size
+--   withHalideBuffer @1 @a buf $ \x -> do
+--     let b = castPtr x
+--     withFunc func $ \f ->
+--       [CU.exp| void {
+--         $(Halide::Func* f)->realize(
+--           Halide::Pipeline::RealizationArg{$(halide_buffer_t* b)}) } |]
+--   S.unsafeFreeze buf
 
 -- | A view pattern to specify the name of a buffer argument.
 --
 -- Example usage:
 --
--- > mkKernel $ \(buffer "src" -> src) -> do
--- >   i <- mkVar "i"
--- >   define "dest" i $ src ! i
+-- >>> :{
+-- _ <- compile $ \(buffer "src" -> src) -> do
+--   i <- mkVar "i"
+--   define "dest" i $ (src ! i :: Expr Float)
+-- :}
 --
 -- or if we want to specify the dimension and type, we can use type applications:
 --
--- > mkKernel $ \(buffer @1 @Float "src" -> src) -> do
--- >   i <- mkVar "i"
--- >   define "dest" $ src ! i
+-- >>> :{
+-- _ <- compile $ \(buffer @1 @Float "src" -> src) -> do
+--   i <- mkVar "i"
+--   define "dest" i $ src ! i
+-- :}
 buffer :: forall n a. (KnownNat n, IsHalideType a) => Text -> Func 'ParamTy n a -> Func 'ParamTy n a
 buffer name p@(Param r) = unsafePerformIO $ do
   _ <- getBufferParameter @n @a (Just name) r
@@ -1092,9 +1016,11 @@ buffer name p@(Param r) = unsafePerformIO $ do
 --
 -- Example usage:
 --
--- > mkKernel $ \(buffer "a" -> a) -> do
--- >   i <- mkVar "i"
--- >   define "dest" i $ a
+-- >>> :{
+-- _ <- compile $ \(scalar @Float "a" -> a) -> do
+--   i <- mkVar "i"
+--   define "dest" i $ a
+-- :}
 scalar :: forall a. IsHalideType a => Text -> Expr a -> Expr a
 scalar name (ScalarParam r) = unsafePerformIO $ do
   readIORef r >>= \case
@@ -1113,17 +1039,20 @@ wrapCxxStage = fmap Stage . newForeignPtr deleter
 withCxxStage :: (KnownNat n, IsHalideType a) => Stage n a -> (Ptr CxxStage -> IO b) -> IO b
 withCxxStage (Stage fp) = withForeignPtr fp
 
+-- | Get the pure stage of a 'Func' for the purposes of scheduling it.
 getStage :: (KnownNat n, IsHalideType a) => Func t n a -> IO (Stage n a)
 getStage func =
   withFunc func $ \func' ->
     [CU.exp| Halide::Stage* { new Halide::Stage{static_cast<Halide::Stage>(*$(Halide::Func* func'))} } |]
       >>= wrapCxxStage
 
+-- | Return 'True' when the function has update definitions, 'False' otherwise.
 hasUpdateDefinitions :: (KnownNat n, IsHalideType a) => Func t n a -> IO Bool
 hasUpdateDefinitions func =
   withFunc func $ \func' ->
     toBool <$> [CU.exp| bool { $(const Halide::Func* func')->has_update_definition() } |]
 
+-- | Get a handle to an update step for the purposes of scheduling it.
 getUpdateStage :: (KnownNat n, IsHalideType a) => Int -> Func 'FuncTy n a -> IO (Stage n a)
 getUpdateStage k func =
   withFunc func $ \func' ->
@@ -1183,7 +1112,25 @@ computeAt func level = do
       [CU.exp| void { $(Halide::Func* f)->compute_at(*$(const Halide::LoopLevel* l)) } |]
   pure func
 
-asBufferParam :: forall n a t b. IsHalideBuffer t n a => t -> (Func 'ParamTy n a -> IO b) -> IO b
+-- | Wrap a buffer into a t'Func'.
+--
+-- Suppose, we are defining a pipeline that adds together two vectors, and we'd like to call 'realize' to
+-- evaluate it directly, how do we pass the vectors to the t'Func'? 'asBufferParam' allows to do exactly this.
+--
+-- > asBuffer [1, 2, 3] $ \a ->
+-- >   asBuffer [4, 5, 6] $ \b -> do
+-- >     i <- mkVar "i"
+-- >     f <- define "vectorAdd" i $ a ! i + b ! i
+-- >     realize f [3] $ \result ->
+-- >       print =<< peekToList f
+asBufferParam
+  :: forall n a t b
+   . IsHalideBuffer t n a
+  => t
+  -- ^ Object to treat as a buffer
+  -> (Func 'ParamTy n a -> IO b)
+  -- ^ What to do with the __temporary__ buffer
+  -> IO b
 asBufferParam arr action =
   withHalideBuffer @n @a arr $ \arr' -> do
     param <- mkBufferParameter @n @a Nothing
@@ -1192,4 +1139,4 @@ asBufferParam arr action =
        in [CU.block| void {
             $(Halide::ImageParam* param')->set(Halide::Buffer<>{*$(const halide_buffer_t* buf)});
           } |]
-    action =<< Param <$> newIORef (Just param)
+    action . Param =<< newIORef (Just param)
