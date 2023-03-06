@@ -169,6 +169,7 @@
                   nativeBuildInputs = with pkgs; with ps; [
                     cabal-install
                     doctest
+                    markdown-unlit
                     haskell-language-server
                     # Formatters
                     fourmolu
