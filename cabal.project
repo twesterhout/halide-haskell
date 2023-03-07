@@ -1,2 +1,3 @@
 packages: .
-        , "tutorials/01 Basics"
+        , test-readme
+        , tutorials/01-Basics

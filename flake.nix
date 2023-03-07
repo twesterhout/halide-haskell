@@ -81,6 +81,7 @@
           "test"
           "halide-haskell.cabal"
           "README.md"
+          "test-readme/README.lhs"
           "CHANGELOG.md"
           "LICENSE"
         ];
@@ -127,6 +128,10 @@
         in
         lib.makeOverridable builder { withIntelOpenCL = false; withCuda = false; Halide = pkgs.halide; };
 
+      with-markdown-unlit = hp: p: p.overrideAttrs (attrs: {
+        nativeBuildInputs = (attrs.nativeBuildInputs or []) ++ [hp.markdown-unlit];
+      });
+
       # This allows us to build a Haskell package with any given GHC version.
       # It will also affects all dependent libraries.
       # overrides allows us to patch existing Haskell packages, or introduce new ones
@@ -136,11 +141,10 @@
           {
             overrides = self: super: {
               halide-haskell = halide-haskell-for self;
-              # self.callCabal2nix "halide-haskell" src {
-              #   Halide = pkgs.halide;
-              # };
-              #halide-haskell-cuda = self.halide-haskell.override { withCuda = true; };
-              #halide-haskell-intelOcl = self.halide-haskell.overrideAttrs (attrs: {});
+              halide-readme = with-markdown-unlit self
+                (self.callCabal2nix "halide-readme" ./test-readme { });
+              halide-tutorial01 = with-markdown-unlit self
+                (self.callCabal2nix "halide-tutorial01" ./tutorials/01-Basics { });
             };
           };
 
@@ -164,17 +168,22 @@
                 , withCuda ? false
                 } @ args:
                 ps.shellFor {
-                  packages = ps: [ (ps.halide-haskell.override args) ];
+                  packages = ps: [
+                    (ps.halide-haskell.override args)
+                    ps.halide-readme
+                    ps.halide-tutorial01
+                  ];
                   withHoogle = true;
                   nativeBuildInputs = with pkgs; with ps; [
                     cabal-install
                     doctest
-                    markdown-unlit
                     haskell-language-server
                     # Formatters
                     fourmolu
                     cabal-fmt
                     nixpkgs-fmt
+                    # Previewing markdown files
+                    python3Packages.grip
                     # For debugging Halide
                     gcc
                     gdb

@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedRecordDot #-}
@@ -56,8 +57,24 @@ import Language.Halide.Target
 import Language.Halide.Type
 import Language.Halide.Utils
 import System.FilePath (takeDirectory)
-import System.Posix.DynamicLinker
 import Prelude hiding (tail)
+
+#if USE_DLOPEN
+import qualified System.Posix.DynamicLinker as DL
+
+loadLibrary :: Text -> IO ()
+loadLibrary path = do
+  _ <- DL.dlopen (unpack path) [DL.RTLD_LAZY]
+  pure ()
+
+#else
+import qualified System.Win32.DLL as Win32
+
+loadLibrary :: Text -> IO ()
+loadLibrary path = do
+  _ <- Win32.loadLibrary (unpack path)
+  pure ()
+#endif
 
 -- | Type of dimension that tells which transformations are legal on it.
 data DimType = DimPureVar | DimPureRVar | DimImpureRVar
@@ -80,7 +97,9 @@ data Dim = Dim {var :: !Text, forType :: !ForType, deviceApi :: !DeviceAPI, dimT
 
 data FuseContents = FuseContents
   { fuseOuter :: !Text
-  , fuseInner :: !Text, fuseNew :: !Text}
+  , fuseInner :: !Text
+  , fuseNew :: !Text
+  }
   deriving stock (Show, Eq)
 
 data SplitContents = SplitContents
@@ -418,31 +437,7 @@ getStageSchedule stage =
       =<< [CU.exp| const Halide::Internal::StageSchedule* {
             &$(const Halide::Stage* stage')->get_schedule() } |]
 
--- getStageSchedule :: (KnownNat n, IsHalideType a) => Func t n a -> IO StageSchedule
--- getStageSchedule func =
---   withFunc func $ \f ->
---     wrapCxxStageSchedule
---       =<< [CU.exp| Halide::Internal::StageSchedule* {
---             new Halide::Internal::StageSchedule{$(Halide::Func const* f)->get_schedule()} } |]
-
--- instance HasField "dims" StageSchedule [Dim] where
---   getField (StageSchedule fp) = unsafePerformIO $
---     withForeignPtr fp $ \schedule -> do
---       n <-
---         fromIntegral
---           <$> [CU.exp| size_t { $(Halide::Internal::StageSchedule* schedule)->dims().size() } |]
---       allocaArray n $ \p -> do
---         [CU.block| void {
---           auto const& dims = $(Halide::Internal::StageSchedule* schedule)->dims();
---           auto* out = $(Halide::Internal::Dim* p);
---           std::copy(std::begin(dims), std::end(dims), out);
---           // auto const n = $(Halide::Internal::StageSchedule* schedule)->dims().size();
---           // for (auto i = 0; i < n; ++i) {
---           //   $(Halide::Internal::Dim* p)[i] =
---           //     $(Halide::Internal::StageSchedule* schedule)->dims()[i];
---           // }
---         } |]
---         peekArray n p
+#if USE_DLOPEN
 
 getHalideLibraryPath :: IO (Maybe Text)
 getHalideLibraryPath = do
@@ -461,6 +456,13 @@ getHalideLibraryPath = do
     then pure Nothing
     else Just . pack . takeDirectory . unpack <$> peekAndDeleteCxxString ptr
 
+#else
+
+getHalideLibraryPath :: IO (Maybe Text)
+getHalideLibraryPath = pure Nothing
+
+#endif
+
 data AutoScheduler
   = Adams2019
   | Li2018
@@ -478,8 +480,7 @@ loadAutoScheduler scheduler = do
           Adams2019 -> "autoschedule_adams2019"
           Li2018 -> "autoschedule_li2018"
           Mullapudi2016 -> "autoschedule_mullapudi2016"
-  _ <- dlopen (unpack path) [RTLD_LAZY]
-  pure ()
+  loadLibrary path
 
 applyAutoScheduler :: (KnownNat n, IsHalideType a) => AutoScheduler -> Target -> Func t n a -> IO Text
 applyAutoScheduler scheduler target func = do

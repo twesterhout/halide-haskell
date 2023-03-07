@@ -1,17 +1,7 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE InstanceSigs #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE QuasiQuotes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- |
@@ -36,21 +26,21 @@ import Control.Monad.ST (RealWorld)
 import Data.IORef
 import Data.Kind (Type)
 import Data.Primitive.PrimArray (MutablePrimArray)
-import qualified Data.Primitive.PrimArray as P
-import qualified Data.Primitive.Ptr as P
+import Data.Primitive.PrimArray qualified as P
+import Data.Primitive.Ptr qualified as P
 import Data.Proxy
 import Data.Text (Text, pack)
 import Data.Text.Encoding (encodeUtf8)
-import qualified Data.Text.IO as T
+import Data.Text.IO qualified as T
 import Foreign.C.Types (CUIntPtr (..))
 import Foreign.ForeignPtr
 import Foreign.ForeignPtr.Unsafe
 import Foreign.Ptr (FunPtr, Ptr, castPtr)
 import Foreign.Storable
 import GHC.TypeNats
-import qualified Language.C.Inline as C
-import qualified Language.C.Inline.Cpp.Exception as C
-import qualified Language.C.Inline.Unsafe as CU
+import Language.C.Inline qualified as C
+import Language.C.Inline.Cpp.Exception qualified as C
+import Language.C.Inline.Unsafe qualified as CU
 import Language.Halide.Buffer
 import Language.Halide.Context
 import Language.Halide.Expr
@@ -194,6 +184,8 @@ wrapCxxCallable :: Ptr CxxCallable -> IO (Callable inputs outputs)
 wrapCxxCallable = fmap Callable . newForeignPtr deleter
   where
     deleter = [C.funPtr| void deleteCallable(Halide::Callable* p) { delete p; } |]
+
+type Lowered :: forall k. k -> k
 
 -- | Specifies how t'Expr' and t'Func' parameters become scalar and buffer arguments in compiled kernels.
 type family Lowered (t :: k) :: k where

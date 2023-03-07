@@ -196,9 +196,13 @@ module Language.Halide
 
     -- * Convenience re-exports
   , Int32
+  , Ptr
+  , KnownNat
   )
 where
 
+import GHC.TypeLits (KnownNat)
+import Foreign.Ptr (Ptr)
 import Language.Halide.Buffer
 import Language.Halide.Context
 import Language.Halide.Dimension
