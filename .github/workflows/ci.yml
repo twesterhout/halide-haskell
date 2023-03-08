@@ -27,3 +27,4 @@ jobs:
       run: |
         nix build --accept-flake-config --print-build-logs .#ghc${{ matrix.ghc }}.halide-readme
         nix build --accept-flake-config --print-build-logs .#ghc${{ matrix.ghc }}.halide-tutorial01
+        nix build --accept-flake-config --print-build-logs .#ghc${{ matrix.ghc }}.halide-tutorial05
