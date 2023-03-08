@@ -68,16 +68,16 @@ import Data.Int (Int32)
 import Data.Proxy
 import Data.Ratio (denominator, numerator)
 import Data.Text (Text, unpack)
-import qualified Data.Text.Encoding as T
-import qualified Data.Vector.Storable.Mutable as SM
+import Data.Text.Encoding qualified as T
+import Data.Vector.Storable.Mutable qualified as SM
 import Foreign.ForeignPtr
 import Foreign.Marshal (alloca, allocaArray, peekArray, toBool, with)
 import Foreign.Ptr (Ptr, castPtr, nullPtr)
 import Foreign.Storable (peek)
 import GHC.Stack (HasCallStack)
-import qualified Language.C.Inline as C
-import qualified Language.C.Inline.Cpp.Exception as C
-import qualified Language.C.Inline.Unsafe as CU
+import Language.C.Inline qualified as C
+import Language.C.Inline.Cpp.Exception qualified as C
+import Language.C.Inline.Unsafe qualified as CU
 import Language.Halide.Buffer
 import Language.Halide.Context
 import Language.Halide.Type
@@ -150,6 +150,8 @@ mkVar (T.encodeUtf8 -> s) = fmap Var . cxxConstruct $ \ptr ->
     new ($(Halide::Var* ptr)) Halide::Var{std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}} } |]
 
 -- | Create a named reduction variable.
+--
+-- For more information about reduction variables, see [@Halide::RDom@](https://halide-lang.org/docs/class_halide_1_1_r_dom.html).
 mkRVar
   :: Text
   -- ^ name
@@ -253,7 +255,9 @@ bool condExpr trueExpr falseExpr = unsafePerformIO $
               Halide::select(*$(Halide::Expr* p),
                 *$(Halide::Expr* t), *$(Halide::Expr* f))} } |]
 
--- | Evaluate a scalar expression. It should contain no parameters.
+-- | Evaluate a scalar expression.
+--
+-- It should contain no parameters. If it does contain parameters, an exception will be thrown.
 evaluate :: forall a. IsHalideType a => Expr a -> IO a
 evaluate expr =
   asExpr expr $ \e -> do
@@ -270,6 +274,10 @@ evaluate expr =
       } |]
     SM.read out 0
 
+-- | Convert expression to integer immediate.
+--
+-- Tries to extract the value of an expression if it is a compile-time constant. If the expression
+-- isn't known at compile-time of the Halide pipeline, returns 'Nothing'.
 toIntImm :: IsHalideType a => Expr a -> Maybe Int
 toIntImm expr = unsafePerformIO $
   asExpr expr $ \expr' -> do

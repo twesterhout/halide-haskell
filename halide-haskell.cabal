@@ -13,6 +13,11 @@ description:
   This package provides Haskell bindings that allow to write Halide embedded in
   Haskell without C++.
 
+  The best way to learn Halide is to have a look at the
+  [tutorials](https://github.com/twesterhout/halide-haskell/tree/master/tutorials).
+  Reference documentation is provided by the haddocks of the 'Language.Halide'
+  module.
+
 homepage:        https://github.com/twesterhout/halide-haskell
 bug-reports:     https://github.com/twesterhout/halide-haskell/issues
 license:         BSD-3-Clause
@@ -47,8 +52,6 @@ common common-options
     DataKinds
     DerivingStrategies
     FunctionalDependencies
-    LambdaCase
-    LambdaCase
     LambdaCase
     OverloadedRecordDot
     OverloadedStrings

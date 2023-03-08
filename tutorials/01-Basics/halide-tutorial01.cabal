@@ -1,37 +1,27 @@
 cabal-version:   3.0
 name:            halide-tutorial01
 version:         0.1.0.0
-
--- synopsis:
--- description:
 license:         BSD-3-Clause
 license-file:    LICENSE
 author:          twesterhout
 maintainer:      14264576+twesterhout@users.noreply.github.com
-
--- copyright:
 build-type:      Simple
-extra-doc-files: CHANGELOG.md
 
--- extra-source-files:
-
-common warnings
-  ghc-options: -Wall
-
-executable halide-tutorial01-dummy
-  import:           warnings
-  main-is:          Main.hs
-  build-depends:    base >=4.16.0.0 && <5
-  hs-source-dirs:   app
+common setup
+  ghc-options: -W -pgmL markdown-unlit
   default-language: GHC2021
+  build-depends:    base >=4.16.0.0 && <5
+                  , vector
+                  , halide-haskell
+                  , hspec
+  -- build-tools-depends:  markdown-unlit:exe:markdown-unlit
+
+executable halide-tutorial01
+  import:           setup
+  main-is:          README.lhs
+  hs-source-dirs:   .
 
 test-suite halide-tutorial01-test
-  import:               warnings
-  type:                 exitcode-stdio-1.0
-  default-language:     GHC2021
-  ghc-options:          -pgmL markdown-unlit
-  main-is:              README.lhs
-  build-tools-depends:  markdown-unlit:exe:markdown-unlit
-  build-depends:        base >=4.16.0.0 && <5
-                      , halide-haskell
-                      , hspec
+  import:           setup
+  main-is:          README.lhs
+  type:             exitcode-stdio-1.0

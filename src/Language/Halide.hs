@@ -1,3 +1,10 @@
+-- |
+-- Module      : Language.Halide
+-- Copyright   : (c) Tom Westerhout, 2023
+--
+-- This package provides Haskell bindings that allow to write Halide embedded in Haskell without C++.
+--
+-- This module contains the reference documentation for Halide. If you're new, the best way to learn Halide is to have a look at the [tutorials](https://github.com/twesterhout/halide-haskell/tree/master/tutorials).
 module Language.Halide
   ( -- * Scalar expressions
 
@@ -201,8 +208,8 @@ module Language.Halide
   )
 where
 
-import GHC.TypeLits (KnownNat)
 import Foreign.Ptr (Ptr)
+import GHC.TypeLits (KnownNat)
 import Language.Halide.Buffer
 import Language.Halide.Context
 import Language.Halide.Dimension

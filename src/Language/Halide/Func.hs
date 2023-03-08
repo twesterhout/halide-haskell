@@ -73,15 +73,15 @@ import Data.IORef
 import Data.Kind (Type)
 import Data.Proxy
 import Data.Text (Text)
-import qualified Data.Text.Encoding as T
+import Data.Text.Encoding qualified as T
 import Foreign.ForeignPtr
 import Foreign.Marshal (toBool, with)
 import Foreign.Ptr (Ptr, castPtr)
 import GHC.Stack (HasCallStack)
 import GHC.TypeLits
-import qualified Language.C.Inline as C
-import qualified Language.C.Inline.Cpp.Exception as C
-import qualified Language.C.Inline.Unsafe as CU
+import Language.C.Inline qualified as C
+import Language.C.Inline.Cpp.Exception qualified as C
+import Language.C.Inline.Unsafe qualified as CU
 import Language.Halide.Buffer
 import Language.Halide.Context
 import Language.Halide.Dimension
@@ -101,7 +101,8 @@ importHalide
 -- | A function in Halide. Conceptually, it can be thought of as a lazy
 -- @n@-dimensional buffer of type @a@.
 --
--- This is a wrapper around @Halide::Func@ C++ type.
+-- This is a wrapper around the [@Halide::Func@](https://halide-lang.org/docs/class_halide_1_1_func.html)
+-- C++ type.
 data Func (t :: FuncTy) (n :: Nat) (a :: Type) where
   Func :: {-# UNPACK #-} !(ForeignPtr CxxFunc) -> Func 'FuncTy n a
   Param :: {-# UNPACK #-} !(IORef (Maybe (ForeignPtr CxxImageParam))) -> Func 'ParamTy n a

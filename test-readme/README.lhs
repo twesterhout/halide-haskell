@@ -15,11 +15,10 @@ the same process.
 **This package provides Haskell bindings that allow to write Halide embedded in
 Haskell without C++** 😋.
 
-  - [Tutorials](./tutorials)
-  - Reference documentation
-  - Tests
+  - [Tutorials](https://github.com/twesterhout/halide-haskell/tree/master/tutorials)
+  - [Reference documentation](https://hackage.haskell.org/package/halide-haskell-0.0.1.0)
 
-## Getting started
+## 🚀 Getting started
 
 As a simple example, here's how you could implement array addition with halide-haskell:
 
@@ -58,7 +57,9 @@ main = do
         print =<< peekToList out'
 ```
 
-## Contributing
+For more examples, have a look a the [tutorials](https://github.com/twesterhout/halide-haskell/tree/master/tutorials).
+
+## 🔨 Contributing
 
 Currently, the best way to get started is to use Nix:
 
