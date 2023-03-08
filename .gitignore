@@ -58,3 +58,4 @@ app/libfoo.h
 *.registration.cpp
 *_generator
 third_party/Halide-*
+result

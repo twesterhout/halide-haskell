@@ -1,0 +1,30 @@
+cabal-version: 3.0
+name:          halide-tutorial05
+version:       0.0.1.0
+license:       BSD-3-Clause
+license-file:  LICENSE
+author:        twesterhout
+maintainer:    14264576+twesterhout@users.noreply.github.com
+build-type:    Simple
+
+common setup
+  ghc-options:      -W -pgmL markdown-unlit
+  default-language: GHC2021
+  build-depends:
+    , base            >=4.16.0.0 && <5
+    , halide-haskell
+    , hspec
+    , text
+    , vector
+
+-- build-tools-depends:  markdown-unlit:exe:markdown-unlit
+
+executable halide-tutorial05
+  import:         setup
+  main-is:        README.lhs
+  hs-source-dirs: .
+
+test-suite halide-tutorial05-test
+  import:  setup
+  main-is: README.lhs
+  type:    exitcode-stdio-1.0

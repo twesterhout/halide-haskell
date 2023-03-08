@@ -1,3 +1,4 @@
 packages: .
         , test-readme
         , tutorials/01-Basics
+        , tutorials/05-Scheduling

@@ -145,6 +145,8 @@
                 (self.callCabal2nix "halide-readme" ./test-readme { });
               halide-tutorial01 = with-markdown-unlit self
                 (self.callCabal2nix "halide-tutorial01" ./tutorials/01-Basics { });
+              halide-tutorial05 = with-markdown-unlit self
+                (self.callCabal2nix "halide-tutorial05" ./tutorials/05-Scheduling { });
             };
           };
 
@@ -172,6 +174,7 @@
                     (ps.halide-haskell.override args)
                     ps.halide-readme
                     ps.halide-tutorial01
+                    ps.halide-tutorial05
                   ];
                   withHoogle = true;
                   nativeBuildInputs = with pkgs; with ps; [
