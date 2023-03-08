@@ -23,3 +23,7 @@ jobs:
           --accept-flake-config \
           --print-build-logs \
           .#ghc${{ matrix.ghc }}.halide-haskell
+    - name: Examples & Tutorials
+      run: |
+        nix build --accept-flake-config --print-build-logs .#ghc${{ matrix.ghc }}.halide-readme
+        nix build --accept-flake-config --print-build-logs .#ghc${{ matrix.ghc }}.halide-tutorial01
