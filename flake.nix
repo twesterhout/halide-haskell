@@ -54,7 +54,7 @@
               }).overrideAttrs (attrs: {
                 version = "16.0.0";
                 src = inputs.halide;
-                cmakeFlags = (attrs.cmakeFlags or []) ++
+                cmakeFlags = (attrs.cmakeFlags or [ ]) ++
                   [
                     "-DWITH_TESTS=ON"
                     "-DWITH_PYTHON_BINDINGS=OFF"
@@ -64,8 +64,8 @@
                     "-DHalide_ENABLE_RTTI=ON"
                     "-DHalide_ENABLE_EXCEPTIONS=ON"
                   ];
-                nativeBuildInputs = (attrs.nativeBuildInputs or []) ++ [super.zlib];
-                patches = (attrs.patches or []) ++ [./print_loop_nest.patch];
+                nativeBuildInputs = (attrs.nativeBuildInputs or [ ]) ++ [ super.zlib ];
+                patches = (attrs.patches or [ ]) ++ [ ./print_loop_nest.patch ];
               });
           })
         ];
@@ -129,7 +129,7 @@
         lib.makeOverridable builder { withIntelOpenCL = false; withCuda = false; Halide = pkgs.halide; };
 
       with-markdown-unlit = hp: p: p.overrideAttrs (attrs: {
-        nativeBuildInputs = (attrs.nativeBuildInputs or []) ++ [hp.markdown-unlit];
+        nativeBuildInputs = (attrs.nativeBuildInputs or [ ]) ++ [ hp.markdown-unlit ];
       });
 
       # This allows us to build a Haskell package with any given GHC version.
@@ -170,12 +170,14 @@
                 , withCuda ? false
                 } @ args:
                 ps.shellFor {
-                  packages = ps: [
-                    (ps.halide-haskell.override args)
-                    ps.halide-readme
-                    ps.halide-tutorial01
-                    ps.halide-tutorial05
-                  ];
+                  packages =
+                    let halide-haskell = ps.halide-haskell.override args;
+                    in ps: [
+                      halide-haskell
+                      (ps.halide-readme.override { inherit halide-haskell; })
+                      # ps.halide-tutorial01
+                      # ps.halide-tutorial05
+                    ];
                   withHoogle = true;
                   nativeBuildInputs = with pkgs; with ps; [
                     cabal-install
@@ -190,6 +192,7 @@
                     python3Packages.grip
                     # For debugging Halide
                     gcc
+                    zlib
                     gdb
                   ]
                   ++ lib.optional withIntelOpenCL clinfo
@@ -197,7 +200,7 @@
                   shellHook = ''
                     export PROMPT_COMMAND=""
                     export PS1='(nix) GHC ${haskellPackages.ghc.version} \w $ '
-                    export LD_LIBRARY_PATH=${pkgs.halide}/lib:$LD_LIBRARY_PATH
+                    export LD_LIBRARY_PATH=${pkgs.zlib}/lib:${pkgs.halide}/lib:$LD_LIBRARY_PATH
                   '' + (if withIntelOpenCL then ''
                     export LD_LIBRARY_PATH=${pkgs.ocl-icd}/lib:$LD_LIBRARY_PATH
                     export OCL_ICD_VENDORS="${pkgs.intel-ocl}/etc/OpenCL/vendors"

@@ -66,6 +66,7 @@ module Language.Halide
     -- | To easily test out your pipeline, there are helper functions to create 'HalideBuffer's without
     -- worrying about the low-level representation.
   , allocaCpuBuffer
+  , allocaBuffer
     -- | Buffers can also be converted to lists to easily print them for debugging.
   , IsListPeek (..)
     -- | For production usage however, you don't want to work with lists. Instead, you probably want Halide
@@ -84,6 +85,7 @@ module Language.Halide
     --
     -- The simplest way to build a t'Func' and then call 'realize' to evaluate it over a rectangular domain.
   , realize
+  , realizeOnTarget
   , asBufferParam
     -- | The drawback of calling 'realize' all the time is that it's impossible to pass parameters to pipelines.
     -- We can define pipelines that operate on buffers using 'asBufferParam', but we have to recompile the

@@ -118,6 +118,14 @@ executable getting-started
     , halide-haskell
     , vector
 
+executable halide-minimal-gpu
+  import:         common-options
+  hs-source-dirs: example
+  main-is:        MinimalGPU.hs
+  build-depends:
+    , halide-haskell
+    , vector
+
 test-suite halide-haskell-test
   import:         common-options
   type:           exitcode-stdio-1.0

@@ -26,6 +26,7 @@ module Language.Halide.Target
   , TargetFeature (..)
   , DeviceAPI (..)
   -- , targetFeatureForDeviceAPI
+  , deviceAPIForTarget
 
     -- * Internal
   , withCxxTarget
@@ -38,9 +39,9 @@ import Data.Text (unpack)
 import Foreign.ForeignPtr
 import Foreign.Ptr (Ptr)
 import GHC.IO (unsafePerformIO)
-import qualified Language.C.Inline as C
-import qualified Language.C.Inline.Cpp.Exception as C
-import qualified Language.C.Inline.Unsafe as CU
+import Language.C.Inline qualified as C
+import Language.C.Inline.Cpp.Exception qualified as C
+import Language.C.Inline.Unsafe qualified as CU
 import Language.Halide.Context
 import Language.Halide.Type
 import Language.Halide.Utils
@@ -187,6 +188,13 @@ wrapCxxTarget = fmap Target . newForeignPtr deleter
 -- | Convert 'Target' into @Halide::Target*@ and use it in an 'IO' action.
 withCxxTarget :: Target -> (Ptr CxxTarget -> IO a) -> IO a
 withCxxTarget (Target fp) = withForeignPtr fp
+
+deviceAPIForTarget :: Target -> DeviceAPI
+deviceAPIForTarget target = unsafePerformIO $
+  withCxxTarget target $ \target' ->
+    toEnum . fromIntegral
+      <$> [CU.exp| int { static_cast<int>(Halide::get_default_device_api_for_target(
+            *$(Halide::Target* target'))) } |]
 
 -- targetFeatureForDeviceAPI :: DeviceAPI -> Maybe TargetFeature
 -- targetFeatureForDeviceAPI deviceAPI =

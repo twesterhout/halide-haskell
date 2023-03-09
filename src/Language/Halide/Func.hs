@@ -24,6 +24,7 @@ module Language.Halide.Func
   , scalar
   , define
   , (!)
+  , realizeOnTarget
   , realize
 
     -- * Scheduling
@@ -947,7 +948,7 @@ prettyLoopNest func = withFunc func $ \f ->
           });
         } |]
 
--- | Evaluate this function over a rectangular domain.
+-- | Similar to 'realizeOnTarget' except that the pipeline is run on 'hostTarget'.
 realize
   :: forall n a t b
    . (KnownNat n, IsHalideType a)
@@ -959,17 +960,35 @@ realize
   -- ^ What to do with the buffer afterwards. Note that the buffer is allocated only temporary,
   -- so do not return it directly.
   -> IO b
-realize func shape action =
-  withFunc func $ \f ->
-    allocaCpuBuffer shape $ \buf -> do
-      let raw = castPtr buf
-      [C.throwBlock| void {
-        handle_halide_exceptions([=](){
-          $(Halide::Func* f)->realize(
-            Halide::Pipeline::RealizationArg{$(halide_buffer_t* raw)});
-        });
-      } |]
-      action buf
+realize = realizeOnTarget hostTarget
+
+-- | Evaluate this function over a rectangular domain.
+--
+-- If your target is a GPU, this function will not automatically copy data back from the GPU.
+realizeOnTarget
+  :: forall n a t b
+   . (KnownNat n, IsHalideType a)
+  => Target
+  -- ^ Target on which to run the pipeline
+  -> Func t n a
+  -- ^ Function to evaluate
+  -> [Int]
+  -- ^ Domain over which to evaluate
+  -> (Ptr (HalideBuffer n a) -> IO b)
+  -- ^ What to do with the buffer afterwards. Note that the buffer is allocated only temporary,
+  -- so do not return it directly.
+  -> IO b
+realizeOnTarget target func shape action =
+  withFunc func $ \func' ->
+    withCxxTarget target $ \target' ->
+      allocaBuffer target shape $ \buf -> do
+        let raw = castPtr buf
+        [C.throwBlock| void {
+          handle_halide_exceptions([=](){
+            $(Halide::Func* func')->realize($(halide_buffer_t* raw), *$(const Halide::Target* target'));
+          });
+        } |]
+        action buf
 
 -- \| Evaluate this function over a one-dimensional domain and return the
 -- resulting buffer or buffers.

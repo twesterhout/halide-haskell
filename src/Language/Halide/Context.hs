@@ -41,12 +41,12 @@ module Language.Halide.Context
   )
 where
 
-import qualified Language.C.Inline as C
-import qualified Language.C.Inline.Cpp as C
+import Language.C.Inline qualified as C
+import Language.C.Inline.Cpp qualified as C
 import Language.C.Types (CIdentifier)
 import Language.Halide.Type
 import Language.Haskell.TH (DecsQ, Q, TypeQ, lookupTypeName)
-import qualified Language.Haskell.TH as TH
+import Language.Haskell.TH qualified as TH
 
 -- | One stop function to include all the neccessary machinery to call Halide functions via inline-c.
 --
@@ -58,6 +58,8 @@ importHalide =
     <$> sequence
       [ C.context =<< halideCxt
       , C.include "<Halide.h>"
+      , C.include "<HalideRuntimeOpenCL.h>"
+      , C.include "<HalideRuntimeCuda.h>"
       , C.include "<cxxabi.h>"
       , C.include "<dlfcn.h>"
       , defineExceptionHandler
@@ -95,6 +97,7 @@ halideTypePairs = do
         , ("Halide::Internal::Dim", "Language.Halide.Schedule.Dim")
         , ("Halide::Internal::Split", "Language.Halide.Schedule.Split")
         , ("halide_buffer_t", "Language.Halide.Buffer.RawHalideBuffer")
+        , ("halide_device_interface_t", "HalideDeviceInterface")
         , ("Halide::Internal::Dimension", "CxxDimension")
         , ("Halide::LoopLevel", "CxxLoopLevel")
         , ("Halide::Stage", "CxxStage")

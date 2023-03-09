@@ -23,6 +23,7 @@ module Language.Halide.Buffer
     -- | To easily test out your pipeline, there are helper functions to create 'HalideBuffer's without
     -- worrying about the low-level representation.
   , allocaCpuBuffer
+  , allocaBuffer
     -- | Buffers can also be converted to lists to easily print them for debugging.
   , IsListPeek (..)
     -- | For production usage however, you don't want to work with lists. Instead, you probably want Halide
@@ -47,26 +48,28 @@ module Language.Halide.Buffer
   )
 where
 
+import Control.Exception (bracket_)
 import Control.Monad (forM, unless, when)
 import Control.Monad.ST (RealWorld)
-import Data.Foldable (foldl')
 import Data.Int
 import Data.Kind (Type)
-import qualified Data.List as List
+import Data.List qualified as List
 import Data.Proxy
-import qualified Data.Vector.Storable as S
-import qualified Data.Vector.Storable.Mutable as SM
+import Data.Vector.Storable qualified as S
+import Data.Vector.Storable.Mutable qualified as SM
 import Data.Word
+import Foreign.Marshal.Alloc (free, mallocBytes)
 import Foreign.Marshal.Array
 import Foreign.Marshal.Utils
 import Foreign.Ptr
 import Foreign.Storable
 import GHC.Stack (HasCallStack)
 import GHC.TypeNats
-import qualified Language.C.Inline as C
-import qualified Language.C.Inline.Cpp.Exception as C
-import qualified Language.C.Inline.Unsafe as CU
+import Language.C.Inline qualified as C
+import Language.C.Inline.Cpp.Exception qualified as C
+import Language.C.Inline.Unsafe qualified as CU
 import Language.Halide.Context
+import Language.Halide.Target
 import Language.Halide.Type
 
 -- | Information about a dimension in a buffer.
@@ -312,17 +315,117 @@ allocaCpuBuffer
   => [Int]
   -> (Ptr (HalideBuffer n a) -> IO b)
   -> IO b
-allocaCpuBuffer shape action =
-  allocaArray numElements $ \cpuPtr ->
-    bufferFromPtrShape cpuPtr shape $ \buf -> do
-      r <- action buf
-      whenM (isDeviceDirty (castPtr buf)) $
-        error $
-          "device_dirty is set on a CPU-only buffer; "
-            <> "did you forget a copyToHost in your pipeline?"
-      pure r
+allocaCpuBuffer = allocaBuffer hostTarget
+
+getTotalBytes :: Ptr RawHalideBuffer -> IO Int
+getTotalBytes buf = do
+  fromIntegral
+    <$> [CU.block| size_t {
+          auto const& b = *$(const halide_buffer_t* buf);
+          auto const n = std::accumulate(b.dim, b.dim + b.dimensions, size_t{1},
+                                         [](auto acc, auto const& dim) { return acc * dim.extent; });
+          fprintf(stderr, "getTotalBytes: %zu\n", n * (b.type.bits * b.type.lanes / 8));
+          return n * (b.type.bits * b.type.lanes / 8);
+        } |]
+
+allocateHostMemory :: Ptr RawHalideBuffer -> IO ()
+allocateHostMemory buf = do
+  ptr <- mallocBytes =<< getTotalBytes buf
+  [CU.block| void { $(halide_buffer_t* buf)->host = $(uint8_t* ptr); } |]
+
+freeHostMemory :: Ptr RawHalideBuffer -> IO ()
+freeHostMemory buf = do
+  ptr <-
+    [CU.block| uint8_t* {
+      auto& b = *$(halide_buffer_t* buf);
+      auto const p = b.host;
+      b.host = nullptr;
+      return p;
+    } |]
+  free ptr
+
+allocateDeviceMemory :: Ptr HalideDeviceInterface -> Ptr RawHalideBuffer -> IO ()
+allocateDeviceMemory interface buf = do
+  [CU.block| void {
+    auto const* interface = $(const halide_device_interface_t* interface);
+    interface->device_malloc(nullptr, $(halide_buffer_t* buf), interface);
+  } |]
+
+freeDeviceMemory :: HasCallStack => Ptr RawHalideBuffer -> IO ()
+freeDeviceMemory buf = do
+  deviceInterface <-
+    [CU.exp| const halide_device_interface_t* { $(const halide_buffer_t* buf)->device_interface } |]
+  when (deviceInterface == nullPtr) $
+    error "cannot free device memory: device_interface is NULL"
+  [CU.block| void {
+    $(halide_buffer_t* buf)->device_interface->device_free(nullptr, $(halide_buffer_t* buf));
+    $(halide_buffer_t* buf)->device = 0;
+  } |]
+
+allocaBuffer
+  :: forall n a b
+   . (HasCallStack, KnownNat n, IsHalideType a)
+  => Target
+  -> [Int]
+  -> (Ptr (HalideBuffer n a) -> IO b)
+  -> IO b
+allocaBuffer target shape action = do
+  deviceInterface <- getDeviceInterface target
+  let onHost = deviceInterface == nullPtr
+  withArrayLen (zipWith simpleDimension shape (colMajorStrides shape)) $ \n dim -> do
+    unless (n == fromIntegral (natVal (Proxy @n))) $
+      error $
+        "specified wrong number of dimensions: "
+          <> show n
+          <> "; expected "
+          <> show (natVal (Proxy @n))
+          <> " from the type declaration"
+    let rawBuffer =
+          RawHalideBuffer
+            { halideBufferDevice = 0
+            , halideBufferDeviceInterface = nullPtr
+            , halideBufferHost = nullPtr
+            , halideBufferFlags = 0
+            , halideBufferType = halideTypeFor (Proxy :: Proxy a)
+            , halideBufferDimensions = fromIntegral n
+            , halideBufferDim = dim
+            , halideBufferPadding = nullPtr
+            }
+    with rawBuffer $ \buf -> do
+      let allocate
+            | onHost = allocateHostMemory
+            | otherwise = allocateDeviceMemory deviceInterface
+      let deallocate
+            | onHost = freeHostMemory
+            | otherwise = freeDeviceMemory
+      bracket_ (allocate buf) (deallocate buf) $ do
+        r <- action (castPtr buf)
+        isHostNull <- toBool <$> [CU.exp| bool { $(halide_buffer_t* buf)->host == nullptr } |]
+        isDeviceNull <- toBool <$> [CU.exp| bool { $(halide_buffer_t* buf)->device == 0 } |]
+        when (onHost && not isDeviceNull) . error $
+          "buffer was allocated on host, but its device pointer is not NULL"
+            <> "; did you forget a copyToHost in your pipeline?"
+        when (not onHost && not isHostNull) . error $
+          "buffer was allocated on device, but its host pointer is not NULL"
+            <> "; did you add an extra copyToHost?"
+        pure r
+
+getDeviceInterface :: Target -> IO (Ptr HalideDeviceInterface)
+getDeviceInterface target =
+  case device of
+    DeviceNone -> pure nullPtr
+    DeviceHost -> pure nullPtr
+    _ ->
+      withCxxTarget target $ \target' ->
+        [C.throwBlock| const halide_device_interface_t* {
+          return handle_halide_exceptions([=](){
+            auto const device = static_cast<Halide::DeviceAPI>($(int api));
+            auto const& target = *$(const Halide::Target* target');
+            return Halide::get_device_interface_for_device_api(device, target, "getDeviceInterface");
+          });
+        } |]
   where
-    numElements = foldl' (*) 1 shape
+    device@(fromIntegral . fromEnum -> api) = deviceAPIForTarget target
 
 -- | Do we have changes on the device the have not been copied to the host?
 isDeviceDirty :: Ptr RawHalideBuffer -> IO Bool
