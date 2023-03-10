@@ -171,13 +171,20 @@
                 } @ args:
                 ps.shellFor {
                   packages =
-                    let halide-haskell = ps.halide-haskell.override args;
-                    in ps: [
+                    let
+                      halide-haskell = ps.halide-haskell.override args;
+                      override-halide-haskell = p: p.override { inherit halide-haskell; };
+                    in
+                    ps: [
                       halide-haskell
-                      (ps.halide-readme.override { inherit halide-haskell; })
-                      # ps.halide-tutorial01
-                      # ps.halide-tutorial05
-                    ];
+                    ]
+                    ++
+                    (map override-halide-haskell [
+                      ps.halide-readme
+                      ps.halide-tutorial01
+                      ps.halide-tutorial03
+                      ps.halide-tutorial05
+                    ]);
                   withHoogle = true;
                   nativeBuildInputs = with pkgs; with ps; [
                     cabal-install
