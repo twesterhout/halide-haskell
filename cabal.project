@@ -2,4 +2,5 @@ packages: .
         , test-readme
         , tutorials/01-Basics
         , tutorials/03-Inspecting
+        , tutorials/04-Debugging
         , tutorials/05-Scheduling

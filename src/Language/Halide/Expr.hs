@@ -38,6 +38,7 @@ module Language.Halide.Expr
     -- call 'evaluate' on it. In such cases, it can be wrapped with 'printed' to indicate to Halide that the
     -- value of the expression should be dumped to screen when it's computed.
   , printed
+  , printedWhen
   , toIntImm
 
     -- * Internal
@@ -214,26 +215,30 @@ cast expr = unsafePerformIO $
 --
 -- Arguments to @printed@ can be @'Expr' a@, 'String', or 'Text'.
 printed :: forall a t. (IsHalideType a, PrintedType t (Expr a)) => Expr a -> t
-printed x = unsafePerformIO $ do
+printed = printedWhen @a @t (mkExpr True)
+
+printedWhen :: forall a t. (IsHalideType a, PrintedType t (Expr a)) => Expr Bool -> Expr a -> t
+printedWhen cond x = unsafePerformIO $ do
   v <- newCxxVector Nothing
   appendToPrintArgs v x
-  pure $ printedImpl @t @(Expr a) v
+  pure $ printedWhenImpl @t @(Expr a) cond v
 
 class PrintedType t r where
-  printedImpl :: Ptr (CxxVector CxxExpr) -> t
+  printedWhenImpl :: Expr Bool -> Ptr (CxxVector CxxExpr) -> t
 
 instance (IsHalideType a, r ~ Expr a) => PrintedType (Expr a) r where
-  printedImpl v = unsafePerformIO $
-    cxxConstructExpr $ \expr ->
-      [CU.exp| void { new ($(Halide::Expr* expr)) Halide::Expr{Halide::print(
-        *$(const std::vector<Halide::Expr>* v))} } |]
-  {-# NOINLINE printedImpl #-}
+  printedWhenImpl cond v = unsafePerformIO $
+    asExpr cond $ \cond' ->
+      cxxConstructExpr $ \expr ->
+        [CU.exp| void { new ($(Halide::Expr* expr)) Halide::Expr{Halide::print_when(
+          *$(const Halide::Expr* cond'), *$(const std::vector<Halide::Expr>* v))} } |]
+  {-# NOINLINE printedWhenImpl #-}
 
 instance (PrintedArg a, PrintedType t r) => PrintedType (a -> t) r where
-  printedImpl v x = unsafePerformIO $ do
+  printedWhenImpl cond v x = unsafePerformIO $ do
     appendToPrintArgs v x
-    pure (printedImpl @t @r v)
-  {-# NOINLINE printedImpl #-}
+    pure (printedWhenImpl @t @r cond v)
+  {-# NOINLINE printedWhenImpl #-}
 
 class PrintedArg a where
   appendToPrintArgs :: Ptr (CxxVector CxxExpr) -> a -> IO ()

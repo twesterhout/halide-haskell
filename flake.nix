@@ -132,6 +132,8 @@
                 (self.callCabal2nix "halide-tutorial01" ./tutorials/01-Basics { });
               halide-tutorial03 = with-markdown-unlit self
                 (self.callCabal2nix "halide-tutorial03" ./tutorials/03-Inspecting { });
+              halide-tutorial04 = with-markdown-unlit self
+                (self.callCabal2nix "halide-tutorial04" ./tutorials/04-Debugging { });
               halide-tutorial05 = with-markdown-unlit self
                 (self.callCabal2nix "halide-tutorial05" ./tutorials/05-Scheduling { });
             };
@@ -170,6 +172,7 @@
                       ps.halide-readme
                       ps.halide-tutorial01
                       ps.halide-tutorial03
+                      ps.halide-tutorial04
                       ps.halide-tutorial05
                     ]);
                   withHoogle = true;
