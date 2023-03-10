@@ -145,6 +145,8 @@
                 (self.callCabal2nix "halide-readme" ./test-readme { });
               halide-tutorial01 = with-markdown-unlit self
                 (self.callCabal2nix "halide-tutorial01" ./tutorials/01-Basics { });
+              halide-tutorial03 = with-markdown-unlit self
+                (self.callCabal2nix "halide-tutorial03" ./tutorials/03-Inspecting { });
               halide-tutorial05 = with-markdown-unlit self
                 (self.callCabal2nix "halide-tutorial05" ./tutorials/05-Scheduling { });
             };
