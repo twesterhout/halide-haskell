@@ -67,7 +67,7 @@ import Data.IORef
 import Data.Int (Int32)
 import Data.Proxy
 import Data.Ratio (denominator, numerator)
-import Data.Text (Text, unpack)
+import Data.Text (Text, pack, unpack)
 import Data.Text.Encoding qualified as T
 import Data.Vector.Storable.Mutable qualified as SM
 import Foreign.ForeignPtr
@@ -197,12 +197,59 @@ cast expr = unsafePerformIO $
         [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
           Halide::cast(Halide::Type{*$(halide_type_t* t)}, *$(Halide::Expr* e))} } |]
 
--- | Print the expression to stdout when it's evaluated.
+-- | Print all expressions to stdout when the result is evaluates. The first expression is returned.
 --
 -- This is useful for debugging Halide pipelines.
-printed :: IsHalideType a => Expr a -> Expr a
-printed = unaryOp $ \e ptr ->
-  [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{print(*$(Halide::Expr* e))} } |]
+--
+-- This function is similar to 'Text.Printf.printf' in that it accepts a variable number of arguments,
+-- i.e the following is valid:
+--
+-- @
+-- let x :: Expr Float
+--     x = 1
+--  in printed (sin x) ("<- sin(" :: Text) x (")" :: Text)
+-- @
+--
+-- @:: Text@ specifications are only needed if you have the @OverloadedStrings@ extension enabled.
+--
+-- Arguments to @printed@ can be @'Expr' a@, 'String', or 'Text'.
+printed :: forall a t. (IsHalideType a, PrintedType t (Expr a)) => Expr a -> t
+printed x = unsafePerformIO $ do
+  v <- newCxxVector Nothing
+  appendToPrintArgs v x
+  pure $ printedImpl @t @(Expr a) v
+
+class PrintedType t r where
+  printedImpl :: Ptr (CxxVector CxxExpr) -> t
+
+instance (IsHalideType a, r ~ Expr a) => PrintedType (Expr a) r where
+  printedImpl v = unsafePerformIO $
+    cxxConstructExpr $ \expr ->
+      [CU.exp| void { new ($(Halide::Expr* expr)) Halide::Expr{Halide::print(
+        *$(const std::vector<Halide::Expr>* v))} } |]
+  {-# NOINLINE printedImpl #-}
+
+instance (PrintedArg a, PrintedType t r) => PrintedType (a -> t) r where
+  printedImpl v x = unsafePerformIO $ do
+    appendToPrintArgs v x
+    pure (printedImpl @t @r v)
+  {-# NOINLINE printedImpl #-}
+
+class PrintedArg a where
+  appendToPrintArgs :: Ptr (CxxVector CxxExpr) -> a -> IO ()
+
+instance IsHalideType a => PrintedArg (Expr a) where
+  appendToPrintArgs v expr =
+    asExpr expr $ \expr' ->
+      [CU.exp| void { $(std::vector<Halide::Expr>* v)->push_back(*$(const Halide::Expr* expr')) } |]
+
+instance PrintedArg Text where
+  appendToPrintArgs v (T.encodeUtf8 -> msg) =
+    [CU.exp| void { $(std::vector<Halide::Expr>* v)->emplace_back(
+      std::string{$bs-ptr:msg, static_cast<size_t>($bs-len:msg)}) } |]
+
+instance PrintedArg String where
+  appendToPrintArgs v (pack -> msg) = appendToPrintArgs v msg
 
 infix 4 `eq`, `neq`, `lt`, `lte`, `gt`, `gte`
 

@@ -2,6 +2,7 @@ module Language.Halide.ExprSpec (spec) where
 
 import Control.Monad (unless, when)
 import Data.Int
+import Data.Text (Text)
 import Data.Word
 import Language.Halide
 import Test.Hspec
@@ -110,3 +111,11 @@ spec = do
     it "defines pi" $ do
       (pi :: Expr Float) `shouldEvaluateTo` pi
       (pi :: Expr Double) `shouldEvaluateTo` pi
+
+  describe "printed" $
+    it "prints expressions when evaluated" $ do
+      printed (1 :: Expr Int32) `shouldEvaluateTo` 1
+      printed (1 :: Expr Int32) ("<- when" :: String) ("haha" :: String) `shouldEvaluateTo` 1
+      let x :: Expr Float
+          x = 1
+       in printed (sin x) ("<- sin(" :: Text) x (")" :: Text) `shouldEvaluateTo` sin 1
