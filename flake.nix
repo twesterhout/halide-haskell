@@ -34,12 +34,6 @@
     with builtins;
     let
       inherit (inputs.nixpkgs) lib;
-      enableExceptions = drv: drv.overrideAttrs (attrs: {
-        cmakeFlags = (attrs.cmakeFlags or [ ]) ++ [
-          "-DLLVM_ENABLE_EH=ON"
-        ];
-        doCheck = false;
-      });
       pkgs = import inputs.nixpkgs {
         inherit system;
         overlays = [
@@ -115,15 +109,6 @@
                 echo "exec ${inputs.nixGL.packages.${system}.nixGLDefault}/bin/nixGL $hidden \"\$@\"" >> "$prog"
                 chmod +x "$prog"
               '' else "");
-              # NOTE: This does not work... :(
-              # setupHook = with pkgs; writeText "setup-hook.sh" ''
-              #   setupOpenCL() {
-              #     export PATH=${clinfo}/bin:$PATH
-              #     export LD_LIBRARY_PATH=${ocl-icd}/lib:${Halide}/lib:$LD_LIBRARY_PATH
-              #     export OCL_ICD_VENDORS="${pkgs.intel-ocl}/etc/OpenCL/vendors"
-              #   }
-              #   addEnvHooks "$hostOffset" setupOpenCL
-              # '';
             });
         in
         lib.makeOverridable builder { withIntelOpenCL = false; withCuda = false; Halide = pkgs.halide; };
@@ -159,7 +144,7 @@
         , ...
         }:
         let ps = haskellPackagesOverride haskellPackages; in
-        rec {
+        {
           packages = {
             "${name}" = ps.${package} or ps;
             "${name}-cuda" = ps.${package}.override { withCuda = true; };
@@ -189,10 +174,13 @@
                     ]);
                   withHoogle = true;
                   nativeBuildInputs = with pkgs; with ps; [
+                    # Building and testing
                     cabal-install
                     doctest
                     markdown-unlit
+                    # Language servers
                     haskell-language-server
+                    nil
                     # Formatters
                     fourmolu
                     cabal-fmt

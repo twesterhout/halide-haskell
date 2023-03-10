@@ -325,7 +325,6 @@ getTotalBytes buf = do
           auto const& b = *$(const halide_buffer_t* buf);
           auto const n = std::accumulate(b.dim, b.dim + b.dimensions, size_t{1},
                                          [](auto acc, auto const& dim) { return acc * dim.extent; });
-          fprintf(stderr, "getTotalBytes: %zu\n", n * (b.type.bits * b.type.lanes / 8));
           return n * (b.type.bits * b.type.lanes / 8);
         } |]
 
