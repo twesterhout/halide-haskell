@@ -45,6 +45,7 @@ module Language.Halide.Buffer
   , isDeviceDirty
   , isHostDirty
   , bufferCopyToHost
+  , withCopiedToHost
   )
 where
 
@@ -432,28 +433,35 @@ isDeviceDirty :: Ptr RawHalideBuffer -> IO Bool
 isDeviceDirty p =
   toBool <$> [CU.exp| bool { $(const halide_buffer_t* p)->device_dirty() } |]
 
+-- | Set the @device_dirty@ flag to the given value.
+setDeviceDirty :: Bool -> Ptr RawHalideBuffer -> IO ()
+setDeviceDirty (fromIntegral . fromEnum -> b) p =
+  [CU.exp| void { $(halide_buffer_t* p)->set_device_dirty($(bool b)) } |]
+
 -- | Do we have changes on the device the have not been copied to the host?
 isHostDirty :: Ptr RawHalideBuffer -> IO Bool
 isHostDirty p =
   toBool <$> [CU.exp| bool { $(const halide_buffer_t* p)->host_dirty() } |]
 
+-- | Set the @host_dirty@ flag to the given value.
+setHostDirty :: Bool -> Ptr RawHalideBuffer -> IO ()
+setHostDirty (fromIntegral . fromEnum -> b) p =
+  [CU.exp| void { $(halide_buffer_t* p)->set_host_dirty($(bool b)) } |]
+
 -- | Copy the underlying memory from device to host.
-bufferCopyToHost :: Ptr RawHalideBuffer -> IO ()
-bufferCopyToHost p =
-  [C.throwBlock| void {
+bufferCopyToHost :: HasCallStack => Ptr RawHalideBuffer -> IO ()
+bufferCopyToHost p = whenM (isDeviceDirty p) $ do
+  raw <- peek p
+  when (raw.halideBufferDeviceInterface == nullPtr) . error $
+    "device_dirty is set, but device_interface is NULL"
+  when (raw.halideBufferHost == nullPtr) . error $
+    "host is NULL, did you forget to allocate memory?"
+  [CU.block| void {
     auto& buf = *$(halide_buffer_t* p);
-    if (buf.device_dirty()) {
-      if (buf.device_interface == nullptr) {
-        throw std::runtime_error{"bufferCopyToHost: device_dirty is set, "
-                                 "but device_interface is NULL"};
-      }
-      if (buf.host == nullptr) {
-        throw std::runtime_error{"bufferCopyToHost: host is NULL; "
-                                 "did you forget to allocate memory?"};
-      }
-      buf.device_interface->copy_to_host(nullptr, &buf);
-    }
+    buf.device_interface->copy_to_host(nullptr, &buf);
   } |]
+  whenM (isDeviceDirty p) . error $
+    "device_dirty is set right after a copy_to_host; something went wrong..."
 
 checkNumberOfDimensions :: forall n. (HasCallStack, KnownNat n) => RawHalideBuffer -> IO ()
 checkNumberOfDimensions raw = do
@@ -470,35 +478,43 @@ class IsListPeek a where
   type ListPeekElem a :: Type
   peekToList :: HasCallStack => Ptr a -> IO [ListPeekElem a]
 
+withCopiedToHost :: Ptr (HalideBuffer n a) -> IO b -> IO b
+withCopiedToHost (castPtr @_ @RawHalideBuffer -> buf) action = do
+  raw <- peek buf
+  let allocate = when (raw.halideBufferDevice /= 0) $ allocateHostMemory buf
+      deallocate = when (raw.halideBufferDevice /= 0) $ freeHostMemory buf
+  bracket_ allocate deallocate $ do
+    when (raw.halideBufferDevice /= 0) $ do
+      setDeviceDirty True buf
+      bufferCopyToHost buf
+    action
+
 instance IsHalideType a => IsListPeek (HalideBuffer 0 a) where
   type ListPeekElem (HalideBuffer 0 a) = a
-  peekToList p = do
-    whenM (isDeviceDirty (castPtr p)) $
-      error "cannot peek data from device; call bufferCopyToHost first"
+  peekToList p = withCopiedToHost p $ do
     raw <- peek (castPtr @_ @RawHalideBuffer p)
     checkNumberOfDimensions @0 raw
-    fmap pure . peek $ castPtr @_ @a (halideBufferHost raw)
+    when (raw.halideBufferHost == nullPtr) . error $ "host is NULL"
+    fmap pure . peek $ castPtr @_ @a raw.halideBufferHost
 
 instance IsHalideType a => IsListPeek (HalideBuffer 1 a) where
   type ListPeekElem (HalideBuffer 1 a) = a
-  peekToList p = do
-    whenM (isDeviceDirty (castPtr p)) $
-      error "cannot peek data from device; call bufferCopyToHost first"
+  peekToList p = withCopiedToHost p $ do
     raw <- peek (castPtr @_ @RawHalideBuffer p)
     (HalideDimension min0 extent0 stride0 _) <- peekElemOff (halideBufferDim raw) 0
     let ptr0 = castPtr @_ @a (halideBufferHost raw)
+    when (ptr0 == nullPtr) . error $ "host is NULL"
     forM [0 .. extent0 - 1] $ \i0 ->
       peekElemOff ptr0 (fromIntegral (min0 + stride0 * i0))
 
 instance IsHalideType a => IsListPeek (HalideBuffer 2 a) where
   type ListPeekElem (HalideBuffer 2 a) = [a]
-  peekToList p = do
-    whenM (isDeviceDirty (castPtr p)) $
-      error "cannot peek data from device; call bufferCopyToHost first"
+  peekToList p = withCopiedToHost p $ do
     raw <- peek (castPtr @_ @RawHalideBuffer p)
     (HalideDimension min0 extent0 stride0 _) <- peekElemOff (halideBufferDim raw) 0
     (HalideDimension min1 extent1 stride1 _) <- peekElemOff (halideBufferDim raw) 1
     let ptr0 = castPtr @_ @a (halideBufferHost raw)
+    when (ptr0 == nullPtr) . error $ "host is NULL"
     forM [0 .. extent0 - 1] $ \i0 -> do
       let ptr1 = ptr0 `advancePtr` fromIntegral (min0 + stride0 * i0)
       forM [0 .. extent1 - 1] $ \i1 ->
@@ -506,14 +522,13 @@ instance IsHalideType a => IsListPeek (HalideBuffer 2 a) where
 
 instance IsHalideType a => IsListPeek (HalideBuffer 3 a) where
   type ListPeekElem (HalideBuffer 3 a) = [[a]]
-  peekToList p = do
-    whenM (isDeviceDirty (castPtr p)) $
-      error "cannot peek data from device; call bufferCopyToHost first"
+  peekToList p = withCopiedToHost p $ do
     raw <- peek (castPtr @_ @RawHalideBuffer p)
     (HalideDimension min0 extent0 stride0 _) <- peekElemOff (halideBufferDim raw) 0
     (HalideDimension min1 extent1 stride1 _) <- peekElemOff (halideBufferDim raw) 1
     (HalideDimension min2 extent2 stride2 _) <- peekElemOff (halideBufferDim raw) 2
     let ptr0 = castPtr @_ @a (halideBufferHost raw)
+    when (ptr0 == nullPtr) . error $ "host is NULL"
     forM [0 .. extent0 - 1] $ \i0 -> do
       let ptr1 = ptr0 `advancePtr` fromIntegral (min0 + stride0 * i0)
       forM [0 .. extent1 - 1] $ \i1 -> do

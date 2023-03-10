@@ -181,6 +181,7 @@ module Language.Halide
   , isDeviceDirty
   , isHostDirty
   , bufferCopyToHost
+  , withCopiedToHost
   , module Language.Halide.Schedule
   , IsFuncBuilder
   , ReturnsFunc

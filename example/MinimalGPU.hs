@@ -1,6 +1,6 @@
 module Main (main) where
 
-import Control.Monad (void, when)
+import Control.Monad (unless, void)
 import Language.Halide
 
 main :: IO ()
@@ -15,7 +15,14 @@ main = do
       >>= gpuBlocks DeviceDefaultGPU (xo, yo)
       >>= gpuThreads DeviceDefaultGPU (xi, yi)
 
-  let target = setFeature FeatureOpenCL . setFeature FeatureDebug $ hostTarget
-
-  realizeOnTarget target f [32, 32] $ \buf -> do
-    pure ()
+  case gpuTarget of
+    Nothing -> putStrLn "no GPU target found; skipping ..."
+    Just target -> do
+      r <- realizeOnTarget (setFeature FeatureDebug target) f [32, 32] peekToList
+      let expected = [[i + j | i <- [0 .. 31]] | j <- [0 .. 31]]
+      unless (r == expected) . error $
+        "wrong result:"
+          <> "\n          got: "
+          <> show r
+          <> ",\n but expected: "
+          <> show expected
