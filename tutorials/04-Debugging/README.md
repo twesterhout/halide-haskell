@@ -374,3 +374,33 @@ just returns the second argument and does not print.
 ```
 
 </details>
+
+
+### Printing expressions at compile-time.
+
+The code below builds up a Halide expression across several lines of code. If
+you're programmatically constructing a complex expression, and you want to
+check the expression you've created is what you think it is, you can also print
+out the expression itself the `Show` typeclass:
+
+```haskell
+  it "Prints expressions at compile-time" $ do
+    fizz <- mkVar "fizz"
+    buzz <- mkVar "buzz"
+    let combine e i
+          | i `mod` 3 == 0 && i `mod` 5 == 0 = e + fizz * buzz
+          | i `mod` 3 == 0 = e + fizz
+          | i `mod` 5 == 0 = e + buzz
+          | otherwise = e + mkExpr i
+    let e = foldl combine 1 [2 .. 99]
+    print e
+```
+
+<details>
+<summary>Show output...</summary>
+
+```
+((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((1 + 2) + fizz) + 4) + buzz) + fizz) + 7) + 8) + fizz) + buzz) + 11) + fizz) + 13) + 14) + (fizz*buzz)) + 16) + 17) + fizz) + 19) + buzz) + fizz) + 22) + 23) + fizz) + buzz) + 26) + fizz) + 28) + 29) + (fizz*buzz)) + 31) + 32) + fizz) + 34) + buzz) + fizz) + 37) + 38) + fizz) + buzz) + 41) + fizz) + 43) + 44) + (fizz*buzz)) + 46) + 47) + fizz) + 49) + buzz) + fizz) + 52) + 53) + fizz) + buzz) + 56) + fizz) + 58) + 59) + (fizz*buzz)) + 61) + 62) + fizz) + 64) + buzz) + fizz) + 67) + 68) + fizz) + buzz) + 71) + fizz) + 73) + 74) + (fizz*buzz)) + 76) + 77) + fizz) + 79) + buzz) + fizz) + 82) + 83) + fizz) + buzz) + 86) + fizz) + 88) + 89) + (fizz*buzz)) + 91) + 92) + fizz) + 94) + buzz) + fizz) + 97) + 98) + fizz)
+```
+
+</details>
