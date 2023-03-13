@@ -29,6 +29,8 @@ module Language.Halide.Expr
   , lte
   , gt
   , gte
+  , and
+  , or
   , bool
   , undef
     -- | For debugging, it's often useful to observe the value of an expression when it's evaluated. If you
@@ -84,7 +86,7 @@ import Language.Halide.Context
 import Language.Halide.Type
 import Language.Halide.Utils
 import System.IO.Unsafe (unsafePerformIO)
-import Prelude hiding (min)
+import Prelude hiding (and, max, min, or)
 
 importHalide
 
@@ -293,6 +295,18 @@ gte :: IsHalideType a => Expr a -> Expr a -> Expr Bool
 gte = binaryOp $ \a b ptr ->
   [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
     (*$(Halide::Expr* a)) >= (*$(Halide::Expr* b))} } |]
+
+-- | '&&' but lifted to return an 'Expr'.
+and :: Expr Bool -> Expr Bool -> Expr Bool
+and = binaryOp $ \a b ptr ->
+  [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+    (*$(Halide::Expr* a)) && (*$(Halide::Expr* b))} } |]
+
+-- | '||' but lifted to return an 'Expr'.
+or :: Expr Bool -> Expr Bool -> Expr Bool
+or = binaryOp $ \a b ptr ->
+  [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+    (*$(Halide::Expr* a)) || (*$(Halide::Expr* b))} } |]
 
 -- | Similar to the standard 'Prelude.bool' function from Prelude except that it's
 -- lifted to work with 'Expr' types.

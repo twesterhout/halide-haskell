@@ -6,13 +6,12 @@ Since this README is also a literate Haskell file, we start with a few common im
 
 ```haskell
 {-# LANGUAGE OverloadedStrings, TypeApplications #-}
-import Control.Exception (evaluate)
 import Control.Monad (void)
-import Data.Text.IO (hPutStr)
-import System.IO (withFile, IOMode (..))
+import Data.Text (Text)
 import Test.Hspec hiding (parallel)
 
 import Language.Halide hiding (evaluate)
+import Prelude hiding (and)
 ```
 
 ### Printing out the value of Funcs as they are computed.
@@ -21,23 +20,24 @@ We'll define our gradient function as before.
 
 ```haskell
 main :: IO ()
-main = hspec $ specify "Tutorial 4" $ do
-  x <- mkVar "x"
-  y <- mkVar "y"
-  gradient <- define "gradient" (x, y) $ x + y
+main = hspec $ describe "Tutorial 4" $ do
+  it "Prints the value of Funcs when the are computed" $ do
+    x <- mkVar "x"
+    y <- mkVar "y"
+    gradient <- define "gradient" (x, y) $ x + y
 ```
 
 And tell Halide that we'd like to be notified of all evaluations.
 
 ```haskell
-  traceStores gradient
+    traceStores gradient
 ```
 
 Realize the function over an 8x8 region.
 
 ```haskell
-  putStrLn "Evaluating gradient ..."
-  realize gradient [8, 8] . const $ pure ()
+    putStrLn "Evaluating gradient ..."
+    realize gradient [8, 8] . const $ pure ()
 ```
 
 <details>
@@ -122,13 +122,13 @@ primitive. We'll make a new version of gradient that processes each scanline in
 parallel.
 
 ```haskell
-  parallelGradient <- define "parallelGradient" (x, y) $ x + y
+    parallelGradient <- define "parallelGradient" (x, y) $ x + y
 ```
 
 We'll also trace this function.
 
 ```haskell
-  traceStores parallelGradient
+    traceStores parallelGradient
 ```
 
 Things are the same so far. We've defined the algorithm, but haven't said
@@ -140,7 +140,7 @@ we run this using a thread pool and a task queue. On OS X we call into grand
 central dispatch, which does the same thing for us.
 
 ```haskell
-  void $ parallel y parallelGradient
+    void $ parallel y parallelGradient
 ```
 
 This time the printfs should come out of order, because each scanline is
@@ -149,8 +149,8 @@ adapt to your system, but on linux you can control it manually using the
 environment variable `HL_NUM_THREADS`.
 
 ```haskell
-  putStrLn "Evaluating parallelGradient ..."
-  realize parallelGradient [8, 8] . const $ pure ()
+    putStrLn "Evaluating parallelGradient ..."
+    realize parallelGradient [8, 8] . const $ pure ()
 ```
 
 <details>
@@ -225,6 +225,152 @@ Store parallelGradient.0(5, 2) = 7
 Store parallelGradient.0(6, 2) = 8
 Store parallelGradient.0(7, 2) = 9
 End pipeline parallelGradient.0()
+```
+
+</details>
+
+
+### Printing individual Exprs.
+
+`traceStores` can only print the value of a `Func`. Sometimes you want to
+inspect the value of sub-expressions rather than the entire `Func`. The
+function `printed` can be wrapped around any `Expr` to print the value of that
+`Expr` every time it is evaluated.
+
+For example, say we have some `Func` that is the sum of two terms:
+
+```haskell
+  it "Prints individual Exprs" $ do
+    x <- mkVar "x"
+    y <- mkVar "y"
+    f <- define "f" (x, y) $ sin (cast @Float x) + cos (cast @Float y)
+```
+
+If we want to inspect just one of the terms, we can wrap it in a call to `printed`:
+
+```haskell
+    g <- define "g" (x, y) $ sin (cast @Float x) + printed (cos (cast @Float y))
+    putStrLn "Evaluating sin(x) + cos(y), and just printing cos(y)..."
+    realize g [4, 4] . const $ pure ()
+```
+
+<details>
+<summary>Show output...</summary>
+
+```
+1.000000
+1.000000
+1.000000
+1.000000
+0.540302
+0.540302
+0.540302
+0.540302
+-0.416147
+-0.416147
+-0.416147
+-0.416147
+-0.989992
+-0.989992
+-0.989992
+-0.989992
+```
+
+</details>
+
+
+### Printing additional context
+
+`printed` can take multiple arguments. It prints all of them and evaluates to
+the first one. The arguments can be `Expr`s, `Text`, or `String`. This can be
+used to print additional context alongside the value:
+
+```haskell
+  it "Prints additional context" $ do
+    x <- mkVar "x"
+    y <- mkVar "y"
+    let second = printed (cos (cast @Float y)) ("<- this is cos(" :: Text)  y  (") when x =" :: Text) x
+    f <- define "f" (x, y) $ sin (cast @Float x) + second
+    putStrLn "Evaluating sin(x) + cos(y), and printing cos(y) with more context..."
+    realize f [4, 4] . const $ pure ()
+```
+
+<details>
+<summary>Show output...</summary>
+
+```
+1.000000 <- this is cos( 0 ) when x = 0
+1.000000 <- this is cos( 0 ) when x = 1
+1.000000 <- this is cos( 0 ) when x = 2
+1.000000 <- this is cos( 0 ) when x = 3
+0.540302 <- this is cos( 1 ) when x = 0
+0.540302 <- this is cos( 1 ) when x = 1
+0.540302 <- this is cos( 1 ) when x = 2
+0.540302 <- this is cos( 1 ) when x = 3
+-0.416147 <- this is cos( 2 ) when x = 0
+-0.416147 <- this is cos( 2 ) when x = 1
+-0.416147 <- this is cos( 2 ) when x = 2
+-0.416147 <- this is cos( 2 ) when x = 3
+-0.989992 <- this is cos( 3 ) when x = 0
+-0.989992 <- this is cos( 3 ) when x = 1
+-0.989992 <- this is cos( 3 ) when x = 2
+-0.989992 <- this is cos( 3 ) when x = 3
+```
+
+</details>
+
+
+### Conditional printing
+
+Both `printed` and `traceStores` can produce a lot of output. If you're looking for
+a rare event, or just want to see what happens at a single pixel, this amount
+of output can be difficult to dig through. Instead, the function `printedWhen` can
+be used to conditionally print an `Expr`. The first argument to `printedWhen`
+is an `Expr Bool`. If the `Expr` evaluates to `True`, it returns the second
+argument and prints all of the arguments. If the `Expr` evaluates to `False` it
+just returns the second argument and does not print.
+
+```haskell
+  it "Conditionally prints Exprs" $ do
+    x <- mkVar "x"
+    y <- mkVar "y"
+    let e = printedWhen (eq x 37 `and` eq y 42) (cos (cast @Float y)) ("<- this is cos(y) at x, y == (37, 42)" :: Text)
+    f <- define "f" (x, y) $ sin (cast @Float x) + e
+    putStrLn $ "Evaluating sin(x) + cos(y), and printing cos(y) at a single pixel..."
+    realize f [640, 480] . const $ pure ()
+```
+
+<details>
+<summary>Show output...</summary>
+
+```
+-0.399985 <- this is cos(y) at x, y == (37, 42)
+```
+
+</details>
+
+`printedWhen` can also be used to check for values you're not expecting:
+
+```haskell
+    let e = cos (cast @Float y)
+        e' = printedWhen (e `lt` 0) e ("cos(y) < 0 at y ==" :: Text) y
+    g <- define "g" (x, y) $ sin (cast @Float x) + e'
+    putStrLn $ "Evaluating sin(x) + cos(y), and printing whenever cos(y) < 0..."
+    realize g [4, 4] . const $ pure ()
+```
+
+<details>
+<summary>Show output...</summary>
+
+```
+-0.416147 cos(y) < 0 at y == 2
+-0.416147 cos(y) < 0 at y == 2
+-0.416147 cos(y) < 0 at y == 2
+-0.416147 cos(y) < 0 at y == 2
+-0.989992 cos(y) < 0 at y == 3
+-0.989992 cos(y) < 0 at y == 3
+-0.989992 cos(y) < 0 at y == 3
+-0.989992 cos(y) < 0 at y == 3
 ```
 
 </details>

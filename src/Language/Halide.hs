@@ -27,6 +27,7 @@ module Language.Halide
     -- ** Inspecting
   , toIntImm
   , printed
+  , printedWhen
   , evaluate
 
     -- ** Comparisons
@@ -41,6 +42,10 @@ module Language.Halide
   , lte
   , gt
   , gte
+
+    -- ** Boolean functions
+  , and
+  , or
 
     -- * Functions
   , Func (..)
@@ -224,3 +229,4 @@ import Language.Halide.Schedule
 import Language.Halide.Target
 import Language.Halide.Trace
 import Language.Halide.Type
+import Prelude ()
