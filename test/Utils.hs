@@ -26,11 +26,11 @@ import Control.Exception (throwIO)
 import Control.Monad (unless, void)
 import Data.Function ((&))
 import Data.Text (Text, unpack)
-import qualified Data.Text as T
-import qualified Data.Text.IO as T
+import Data.Text qualified as T
+import Data.Text.IO qualified as T
 import GHC.Exts (IsList (..))
 import GHC.Stack
-import Language.Halide
+import Language.Halide hiding (and)
 import System.IO (stderr)
 import Test.HUnit
 import Test.HUnit.Lang (FailureReason (..), HUnitFailure (..))
