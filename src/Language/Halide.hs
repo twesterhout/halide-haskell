@@ -42,6 +42,8 @@ module Language.Halide
   , lte
   , gt
   , gte
+  , min
+  , max
 
     -- ** Boolean functions
   , and

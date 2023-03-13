@@ -1,0 +1,51 @@
+cabal-version:   3.0
+name:            halide-JuicyPixels
+version:         0.0.1.0
+synopsis:        Integration between Halide and JuicyPixels
+description:
+  This package provides instances of 'Language.Halide.IsHalideBuffer' for image types from the
+  JuicyPixels library.
+
+license:         BSD-3-Clause
+license-file:    LICENSE
+author:          twesterhout
+maintainer:      14264576+twesterhout@users.noreply.github.com
+category:        Language
+build-type:      Simple
+extra-doc-files: CHANGELOG.md
+
+common setup
+  ghc-options:        -Wall
+  default-language:   GHC2021
+  default-extensions:
+    DataKinds
+    InstanceSigs
+    LambdaCase
+    OverloadedRecordDot
+    TypeFamilies
+
+library
+  import:          setup
+  exposed-modules: Language.Halide.JuicyPixels
+  build-depends:
+    , base            >=4.16.0.0 && <5
+    , halide-haskell
+    , JuicyPixels     >=3.3.0    && <4
+    , vector
+
+  hs-source-dirs:  src
+
+test-suite halide-JuicyPixels-test
+  import:         setup
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is:        Main.hs
+  build-depends:
+    , base                ^>=4.16.3.0
+    , halide-haskell
+    , halide-JuicyPixels
+    , hspec
+    , JuicyPixels
+
+-- Modules included in this executable, other than Main.
+-- other-modules:

@@ -31,6 +31,8 @@ module Language.Halide.Expr
   , gte
   , and
   , or
+  , min
+  , max
   , bool
   , undef
     -- | For debugging, it's often useful to observe the value of an expression when it's evaluated. If you
@@ -307,6 +309,18 @@ or :: Expr Bool -> Expr Bool -> Expr Bool
 or = binaryOp $ \a b ptr ->
   [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
     (*$(Halide::Expr* a)) || (*$(Halide::Expr* b))} } |]
+
+-- | 'Prelude.min' but lifted to return an 'Expr'.
+min :: IsHalideType a => Expr a -> Expr a -> Expr a
+min = binaryOp $ \a b ptr ->
+  [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+    Halide::min(*$(Halide::Expr* a), *$(Halide::Expr* b))} } |]
+
+-- | 'Prelude.max' but lifted to return an 'Expr'.
+max :: IsHalideType a => Expr a -> Expr a -> Expr a
+max = binaryOp $ \a b ptr ->
+  [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+    Halide::max(*$(Halide::Expr* a), *$(Halide::Expr* b))} } |]
 
 -- | Similar to the standard 'Prelude.bool' function from Prelude except that it's
 -- lifted to work with 'Expr' types.

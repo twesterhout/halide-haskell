@@ -124,8 +124,10 @@
       haskellPackagesOverride = ps:
         ps.override
           {
-            overrides = self: super: {
+            overrides = self: super: rec {
               halide-haskell = halide-haskell-for self;
+              halide-JuicyPixels =
+                (self.callCabal2nix "halide-JuicyPixels" ./halide-JuicyPixels { });
               halide-readme = with-markdown-unlit self
                 (self.callCabal2nix "halide-readme" ./test-readme { });
               halide-tutorial01 = with-markdown-unlit self
@@ -174,6 +176,7 @@
                       ps.halide-tutorial03
                       ps.halide-tutorial04
                       ps.halide-tutorial05
+                      ps.halide-JuicyPixels
                     ]);
                   withHoogle = true;
                   nativeBuildInputs = with pkgs; with ps; [
