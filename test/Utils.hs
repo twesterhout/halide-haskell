@@ -30,7 +30,7 @@ import Data.Text qualified as T
 import Data.Text.IO qualified as T
 import GHC.Exts (IsList (..))
 import GHC.Stack
-import Language.Halide hiding (and)
+import Language.Halide hiding (and, max)
 import System.IO (stderr)
 import Test.HUnit
 import Test.HUnit.Lang (FailureReason (..), HUnitFailure (..))

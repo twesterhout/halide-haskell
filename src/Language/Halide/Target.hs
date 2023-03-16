@@ -362,7 +362,8 @@ data TargetFeature
   | FeatureSanitizerCoverage
   | FeatureProfileByTimer
   | FeatureSPIRV
-  | FeatureSemihosting
+  -- removed in v15.0.0
+  -- \| FeatureSemihosting
   deriving stock (Eq, Show, Ord)
 
 instance Enum TargetFeature where
@@ -445,7 +446,8 @@ instance Enum TargetFeature where
       FeatureSanitizerCoverage -> [CU.pure| int { halide_target_feature_sanitizer_coverage } |]
       FeatureProfileByTimer -> [CU.pure| int { halide_target_feature_profile_by_timer } |]
       FeatureSPIRV -> [CU.pure| int { halide_target_feature_spirv } |]
-      FeatureSemihosting -> [CU.pure| int { halide_target_feature_semihosting } |]
+
+  -- FeatureSemihosting -> [CU.pure| int { halide_target_feature_semihosting } |]
   toEnum k
     | fromIntegral k == [CU.pure| int { halide_target_feature_jit } |] = FeatureJIT
     | fromIntegral k == [CU.pure| int { halide_target_feature_debug } |] = FeatureDebug
@@ -522,5 +524,5 @@ instance Enum TargetFeature where
     | fromIntegral k == [CU.pure| int { halide_target_feature_sanitizer_coverage } |] = FeatureSanitizerCoverage
     | fromIntegral k == [CU.pure| int { halide_target_feature_profile_by_timer } |] = FeatureProfileByTimer
     | fromIntegral k == [CU.pure| int { halide_target_feature_spirv } |] = FeatureSPIRV
-    | fromIntegral k == [CU.pure| int { halide_target_feature_semihosting } |] = FeatureSemihosting
+    -- \| fromIntegral k == [CU.pure| int { halide_target_feature_semihosting } |] = FeatureSemihosting
     | otherwise = error $ "unknown Target feature: " <> show k

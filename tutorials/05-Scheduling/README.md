@@ -322,7 +322,7 @@ In our example, x_min was 0, x_extent was 7, and factor was 3.
 
 ```haskell
     order
-      `shouldBe` [ [iInner + min (3 * iOuter) (7 - 3), j]
+      `shouldBe` [ [iInner + Prelude.min (3 * iOuter) (7 - 3), j]
                  | j <- [0 .. 3]
                  , iOuter <- [0 .. 2]
                  , iInner <- [0 .. 2]

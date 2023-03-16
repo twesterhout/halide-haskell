@@ -9,10 +9,10 @@ description:
   means you write C++ code that builds an in-memory representation of a Halide
   pipeline using Halide's C++ API. You can then compile this representation to
   an object file, or JIT-compile it and run it in the same process.
-
+  .
   This package provides Haskell bindings that allow to write Halide embedded in
   Haskell without C++.
-
+  .
   The best way to learn Halide is to have a look at the
   [tutorials](https://github.com/twesterhout/halide-haskell/tree/master/tutorials).
   Reference documentation is provided by the haddocks of the 'Language.Halide'

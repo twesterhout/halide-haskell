@@ -139,4 +139,8 @@ defineExceptionHandler =
     \  stream << x;                                                   \n\
     \  return new std::string{stream.str()};                          \n\
     \}                                                                \n\
+    \\n\
+    \namespace Halide { namespace Internal {\n\
+    \  std::string print_loop_nest(const std::vector<Function> &);\n\
+    \} }\n\
     \"
