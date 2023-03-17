@@ -100,6 +100,9 @@ library
   if os(linux)
     extra-libraries: stdc++
 
+  cxx-options:     -std=c++17 -Wall
+  ghc-options:     -optcxx-std=c++17 -optcxx-Wall
+
 executable halide-haskell
   import:         common-options
   hs-source-dirs: example
