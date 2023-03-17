@@ -10,7 +10,7 @@ jobs:
   build:
     strategy:
       matrix:
-        ghc: ['927', '944', '961']
+        ghc: ['927', '944'] # Not all dependencies support 9.6.1 yet
         os: ['ubuntu-latest', 'macos-latest']
     runs-on: ${{ matrix.os }}
     name: Build with GHC ${{ matrix.ghc }} on ${{ matrix.os }}
