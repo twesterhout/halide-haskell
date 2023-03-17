@@ -95,9 +95,10 @@ library
     cpp-options:   -DUSE_DLOPEN=1
     build-depends: unix >=2.7.2.2 && <3.0
 
-  extra-libraries:
-    Halide
-    stdc++
+  extra-libraries: Halide
+
+  if os(linux)
+    extra-libraries: stdc++
 
 executable halide-haskell
   import:         common-options
