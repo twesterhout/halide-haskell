@@ -1,8 +1,6 @@
 {
   description = "twesterhout/halide-haskell: Running Halide pipelines from Haskell";
 
-  # We have a patched Halide version, so we need cachix such that users don't
-  # have to compile Halide locally
   nixConfig = {
     extra-experimental-features = "nix-command flakes";
     extra-substituters = "https://halide-haskell.cachix.org";
@@ -19,10 +17,10 @@
       # this tells Nix to retrieve this input as just source code
       flake = false;
     };
-    halide = {
-      url = "github:halide/Halide";
-      flake = false;
-    };
+    # halide = {
+    #   url = "github:halide/Halide";
+    #   flake = false;
+    # };
     nixGL = {
       url = "github:guibou/nixGL";
       inputs.flake-utils.follows = "flake-utils";
@@ -34,39 +32,10 @@
     with builtins;
     let
       inherit (inputs.nixpkgs) lib;
-      pkgs = import inputs.nixpkgs {
-        inherit system;
-        overlays = [
-          (self: super: {
-            halide =
-              (super.halide.override {
-                llvmPackages = super.llvmPackages_15;
-                # llvmPackages = super.llvmPackages_15 // {
-                #   libllvm = enableExceptions super.llvmPackages_15.libllvm;
-                #   llvm = enableExceptions super.llvmPackages_15.llvm;
-                # };
-              }).overrideAttrs (attrs: {
-                version = "16.0.0";
-                src = inputs.halide;
-                cmakeFlags = (attrs.cmakeFlags or [ ]) ++
-                  [
-                    "-DWITH_TESTS=ON"
-                    "-DWITH_PYTHON_BINDINGS=OFF"
-                    "-DWITH_DOCS=OFF"
-                    "-DWITH_UTILS=OFF"
-                    "-DWITH_TUTORIALS=OFF"
-                    "-DHalide_ENABLE_RTTI=ON"
-                    "-DHalide_ENABLE_EXCEPTIONS=ON"
-                  ];
-                nativeBuildInputs = (attrs.nativeBuildInputs or [ ]) ++ [ super.zlib ];
-                patches = (attrs.patches or [ ]) ++ [ ./print_loop_nest.patch ];
-              });
-          })
-        ];
-      };
+      pkgs = import inputs.nixpkgs { inherit system; };
 
-      # only consider source dirs and package.yaml as source to our Haskell package
-      # this allows the project to rebuild only when source files change, not e.g. readme
+      # Only consider source dirs and .cabal files as the source to our Haskell package.
+      # This allows the project to rebuild only when the source files change.
       src = inputs.nix-filter.lib {
         root = ./.;
         include = [
@@ -76,7 +45,6 @@
           "halide-haskell.cabal"
           "README.md"
           "test-readme/README.lhs"
-          "CHANGELOG.md"
           "LICENSE"
         ];
       };
@@ -88,7 +56,11 @@
             , withCuda
             , Halide
             }:
-            (haskellPackages.callCabal2nix "halide-haskell" src { inherit Halide; }).overrideAttrs (attrs: {
+            (haskellPackages.callCabal2nix "halide-haskell" src { inherit Halide; }).overrideAttrs (attrs: rec {
+              pname = attrs.pname
+                + lib.optionalString withIntelOpenCL "-intel-ocl"
+                + lib.optionalString withCuda "-cuda";
+              name = "${pname}-${attrs.version}";
               nativeBuildInputs = attrs.nativeBuildInputs
                 ++ lib.optional withIntelOpenCL pkgs.makeWrapper;
               propagatedBuildInputs = with pkgs;
@@ -96,22 +68,28 @@
                 ++ lib.optionals withIntelOpenCL [ clinfo intel-ocl ocl-icd ]
                 ++ lib.optional withCuda inputs.nixGL.packages.${system}.nixGLDefault;
               postInstall = (attrs.postInstall or "")
-                + (if withIntelOpenCL then ''
+                + lib.optionalString withIntelOpenCL ''
                 wrapProgram $out/bin/halide-haskell \
                   --prefix LD_LIBRARY_PATH : ${pkgs.ocl-icd}/lib \
                   --prefix OCL_ICD_VENDORS : ${pkgs.intel-ocl}/etc/OpenCL/vendors
-              '' else "")
-                + (if withCuda then ''
+              ''
+                + lib.optionalString withCuda ''
                 prog="$out/bin/halide-haskell"
                 hidden="$(dirname "$prog")/.$(basename "$prog")"-wrapped
                 mv "$prog" "$hidden"
                 echo "#!${pkgs.stdenv.shell}" > "$prog"
                 echo "exec ${inputs.nixGL.packages.${system}.nixGLDefault}/bin/nixGL $hidden \"\$@\"" >> "$prog"
                 chmod +x "$prog"
-              '' else "");
+              '';
+
+              # We set withIntelOpenCL and withCuda such that dev shells can determine whether
+              # they need extra dependencies
+              inherit withIntelOpenCL;
+              inherit withCuda;
             });
         in
-        lib.makeOverridable builder { withIntelOpenCL = false; withCuda = false; Halide = pkgs.halide; };
+        lib.makeOverridable builder
+          { withIntelOpenCL = false; withCuda = false; Halide = pkgs.halide; };
 
       with-markdown-unlit = hp: p: p.overrideAttrs (attrs: {
         nativeBuildInputs = (attrs.nativeBuildInputs or [ ]) ++ [ hp.markdown-unlit ];
@@ -121,11 +99,11 @@
       # It will also affects all dependent libraries.
       # overrides allows us to patch existing Haskell packages, or introduce new ones
       # see here for specifics: https://nixos.wiki/wiki/Overlays
-      haskellPackagesOverride = ps:
+      haskellPackagesOverride = ps: args:
         ps.override
           {
             overrides = self: super: rec {
-              halide-haskell = halide-haskell-for self;
+              halide-haskell = (halide-haskell-for self).override args;
               halide-JuicyPixels =
                 (self.callCabal2nix "halide-JuicyPixels" ./halide-JuicyPixels { });
               halide-readme = with-markdown-unlit self
@@ -138,6 +116,18 @@
                 (self.callCabal2nix "halide-tutorial04" ./tutorials/04-Debugging { });
               halide-tutorial05 = with-markdown-unlit self
                 (self.callCabal2nix "halide-tutorial05" ./tutorials/05-Scheduling { });
+              halide-all = pkgs.buildEnv {
+                name = "halide-all";
+                paths = [
+                  halide-haskell
+                  # halide-JuicyPixels
+                  halide-readme
+                  halide-tutorial01
+                  halide-tutorial03
+                  halide-tutorial04
+                  halide-tutorial05
+                ];
+              };
             };
           };
 
@@ -147,37 +137,34 @@
         , package ? ""
         , ...
         }:
-        let ps = haskellPackagesOverride haskellPackages; in
+        let
+          ps = haskellPackagesOverride haskellPackages { };
+          ps-cuda = haskellPackagesOverride haskellPackages { withCuda = true; };
+          ps-intel-ocl = haskellPackagesOverride haskellPackages { withIntelOpenCL = true; };
+        in
         {
           packages = {
             "${name}" = ps.${package} or ps;
-            "${name}-cuda" = ps.${package}.override { withCuda = true; };
-            "${name}-intel-ocl" = ps.${package}.override { withIntelOpenCL = true; };
+            "${name}-cuda" = ps-cuda.${package} or ps-cuda;
+            "${name}-intel-ocl" = ps-intel-ocl.${package} or ps-intel-ocl;
           };
           devShells =
             let
-              genericShell =
-                { withIntelOpenCL ? false
-                , withCuda ? false
-                } @ args:
+              genericShell = ps:
+                let
+                  withIntelOpenCL = ps.halide-haskell.withIntelOpenCL;
+                  withCuda = ps.halide-haskell.withCuda;
+                in
                 ps.shellFor {
-                  packages =
-                    let
-                      halide-haskell = ps.halide-haskell.override args;
-                      override-halide-haskell = p: p.override { inherit halide-haskell; };
-                    in
-                    ps: [
-                      halide-haskell
-                    ]
-                    ++
-                    (map override-halide-haskell [
-                      ps.halide-readme
-                      ps.halide-tutorial01
-                      ps.halide-tutorial03
-                      ps.halide-tutorial04
-                      ps.halide-tutorial05
-                      ps.halide-JuicyPixels
-                    ]);
+                  packages = ps: with ps; [
+                    halide-haskell
+                    halide-JuicyPixels
+                    halide-readme
+                    halide-tutorial01
+                    halide-tutorial03
+                    halide-tutorial04
+                    halide-tutorial05
+                  ];
                   withHoogle = true;
                   nativeBuildInputs = with pkgs; with ps; [
                     # Building and testing
@@ -211,9 +198,9 @@
                 };
             in
             {
-              "${name}" = genericShell { };
-              "${name}-cuda" = genericShell { withCuda = true; };
-              "${name}-intel-ocl" = genericShell { withIntelOpenCL = true; };
+              "${name}" = genericShell ps;
+              "${name}-cuda" = genericShell ps-cuda;
+              "${name}-intel-ocl" = genericShell ps-intel-ocl;
             };
           # The formatter to use for .nix files (but not .hs files)
           # Allows us to run `nix fmt` to reformat nix files.
@@ -221,7 +208,8 @@
         };
     in
     foldl' (acc: conf: lib.recursiveUpdate acc (outputsFor conf)) { }
-      (lib.mapAttrsToList (name: haskellPackages: { inherit name haskellPackages; }) pkgs.haskell.packages ++ [
+      (lib.mapAttrsToList (name: haskellPackages: { inherit name haskellPackages; })
+        (lib.filterAttrs (_: ps: ps ? ghc) pkgs.haskell.packages) ++ [
         {
           haskellPackages = pkgs.haskellPackages;
           name = "defaultGhc";

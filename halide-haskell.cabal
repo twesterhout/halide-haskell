@@ -29,10 +29,7 @@ maintainer:
 category:        Language
 copyright:       2022-2023 Tom Westerhout
 build-type:      Simple
-extra-doc-files:
-  CHANGELOG.md
-  README.md
-
+extra-doc-files: README.md
 tested-with:     GHC ==9.2.4 || ==9.2.5 || ==9.4.4
 
 source-repository head
