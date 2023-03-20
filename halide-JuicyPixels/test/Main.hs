@@ -20,7 +20,7 @@ brighten = unsafePerformIO . compile $ \input -> do
 
 main :: IO ()
 main = do
-  readImage "cat.jpg" >>= \case
+  readImage "test/cat.jpg" >>= \case
     Left e -> error e
     Right image -> do
       let rgb@(Image width height _) = convertRGB8 image
