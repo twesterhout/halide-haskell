@@ -391,10 +391,15 @@ instance IsHalideType a => Show (Expr a) where
               //           << std::endl;
               std::cerr << "Calling IRPrinter::test() ...\n";
               Halide::Internal::IRPrinter::test();
+              std::cerr << "1)\n";
+              auto x = *$(const Halide::Expr* x);
+              std::cerr << "2)\n";
+              std::cerr << x.defined() << " " << x.type() << std::endl;
+              std::cerr << "3)\n";
 
+              auto expr = Halide::Expr{123};
               std::cerr << "Returning new std::string ...\n";
-              return new std::string{"123"};
-              // return to_string_via_iostream(Halide::Expr{123});
+              return to_string_via_iostream(expr);
               // return to_string_via_iostream(*$(const Halide::Expr* x));
             } |]
   show (Var var) = unpack . unsafePerformIO $ do
