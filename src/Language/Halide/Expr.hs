@@ -377,14 +377,22 @@ instance IsTuple (Arguments '[Expr a]) (Expr a) where
   fromTuple x = x ::: Nil
 
 instance IsHalideType a => Show (Expr a) where
-  show (Expr expr) = unpack . unsafePerformIO $ do
-    withForeignPtr expr $ \x ->
-      peekAndDeleteCxxString
-        =<< [CU.exp| std::string* { to_string_via_iostream(*$(const Halide::Expr* x)) } |]
+  show (Expr expr) =
+    unpack . unsafePerformIO $! do
+      withForeignPtr expr $ \x ->
+        peekAndDeleteCxxString
+          =<< [CU.block| std::string* {
+              std::cerr << "Calling to_string_via_iostream on "
+                        << static_cast<void const *>($(const Halide::Expr* x))
+                        << std::endl;
+              return to_string_via_iostream(*$(const Halide::Expr* x));
+            } |]
   show (Var var) = unpack . unsafePerformIO $ do
     withForeignPtr var $ \x ->
       peekAndDeleteCxxString
-        =<< [CU.exp| std::string* { to_string_via_iostream(*$(const Halide::Var* x)) } |]
+        =<< [CU.block| std::string* {
+              return to_string_via_iostream(*$(const Halide::Var* x));
+            } |]
   show (RVar rvar) = unpack . unsafePerformIO $ do
     withForeignPtr rvar $ \x ->
       peekAndDeleteCxxString
