@@ -1,6 +1,6 @@
 cabal-version:   3.0
 name:            halide-haskell
-version:         0.0.1.0
+version:         0.0.2.0
 synopsis:        Haskell bindings to Halide
 description:
   Halide is a programming language designed to make it easier to write
@@ -147,11 +147,11 @@ test-suite halide-haskell-test
 
   build-depends:
     , halide-haskell
-    , hspec
-    , HUnit
+    , hspec           >=2.9.7   && <3
+    , HUnit           >=1.6.2.0 && <1.7
     , inline-c
     , inline-c-cpp
-    , QuickCheck
+    , QuickCheck      >=2.14.2  && <3
     , text
     , vector
 
