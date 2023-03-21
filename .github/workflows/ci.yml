@@ -22,7 +22,7 @@ jobs:
         nix build \
           --accept-flake-config \
           --print-build-logs \
-          .#ghc${{ matrix.ghc }}.testWriteExpr
+          .#testWriteExpr
     - name: Build
       run: |
         nix build \
