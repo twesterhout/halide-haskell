@@ -389,6 +389,9 @@ instance IsHalideType a => Show (Expr a) where
                         << Halide::Expr{123}
                         << "'"
                         << std::endl;
+
+              Halide::Internal::IRPrinter::test();
+
               return to_string_via_iostream(Halide::Expr{123});
               // return to_string_via_iostream(*$(const Halide::Expr* x));
             } |]
