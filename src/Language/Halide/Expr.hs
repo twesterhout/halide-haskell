@@ -384,6 +384,9 @@ instance IsHalideType a => Show (Expr a) where
           =<< [CU.block| std::string* {
               std::cerr << "Calling to_string_via_iostream on "
                         << static_cast<void const *>($(const Halide::Expr* x))
+                        << ": '"
+                        << (*$(const Halide::Expr* x))
+                        << "'"
                         << std::endl;
               return to_string_via_iostream(*$(const Halide::Expr* x));
             } |]
