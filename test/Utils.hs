@@ -6,10 +6,11 @@ module Utils
   ( shouldContainText
   , shouldNotContainText
   , appearsBeforeText
-  , shouldApproxBe
+  , shouldBeApprox
+  , shouldBeEqForTesting
   , testOnGpu
   , approx
-  , approx'
+  , approxWith
   , (&)
   , void
   , T.hPutStrLn
@@ -18,7 +19,6 @@ module Utils
   , eps
   , showInCodeLenses
   , EqForTesting (..)
-  , shouldBeEqForTesting
   )
 where
 
@@ -32,7 +32,6 @@ import GHC.Exts (IsList (..))
 import GHC.Stack
 import Language.Halide hiding (and, max)
 import System.IO (stderr)
-import Test.HUnit
 import Test.HUnit.Lang (FailureReason (..), HUnitFailure (..))
 import Test.Hspec
 
@@ -53,6 +52,17 @@ testOnGpu f =
     Just t -> f t
     Nothing -> pendingWith "no GPU target available"
 
+compareWith :: (HasCallStack, Show a) => (a -> a -> Bool) -> a -> a -> Expectation
+compareWith comparator result expected =
+  unless (comparator result expected) $ do
+    throwIO (HUnitFailure location $ ExpectedButGot Nothing expectedMsg actualMsg)
+  where
+    expectedMsg = show expected
+    actualMsg = show result
+    location = case reverse (toList callStack) of
+      (_, loc) : _ -> Just loc
+      [] -> Nothing
+
 class Num a => HasEpsilon a where
   eps :: a
 
@@ -62,16 +72,17 @@ instance HasEpsilon Float where
 instance HasEpsilon Double where
   eps = 2.220446049250313e-16
 
-approx :: (Ord a, Num a) => a -> a -> a -> a -> Bool
-approx rtol atol a b = abs (a - b) <= max atol (rtol * max (abs a) (abs b))
+approxWith :: (Ord a, Num a) => a -> a -> a -> a -> Bool
+approxWith rtol atol a b = abs (a - b) <= max atol (rtol * max (abs a) (abs b))
 
-approx' :: (Ord a, HasEpsilon a) => a -> a -> Bool
-approx' a b = approx (2 * eps * max (abs a) (abs b)) (4 * eps) a b
+approx :: (Ord a, HasEpsilon a) => a -> a -> Bool
+approx a b = approxWith (2 * eps * max (abs a) (abs b)) (4 * eps) a b
 
-shouldApproxBe :: (Ord a, Num a, Show a) => a -> a -> a -> a -> Expectation
-shouldApproxBe rtol atol a b
-  | approx rtol atol a b = pure ()
-  | otherwise = assertFailure $ "expected " <> show a <> ", but got " <> show b
+shouldBeApprox :: (Ord a, HasEpsilon a, Show a) => a -> a -> Expectation
+shouldBeApprox = compareWith approx
+
+shouldBeEqForTesting :: (HasCallStack, EqForTesting a, Show a) => a -> a -> Expectation
+shouldBeEqForTesting = compareWith equalForTesting
 
 showInCodeLenses :: Text -> IO String
 showInCodeLenses v = error (unpack v)
@@ -128,14 +139,3 @@ instance EqForTesting StageSchedule where
       , a.fusedPairs == b.fusedPairs
       , a.allowRaceConditions == b.allowRaceConditions
       ]
-
-shouldBeEqForTesting :: (HasCallStack, EqForTesting a, Show a) => a -> a -> Expectation
-shouldBeEqForTesting actual expected =
-  unless (actual `equalForTesting` expected) $ do
-    throwIO (HUnitFailure location $ ExpectedButGot Nothing expectedMsg actualMsg)
-  where
-    expectedMsg = show expected
-    actualMsg = show actual
-    location = case reverse (toList callStack) of
-      (_, loc) : _ -> Just loc
-      [] -> Nothing
