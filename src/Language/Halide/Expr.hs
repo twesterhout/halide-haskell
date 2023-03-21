@@ -394,13 +394,12 @@ instance IsHalideType a => Show (Expr a) where
               std::cerr << "1)\n";
               auto x = *$(const Halide::Expr* x);
               std::cerr << "2)\n";
-              std::cerr << x.defined() << " " << x.type() << std::endl;
+              std::cerr << x.defined() << " " << x.type() << "'" << x << "'" << std::endl;
               std::cerr << "3)\n";
 
               auto expr = Halide::Expr{123};
-              std::cerr << "Returning new std::string ...\n";
+              std::cerr << "Returning new std::string: '" << expr << "' ...\n";
               return to_string_via_iostream(expr);
-              // return to_string_via_iostream(*$(const Halide::Expr* x));
             } |]
   show (Var var) = unpack . unsafePerformIO $ do
     withForeignPtr var $ \x ->
