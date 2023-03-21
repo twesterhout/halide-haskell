@@ -3,5 +3,7 @@
 
 int main() {
   Halide::Expr expr{123};
-  std::cerr << expr << std::endl;
+  std::ostringstream out;
+  out << expr;
+  std::cerr << "Output:" << out.str() << std::endl;
 }

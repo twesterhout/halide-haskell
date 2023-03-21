@@ -383,16 +383,18 @@ instance IsHalideType a => Show (Expr a) where
         peekAndDeleteCxxString
           =<< [CU.block| std::string* {
 
-              std::cerr << "Calling to_string_via_iostream on "
-                        << static_cast<void const *>($(const Halide::Expr* x))
-                        << ": '"
-                        << Halide::Expr{123}
-                        << "'"
-                        << std::endl;
-
+              // std::cerr << "Calling to_string_via_iostream on "
+              //           << static_cast<void const *>($(const Halide::Expr* x))
+              //           << ": '"
+              //           << Halide::Expr{123}
+              //           << "'"
+              //           << std::endl;
+              std::cerr << "Calling IRPrinter::test() ...\n";
               Halide::Internal::IRPrinter::test();
 
-              return to_string_via_iostream(Halide::Expr{123});
+              std::cerr << "Returning new std::string ...\n";
+              return new std::string{"123"};
+              // return to_string_via_iostream(Halide::Expr{123});
               // return to_string_via_iostream(*$(const Halide::Expr* x));
             } |]
   show (Var var) = unpack . unsafePerformIO $ do
