@@ -119,3 +119,7 @@ spec = do
       let x :: Expr Float
           x = 1
        in printed (sin x) ("<- sin(" :: Text) x (")" :: Text) `shouldEvaluateTo` sin 1
+
+  describe "Show" $
+    it "shows 123" $ do
+      show (123 :: Expr Int32) `shouldBe` "123"
