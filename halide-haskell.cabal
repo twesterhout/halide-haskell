@@ -30,7 +30,7 @@ category:        Language
 copyright:       2022-2023 Tom Westerhout
 build-type:      Simple
 extra-doc-files: README.md
-tested-with:     GHC ==9.2.4 || ==9.2.5 || ==9.4.4
+tested-with:     GHC ==9.2.7 || ==9.4.4
 
 source-repository head
   type:     git
@@ -60,6 +60,7 @@ library
   hs-source-dirs:  src
   exposed-modules: Language.Halide
   other-modules:
+    Language.Halide.BoundaryConditions
     Language.Halide.Buffer
     Language.Halide.Context
     Language.Halide.Dimension
@@ -136,6 +137,7 @@ test-suite halide-haskell-test
   hs-source-dirs: test
   main-is:        Spec.hs
   other-modules:
+    Language.Halide.BoundaryConditionsSpec
     Language.Halide.BufferSpec
     Language.Halide.ExprSpec
     Language.Halide.FuncSpec

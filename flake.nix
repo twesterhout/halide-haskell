@@ -49,34 +49,34 @@
         ];
       };
 
-      testWriteExpr = pkgs.stdenv.mkDerivation {
-        pname = "testWriteExpr";
-        version = "0.0.1";
-        src = ./test;
-        dontConfigure = true;
-        buildPhase = ''
-          clang++ -std=c++17 write_to_ostream.cpp -lHalide
-        '';
-        checkPhase = ''
-          ./a.out
-        '';
-        doCheck = true;
-        installPhase = ''
-          mkdir -p $out/bin
-          install a.out $out/bin/
-        '';
-        buildInputs = with pkgs; [ halide ];
-        nativeBuildInputs = with pkgs; [ clang_14 ];
-      };
+      # testWriteExpr = pkgs.stdenv.mkDerivation {
+      #   pname = "testWriteExpr";
+      #   version = "0.0.1";
+      #   src = ./test;
+      #   dontConfigure = true;
+      #   buildPhase = ''
+      #     clang++ -std=c++17 write_to_ostream.cpp -lHalide
+      #   '';
+      #   checkPhase = ''
+      #     ./a.out
+      #   '';
+      #   doCheck = true;
+      #   installPhase = ''
+      #     mkdir -p $out/bin
+      #     install a.out $out/bin/
+      #   '';
+      #   buildInputs = with pkgs; [ halide ];
+      #   nativeBuildInputs = with pkgs; [ clang_14 ];
+      # };
 
-      checkedHalide = pkgs.halide.overrideAttrs (attrs: {
-        doCheck = true;
-        cmakeFlags = (attrs.cmakeFlags or [ ]) ++ [ "-DHalide_ENABLE_EXCEPTIONS=OFF" ];
-        patchPhase = (attrs.patchPhase or "") + ''
-          substituteInPlace test/correctness/CMakeLists.txt \
-            --replace 'exception.cpp' '# exception.cpp'
-        '';
-      });
+      # checkedHalide = pkgs.halide.overrideAttrs (attrs: {
+      #   doCheck = true;
+      #   cmakeFlags = (attrs.cmakeFlags or [ ]) ++ [ "-DHalide_ENABLE_EXCEPTIONS=OFF" ];
+      #   patchPhase = (attrs.patchPhase or "") + ''
+      #     substituteInPlace test/correctness/CMakeLists.txt \
+      #       --replace 'exception.cpp' '# exception.cpp'
+      #   '';
+      # });
 
       halide-haskell-for = haskellPackages:
         let
@@ -118,7 +118,7 @@
             });
         in
         lib.makeOverridable builder
-          { withIntelOpenCL = false; withCuda = false; Halide = checkedHalide; };
+          { withIntelOpenCL = false; withCuda = false; Halide = pkgs.halide; };
 
       with-markdown-unlit = hp: p: p.overrideAttrs (attrs: {
         nativeBuildInputs = (attrs.nativeBuildInputs or [ ]) ++ [ hp.markdown-unlit ];
@@ -176,8 +176,6 @@
             "${name}" = ps.${package} or ps;
             "${name}-cuda" = ps-cuda.${package} or ps-cuda;
             "${name}-intel-ocl" = ps-intel-ocl.${package} or ps-intel-ocl;
-            testWriteExpr = testWriteExpr;
-            halide = checkedHalide;
           };
           devShells =
             let
@@ -212,9 +210,9 @@
                     # Previewing markdown files
                     python3Packages.grip
                     # For debugging Halide
-                    gcc
-                    zlib
-                    gdb
+                    # gcc
+                    # zlib
+                    # gdb
                   ]
                   ++ lib.optional withIntelOpenCL clinfo
                   ++ lib.optional withCuda inputs.nixGL.packages.${system}.nixGLDefault;

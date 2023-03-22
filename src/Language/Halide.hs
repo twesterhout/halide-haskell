@@ -58,6 +58,8 @@ module Language.Halide
   , define
   , update
   , (!)
+  , repeatEdge
+  , constantExterior
 
     -- ** Inspecting
   , getArgs
@@ -220,6 +222,7 @@ where
 
 import Foreign.Ptr (Ptr)
 import GHC.TypeLits (KnownNat)
+import Language.Halide.BoundaryConditions
 import Language.Halide.Buffer
 import Language.Halide.Context
 import Language.Halide.Dimension
