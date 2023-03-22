@@ -71,6 +71,11 @@
 
       checkedHalide = pkgs.halide.overrideAttrs (attrs: {
         doCheck = true;
+        cmakeFlags = (attrs.cmakeFlags or [ ]) ++ [ "-DHalide_ENABLE_EXCEPTIONS=OFF" ];
+        patchPhase = (attrs.patchPhase or "") + ''
+          substituteInPlace test/correctness/CMakeLists.txt \
+            --replace 'exception.cpp' '# exception.cpp'
+        '';
       });
 
       halide-haskell-for = haskellPackages:
@@ -172,6 +177,7 @@
             "${name}-cuda" = ps-cuda.${package} or ps-cuda;
             "${name}-intel-ocl" = ps-intel-ocl.${package} or ps-intel-ocl;
             testWriteExpr = testWriteExpr;
+            halide = checkedHalide;
           };
           devShells =
             let
