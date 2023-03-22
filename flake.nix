@@ -69,6 +69,10 @@
         nativeBuildInputs = with pkgs; [ clang_14 ];
       };
 
+      checkedHalide = pkgs.halide.overrideAttrs (attrs: {
+        doCheck = true;
+      });
+
       halide-haskell-for = haskellPackages:
         let
           builder =
@@ -109,7 +113,7 @@
             });
         in
         lib.makeOverridable builder
-          { withIntelOpenCL = false; withCuda = false; Halide = pkgs.halide; };
+          { withIntelOpenCL = false; withCuda = false; Halide = checkedHalide; };
 
       with-markdown-unlit = hp: p: p.overrideAttrs (attrs: {
         nativeBuildInputs = (attrs.nativeBuildInputs or [ ]) ++ [ hp.markdown-unlit ];
