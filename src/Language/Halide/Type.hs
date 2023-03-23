@@ -66,6 +66,7 @@ import Foreign.C.Types
 import Foreign.ForeignPtr
 import Foreign.Ptr
 import Foreign.Storable
+import GHC.ForeignPtr (mallocForeignPtrAlignedBytes)
 import GHC.TypeLits
 import qualified Language.C.Inline as C
 import qualified Language.C.Inline.Unsafe as CU
@@ -120,10 +121,12 @@ class CxxConstructible a where
 
 cxxConstructWithDeleter :: Int -> FinalizerPtr a -> (Ptr a -> IO ()) -> IO (ForeignPtr a)
 cxxConstructWithDeleter size deleter constructor = do
-  fp <- mallocForeignPtrBytes size
+  fp <- mallocForeignPtrAlignedBytes size align
   withForeignPtr fp constructor
   addForeignPtrFinalizer deleter fp
   pure fp
+  where
+    align = 64
 
 -- data Split =
 --   SplitVar !Text !Text !Text !(Expr Int32) !
