@@ -55,7 +55,7 @@
         src = ./test;
         dontConfigure = true;
         buildPhase = ''
-          g++ -std=c++17 write_to_ostream.cpp -lHalide
+          clang++ -std=c++17 write_to_ostream.cpp -lHalide
         '';
         checkPhase = ''
           ./a.out
@@ -66,7 +66,7 @@
           install a.out $out/bin/
         '';
         buildInputs = with pkgs; [ halide ];
-        nativeBuildInputs = with pkgs; [ gcc ];
+        nativeBuildInputs = with pkgs; [ clang_14 ];
       };
 
       # checkedHalide = pkgs.halide.overrideAttrs (attrs: {
@@ -211,6 +211,7 @@
                     # Previewing markdown files
                     python3Packages.grip
                     # For debugging Halide
+                    clang_14
                     # gcc
                     # zlib
                     # gdb
@@ -221,6 +222,8 @@
                     export PROMPT_COMMAND=""
                     export PS1='(nix) GHC ${haskellPackages.ghc.version} \w $ '
                     export LD_LIBRARY_PATH=${pkgs.zlib}/lib:${pkgs.halide}/lib:$LD_LIBRARY_PATH
+                    export CC=${pkgs.clang_14}/bin/clang
+                    export CXX=${pkgs.clang_14}/bin/clang++
                   '' + (if withIntelOpenCL then ''
                     export LD_LIBRARY_PATH=${pkgs.ocl-icd}/lib:$LD_LIBRARY_PATH
                     export OCL_ICD_VENDORS="${pkgs.intel-ocl}/etc/OpenCL/vendors"

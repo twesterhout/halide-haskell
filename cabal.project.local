@@ -4,4 +4,4 @@ tests: True
 test-options: "--color"
 test-show-details: streaming
 package halide-haskell
-  ghc-options: -g2
+  ghc-options: -g2 "-pgmcxx clang++" "-pgmc clang" "-pgma clang" "-pgml clang"

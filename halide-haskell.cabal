@@ -98,11 +98,11 @@ library
 
   extra-libraries: Halide
 
-  if os(linux)
-    extra-libraries: stdc++
+  -- if os(linux)
+  --   extra-libraries: stdc++
 
-  if os(osx)
-    extra-libraries: iconv
+  -- if os(osx)
+  --   extra-libraries: iconv
 
   cxx-options:     -std=c++17 -Wall
   ghc-options:     -optcxx-std=c++17 -optcxx-Wall
