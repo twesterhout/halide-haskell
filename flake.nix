@@ -21,6 +21,10 @@
     #   url = "github:halide/Halide";
     #   flake = false;
     # };
+    inline-c = {
+      url = "github:twesterhout/inline-c";
+      flake = false;
+    };
     nixGL = {
       url = "github:guibou/nixGL";
       inputs.flake-utils.follows = "flake-utils";
@@ -132,6 +136,8 @@
         ps.override
           {
             overrides = self: super: rec {
+              inline-c-cpp =
+                (self.callCabal2nix "inline-c-cpp" "${inputs.inline-c.outPath}/inline-c-cpp" { });
               halide-haskell = (halide-haskell-for self).override args;
               halide-JuicyPixels =
                 (self.callCabal2nix "halide-JuicyPixels" ./halide-JuicyPixels { });
