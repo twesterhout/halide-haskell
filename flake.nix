@@ -53,6 +53,17 @@
         ];
       };
 
+      Halide = (pkgs.callPackage ./halide.nix { llvmPackages = pkgs.llvmPackages_14; }).overrideAttrs (attrs: {
+        doCheck = true;
+        # cmakeFlags = (attrs.cmakeFlags or [ ]) ++ [ "-DHalide_ENABLE_EXCEPTIONS=OFF" ];
+        # patchPhase = (attrs.patchPhase or "") + ''
+        #   substituteInPlace test/correctness/CMakeLists.txt \
+        #     --replace 'exception.cpp' '# exception.cpp'
+        # '';
+      });
+      # checkedHalide = pkgs.halide.overrideAttrs (attrs: {
+      # });
+
       testWriteExpr = pkgs.stdenv.mkDerivation {
         pname = "testWriteExpr";
         version = "0.0.1";
@@ -69,7 +80,7 @@
           mkdir -p $out/bin
           install a.out $out/bin/
         '';
-        buildInputs = with pkgs; [ halide ];
+        buildInputs = [ Halide ];
         nativeBuildInputs = with pkgs; [ stdenv.cc ];
       };
 
@@ -122,7 +133,7 @@
             });
         in
         lib.makeOverridable builder
-          { withIntelOpenCL = false; withCuda = false; Halide = pkgs.halide; };
+          { withIntelOpenCL = false; withCuda = false; inherit Halide; };
 
       with-markdown-unlit = hp: p: p.overrideAttrs (attrs: {
         nativeBuildInputs = (attrs.nativeBuildInputs or [ ]) ++ [ hp.markdown-unlit ];
@@ -135,7 +146,7 @@
       haskellPackagesOverride = ps: args:
         ps.override
           {
-            stdenv = pkgs.llvmPackages.stdenv;
+            # stdenv = pkgs.llvmPackages.stdenv;
             overrides = self: super: rec {
               inline-c-cpp =
                 (self.callCabal2nix "inline-c-cpp" "${inputs.inline-c.outPath}/inline-c-cpp" { });
@@ -228,7 +239,7 @@
                   shellHook = ''
                     export PROMPT_COMMAND=""
                     export PS1='(nix) GHC ${haskellPackages.ghc.version} \w $ '
-                    export LD_LIBRARY_PATH=${pkgs.zlib}/lib:${pkgs.halide}/lib:$LD_LIBRARY_PATH
+                    export LD_LIBRARY_PATH=${pkgs.zlib}/lib:${Halide}/lib:$LD_LIBRARY_PATH
                     export CC=${pkgs.clang_14}/bin/clang
                     export CXX=${pkgs.clang_14}/bin/clang++
                   '' + (if withIntelOpenCL then ''
