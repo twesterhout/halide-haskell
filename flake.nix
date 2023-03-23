@@ -49,25 +49,25 @@
         ];
       };
 
-      # testWriteExpr = pkgs.stdenv.mkDerivation {
-      #   pname = "testWriteExpr";
-      #   version = "0.0.1";
-      #   src = ./test;
-      #   dontConfigure = true;
-      #   buildPhase = ''
-      #     clang++ -std=c++17 write_to_ostream.cpp -lHalide
-      #   '';
-      #   checkPhase = ''
-      #     ./a.out
-      #   '';
-      #   doCheck = true;
-      #   installPhase = ''
-      #     mkdir -p $out/bin
-      #     install a.out $out/bin/
-      #   '';
-      #   buildInputs = with pkgs; [ halide ];
-      #   nativeBuildInputs = with pkgs; [ clang_14 ];
-      # };
+      testWriteExpr = pkgs.stdenv.mkDerivation {
+        pname = "testWriteExpr";
+        version = "0.0.1";
+        src = ./test;
+        dontConfigure = true;
+        buildPhase = ''
+          g++ -std=c++17 write_to_ostream.cpp -lHalide
+        '';
+        checkPhase = ''
+          ./a.out
+        '';
+        doCheck = true;
+        installPhase = ''
+          mkdir -p $out/bin
+          install a.out $out/bin/
+        '';
+        buildInputs = with pkgs; [ halide ];
+        nativeBuildInputs = with pkgs; [ gcc ];
+      };
 
       # checkedHalide = pkgs.halide.overrideAttrs (attrs: {
       #   doCheck = true;
@@ -176,6 +176,7 @@
             "${name}" = ps.${package} or ps;
             "${name}-cuda" = ps-cuda.${package} or ps-cuda;
             "${name}-intel-ocl" = ps-intel-ocl.${package} or ps-intel-ocl;
+            testWriteExpr = testWriteExpr;
           };
           devShells =
             let
