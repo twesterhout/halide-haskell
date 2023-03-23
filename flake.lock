@@ -34,11 +34,11 @@
     "inline-c": {
       "flake": false,
       "locked": {
-        "lastModified": 1679565602,
-        "narHash": "sha256-bu9VNd6JJhFm+YFCK3WC1pRPRySokpPsWBCTZDL7w4Q=",
+        "lastModified": 1679569705,
+        "narHash": "sha256-n8bCSrVIjvld/ZKzKviTzuw391RIm5+0YvSBaMH3v/8=",
         "owner": "twesterhout",
         "repo": "inline-c",
-        "rev": "c12bdf6dc638ca26896323b49126095a084332e6",
+        "rev": "794247ee2189f9a46a60cb1effb19f32ebb14d70",
         "type": "github"
       },
       "original": {

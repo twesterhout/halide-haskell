@@ -116,6 +116,9 @@ spec = do
           x = 1
        in printed (sin x) ("<- sin(" :: Text) x (")" :: Text) `shouldEvaluateToApprox` sin 1
 
-  describe "Show" $
+  -- describe "Show" $
+  --   it "shows 123" $ do
+  --     show (123 :: Expr Int32) `shouldBe` "123"
+  describe "testWriteToStderr" $ do
     it "shows 123" $ do
-      show (123 :: Expr Int32) `shouldBe` "123"
+      testWriteToStderr

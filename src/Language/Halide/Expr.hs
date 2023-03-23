@@ -63,6 +63,7 @@ module Language.Halide.Expr
   , binaryOp
   , unaryOp
   , checkType
+  , testWriteToStderr
   )
 where
 
@@ -757,3 +758,12 @@ binaryOp f a b = unsafePerformIO $
   asExpr a $ \aPtr -> asExpr b $ \bPtr ->
     cxxConstructExpr $ \destPtr ->
       f aPtr bPtr destPtr
+
+testWriteToStderr :: IO ()
+testWriteToStderr = do
+  [CU.block| void {
+    Halide::Expr expr{123};
+    std::ostringstream out;
+    out << expr;
+    std::cerr << "Output: '" << out.str() << "'" << std::endl;
+  } |]

@@ -202,6 +202,7 @@ module Language.Halide
 
     -- ** inline-c helpers
   , importHalide
+  , testWriteToStderr
   , CxxExpr
   , CxxVar
   , CxxRVar
