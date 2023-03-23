@@ -59,7 +59,7 @@
         src = ./test;
         dontConfigure = true;
         buildPhase = ''
-          clang++ -std=c++17 write_to_ostream.cpp -lHalide
+          $CXX -std=c++17 write_to_ostream.cpp -lHalide
         '';
         checkPhase = ''
           ./a.out
@@ -70,7 +70,7 @@
           install a.out $out/bin/
         '';
         buildInputs = with pkgs; [ halide ];
-        nativeBuildInputs = with pkgs; [ clang_14 ];
+        nativeBuildInputs = with pkgs; [ stdenv.cc ];
       };
 
       # checkedHalide = pkgs.halide.overrideAttrs (attrs: {
