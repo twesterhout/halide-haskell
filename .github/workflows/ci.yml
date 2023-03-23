@@ -23,13 +23,6 @@ jobs:
           --accept-flake-config \
           --print-build-logs \
           .#testWriteExpr
-    - name: Via nix develop
-      run: |
-        nix develop \
-          --accept-flake-config \
-          --print-build-logs \
-          --command \
-          cabal test -v
     - name: Build
       run: |
         nix build \

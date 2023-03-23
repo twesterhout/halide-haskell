@@ -135,6 +135,7 @@
       haskellPackagesOverride = ps: args:
         ps.override
           {
+            stdenv = pkgs.llvmPackages.stdenv;
             overrides = self: super: rec {
               inline-c-cpp =
                 (self.callCabal2nix "inline-c-cpp" "${inputs.inline-c.outPath}/inline-c-cpp" { });
