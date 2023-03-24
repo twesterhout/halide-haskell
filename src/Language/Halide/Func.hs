@@ -880,17 +880,30 @@ update func args expr =
 
 infix 9 !
 
+type family IndexType (n :: Nat) :: Type where
+  IndexType 0 = ()
+  IndexType 1 = Expr Int32
+  IndexType 2 = (Expr Int32, Expr Int32)
+  IndexType 3 = (Expr Int32, Expr Int32, Expr Int32)
+  IndexType 4 = (Expr Int32, Expr Int32, Expr Int32, Expr Int32)
+  IndexType 5 = (Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32)
+  IndexType 6 = (Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32)
+  IndexType 7 = (Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32)
+  IndexType 8 = (Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32)
+  IndexType 9 = (Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32)
+  IndexType 10 = (Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32)
+
 -- | Apply a Halide function. Conceptually, @f ! i@ is equivalent to @f[i]@, i.e.
 -- indexing into a lazy array.
 (!)
-  :: ( IsTuple (Arguments ts) i
+  :: ( IsTuple (Arguments ts) (IndexType n)
      , All ((~) (Expr Int32)) ts
      , Length ts ~ n
      , KnownNat n
      , IsHalideType a
      )
   => Func t n a
-  -> i
+  -> IndexType n
   -> Expr a
 (!) func args =
   unsafePerformIO $

@@ -7,7 +7,7 @@
 module Language.Halide.FuncSpec (spec) where
 
 import Control.Monad.ST (RealWorld)
-import qualified Data.Vector.Storable.Mutable as SM
+import Data.Vector.Storable.Mutable qualified as SM
 import Language.Halide
 import Test.Hspec hiding (parallel)
 import Utils
@@ -241,7 +241,7 @@ spec = do
         r <- mkRVar "r" 0 n
         i <- mkVar "i"
         f <- define "sum" i 0
-        update f (0 :: Expr Int32) $ f ! (0 :: Expr Int32) + src ! r
+        update f (0 :: Expr Int32) $ f ! 0 + src ! r
         realize f [1] peekToList `shouldReturn` ([15] :: [Int32])
 
   describe "undef" $ do

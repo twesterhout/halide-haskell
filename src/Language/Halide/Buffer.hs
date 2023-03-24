@@ -46,6 +46,7 @@ module Language.Halide.Buffer
   , isHostDirty
   , bufferCopyToHost
   , withCopiedToHost
+  , withCropped
   )
 where
 
@@ -59,7 +60,7 @@ import Data.Proxy
 import Data.Vector.Storable qualified as S
 import Data.Vector.Storable.Mutable qualified as SM
 import Data.Word
-import Foreign.Marshal.Alloc (free, mallocBytes)
+import Foreign.Marshal.Alloc (alloca, free, mallocBytes)
 import Foreign.Marshal.Array
 import Foreign.Marshal.Utils
 import Foreign.Ptr
@@ -72,6 +73,7 @@ import Language.C.Inline.Unsafe qualified as CU
 import Language.Halide.Context
 import Language.Halide.Target
 import Language.Halide.Type
+import Prelude hiding (min)
 
 -- | Information about a dimension in a buffer.
 --
@@ -491,6 +493,28 @@ checkNumberOfDimensions raw = do
         <> show (natVal (Proxy @n))
         <> " != "
         <> show raw.halideBufferDimensions
+
+withCropped :: Ptr (HalideBuffer n a) -> Int -> Int -> Int -> (Ptr (HalideBuffer n a) -> IO b) -> IO b
+withCropped (castPtr -> src) (fromIntegral -> d) (fromIntegral -> min) (fromIntegral -> extent) action =
+  alloca $ \dst -> do
+    [CU.block| void {
+      auto const& src = *$(const halide_buffer_t* src);
+      auto& dst = *$(halide_buffer_t* dst);
+      auto const d = $(int d);
+
+      dst = src;
+      if (dst.host != nullptr) {
+        auto const shift = $(int min) - src.dim[d].min;
+        dst.host += (shift * src.dim[d].stride) * ((src.type.bits + 7) / 8);
+      }
+      dst.dim[d].min = $(int min);
+      dst.dim[d].extent = $(int extent);
+
+      if (src.device != 0 && src.device_interface != nullptr) {
+        src.device_interface->device_crop(nullptr, &src, &dst);
+      }
+    } |]
+    action (castPtr dst)
 
 -- | Specifies that @a@ can be converted to a list. This is very similar to 'GHC.Exts.IsList' except that
 -- we read the list from a @'Ptr'@ rather than converting directly.
