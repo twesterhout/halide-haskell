@@ -66,3 +66,24 @@ spec = do
   modifyMaxSuccess (const 20) $
     prop "works with [[[[a]]]]" $ \(ListTensor4D @Double xs) ->
       withHalideBuffer @4 @Double xs peekToList `shouldReturn` xs
+  it "creates cropped buffers" $ do
+    let mkFill2D (scalar @Float "value" -> value) = do
+          [i, j] <- mapM mkVar ["i", "j"]
+          define "fill" (i, j) value
+    fill <- compile mkFill2D
+    allocaCpuBuffer [4, 4] $ \buf -> do
+      fill 0 buf
+      peekToList buf `shouldReturn` [[0, 0, 0, 0],
+                                     [0, 0, 0, 0],
+                                     [0, 0, 0, 0],
+                                     [0, 0, 0, 0]]
+      withCropped buf 1 0 1 $ fill 1
+      peekToList buf `shouldReturn` [[1, 0, 0, 0],
+                                     [1, 0, 0, 0],
+                                     [1, 0, 0, 0],
+                                     [1, 0, 0, 0]]
+      withCropped buf 0 1 2 $ fill 2
+      peekToList buf `shouldReturn` [[1, 0, 0, 0],
+                                     [2, 2, 2, 2],
+                                     [2, 2, 2, 2],
+                                     [1, 0, 0, 0]]

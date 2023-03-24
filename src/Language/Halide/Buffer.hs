@@ -496,25 +496,29 @@ checkNumberOfDimensions raw = do
 
 withCropped :: Ptr (HalideBuffer n a) -> Int -> Int -> Int -> (Ptr (HalideBuffer n a) -> IO b) -> IO b
 withCropped (castPtr -> src) (fromIntegral -> d) (fromIntegral -> min) (fromIntegral -> extent) action =
-  alloca $ \dst -> do
-    [CU.block| void {
-      auto const& src = *$(const halide_buffer_t* src);
-      auto& dst = *$(halide_buffer_t* dst);
-      auto const d = $(int d);
+  alloca $ \dst ->
+    alloca $ \dstDim -> do
+      [CU.block| void {
+        auto const& src = *$(const halide_buffer_t* src);
+        auto& dst = *$(halide_buffer_t* dst);
+        auto const d = $(int d);
 
-      dst = src;
-      if (dst.host != nullptr) {
-        auto const shift = $(int min) - src.dim[d].min;
-        dst.host += (shift * src.dim[d].stride) * ((src.type.bits + 7) / 8);
-      }
-      dst.dim[d].min = $(int min);
-      dst.dim[d].extent = $(int extent);
+        dst = src;
+        dst.dim = $(halide_dimension_t* dstDim);
+        memcpy(dst.dim, src.dim, src.dimensions * sizeof(halide_dimension_t));
 
-      if (src.device != 0 && src.device_interface != nullptr) {
-        src.device_interface->device_crop(nullptr, &src, &dst);
-      }
-    } |]
-    action (castPtr dst)
+        if (dst.host != nullptr) {
+          auto const shift = $(int min) - src.dim[d].min;
+          dst.host += (shift * src.dim[d].stride) * ((src.type.bits + 7) / 8);
+        }
+        dst.dim[d].min = $(int min);
+        dst.dim[d].extent = $(int extent);
+
+        if (src.device != 0 && src.device_interface != nullptr) {
+          src.device_interface->device_crop(nullptr, &src, &dst);
+        }
+      } |]
+      action (castPtr dst)
 
 -- | Specifies that @a@ can be converted to a list. This is very similar to 'GHC.Exts.IsList' except that
 -- we read the list from a @'Ptr'@ rather than converting directly.

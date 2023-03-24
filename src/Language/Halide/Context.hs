@@ -98,6 +98,7 @@ halideTypePairs = do
         , ("Halide::Internal::Split", "Language.Halide.Schedule.Split")
         , ("halide_buffer_t", "Language.Halide.Buffer.RawHalideBuffer")
         , ("halide_device_interface_t", "HalideDeviceInterface")
+        , ("halide_dimension_t", "HalideDimension")
         , ("Halide::Internal::Dimension", "CxxDimension")
         , ("Halide::LoopLevel", "CxxLoopLevel")
         , ("Halide::Stage", "CxxStage")
