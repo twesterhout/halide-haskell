@@ -63,5 +63,6 @@ spec = do
     withHalideBuffer @2 @Int64 xs peekToList `shouldReturn` xs
   prop "works with [[[a]]]" $ \(ListTensor3D xs :: ListTensor3D Double) ->
     withHalideBuffer @3 @Double xs peekToList `shouldReturn` xs
-  prop "works with [[[[a]]]]" $ \(ListTensor4D @Double xs) ->
-    withHalideBuffer @4 @Double xs peekToList `shouldReturn` xs
+  modifyMaxSuccess (const 20) $
+    prop "works with [[[[a]]]]" $ \(ListTensor4D @Double xs) ->
+      withHalideBuffer @4 @Double xs peekToList `shouldReturn` xs

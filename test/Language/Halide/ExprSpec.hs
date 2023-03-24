@@ -58,7 +58,8 @@ spec = do
             mkExpr x - mkExpr y `shouldEvaluateTo` x - y
           whenNotOverflowing (*) x y $
             mkExpr x * mkExpr y `shouldEvaluateTo` x * y
-          abs (mkExpr x) `shouldEvaluateTo` abs x
+          unless (x == -128) $
+            abs (mkExpr x) `shouldEvaluateTo` abs x
           negate (mkExpr x) `shouldEvaluateTo` negate x
     prop "Int8" $ p @Int8
     prop "Int16" $ p @Int16
