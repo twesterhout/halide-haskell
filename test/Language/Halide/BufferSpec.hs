@@ -18,6 +18,9 @@ newtype ListMatrix a = ListMatrix [[a]]
 newtype ListTensor3D a = ListTensor3D [[[a]]]
   deriving stock (Show)
 
+newtype ListTensor4D a = ListTensor4D [[[[a]]]]
+  deriving stock (Show)
+
 instance Arbitrary a => Arbitrary (ListVector a) where
   arbitrary = ListVector <$> listOf arbitrary
 
@@ -33,6 +36,14 @@ instance Arbitrary a => Arbitrary (ListTensor3D a) where
     d1 <- chooseInt (0, 30)
     d2 <- chooseInt (0, 30)
     ListTensor3D <$> vectorOf d0 (vectorOf d1 (vector d2))
+
+instance Arbitrary a => Arbitrary (ListTensor4D a) where
+  arbitrary = do
+    d0 <- chooseInt (0, 30)
+    d1 <- chooseInt (0, 30)
+    d2 <- chooseInt (0, 30)
+    d3 <- chooseInt (0, 30)
+    ListTensor4D <$> vectorOf d0 (vectorOf d1 (vectorOf d2 (vector d3)))
 
 spec :: Spec
 spec = do
@@ -52,3 +63,5 @@ spec = do
     withHalideBuffer @2 @Int64 xs peekToList `shouldReturn` xs
   prop "works with [[[a]]]" $ \(ListTensor3D xs :: ListTensor3D Double) ->
     withHalideBuffer @3 @Double xs peekToList `shouldReturn` xs
+  prop "works with [[[[a]]]]" $ \(ListTensor4D @Double xs) ->
+    withHalideBuffer @4 @Double xs peekToList `shouldReturn` xs

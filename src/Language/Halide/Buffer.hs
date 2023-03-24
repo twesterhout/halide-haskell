@@ -295,6 +295,27 @@ instance IsHalideType a => IsHalideBuffer [[[a]]] 3 a where
     S.unsafeWith v $ \cpuPtr ->
       bufferFromPtrShape cpuPtr [d0, d1, d2] f
 
+-- | Lists can also act as Halide buffers. __Use for testing only.__
+instance IsHalideType a => IsHalideBuffer [[[[a]]]] 4 a where
+  withHalideBufferImpl xs f = do
+    let d0 = length xs
+        d1 = if d0 == 0 then 0 else length (head xs)
+        d2 = if d1 == 0 then 0 else length (head (head xs))
+        d3 = if d2 == 0 then 0 else length (head (head (head xs)))
+        -- we want column-major ordering, so transpose first
+        v =
+          S.fromList
+            . concat
+            . concat
+            . concatMap (fmap List.transpose . List.transpose . fmap List.transpose)
+            . List.transpose
+            . fmap (List.transpose . fmap List.transpose)
+            $ xs
+    when (S.length v /= d0 * d1 * d2 * d3) $
+      error "list doesn't have a regular shape (i.e. rows have varying number of elements)"
+    S.unsafeWith v $ \cpuPtr ->
+      bufferFromPtrShape cpuPtr [d0, d1, d2, d3] f
+
 whenM :: Monad m => m Bool -> m () -> m ()
 whenM cond f =
   cond >>= \case
@@ -534,3 +555,22 @@ instance IsHalideType a => IsListPeek (HalideBuffer 3 a) where
         let ptr2 = ptr1 `advancePtr` fromIntegral (min1 + stride1 * i1)
         forM [0 .. extent2 - 1] $ \i2 ->
           peekElemOff ptr2 (fromIntegral (min2 + stride2 * i2))
+
+instance IsHalideType a => IsListPeek (HalideBuffer 4 a) where
+  type ListPeekElem (HalideBuffer 4 a) = [[[a]]]
+  peekToList p = withCopiedToHost p $ do
+    raw <- peek (castPtr @_ @RawHalideBuffer p)
+    (HalideDimension min0 extent0 stride0 _) <- peekElemOff (halideBufferDim raw) 0
+    (HalideDimension min1 extent1 stride1 _) <- peekElemOff (halideBufferDim raw) 1
+    (HalideDimension min2 extent2 stride2 _) <- peekElemOff (halideBufferDim raw) 2
+    (HalideDimension min3 extent3 stride3 _) <- peekElemOff (halideBufferDim raw) 3
+    let ptr0 = castPtr @_ @a (halideBufferHost raw)
+    when (ptr0 == nullPtr) . error $ "host is NULL"
+    forM [0 .. extent0 - 1] $ \i0 -> do
+      let ptr1 = ptr0 `advancePtr` fromIntegral (min0 + stride0 * i0)
+      forM [0 .. extent1 - 1] $ \i1 -> do
+        let ptr2 = ptr1 `advancePtr` fromIntegral (min1 + stride1 * i1)
+        forM [0 .. extent2 - 1] $ \i2 -> do
+          let ptr3 = ptr2 `advancePtr` fromIntegral (min2 + stride2 * i2)
+          forM [0 .. extent3 - 1] $ \i3 ->
+            peekElemOff ptr3 (fromIntegral (min3 + stride3 * i3))
