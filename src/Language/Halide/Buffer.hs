@@ -496,35 +496,41 @@ checkNumberOfDimensions raw = do
         <> show raw.halideBufferDimensions
 
 withCropped :: Ptr (HalideBuffer n a) -> Int -> Int -> Int -> (Ptr (HalideBuffer n a) -> IO b) -> IO b
-withCropped (castPtr -> src) (fromIntegral -> d) (fromIntegral -> min) (fromIntegral -> extent) action =
-  alloca $ \dst ->
-    alloca $ \dstDim -> do
-      [CU.block| void {
-        auto const& src = *$(const halide_buffer_t* src);
-        auto& dst = *$(halide_buffer_t* dst);
-        auto const d = $(int d);
+withCropped
+  (castPtr -> src)
+  (fromIntegral -> d)
+  (fromIntegral -> min)
+  (fromIntegral -> extent)
+  action = do
+    rank <- fromIntegral <$> [CU.exp| int { $(const halide_buffer_t* src)->dimensions } |]
+    alloca $ \dst ->
+      allocaArray rank $ \dstDim -> do
+        [CU.block| void {
+          auto const& src = *$(const halide_buffer_t* src);
+          auto& dst = *$(halide_buffer_t* dst);
+          auto const d = $(int d);
 
-        dst = src;
-        dst.dim = $(halide_dimension_t* dstDim);
-        memcpy(dst.dim, src.dim, src.dimensions * sizeof(halide_dimension_t));
+          dst = src;
+          dst.dim = $(halide_dimension_t* dstDim);
+          memcpy(dst.dim, src.dim, src.dimensions * sizeof(halide_dimension_t));
 
-        if (dst.host != nullptr) {
-          auto const shift = $(int min) - src.dim[d].min;
-          dst.host += (shift * src.dim[d].stride) * ((src.type.bits + 7) / 8);
-        }
-        dst.dim[d].min = $(int min);
-        dst.dim[d].extent = $(int extent);
+          if (dst.host != nullptr) {
+            auto const shift = $(int min) - src.dim[d].min;
+            dst.host += (shift * src.dim[d].stride) * ((src.type.bits + 7) / 8);
+          }
+          dst.dim[d].min = $(int min);
+          dst.dim[d].extent = $(int extent);
 
-        if (src.device != 0 && src.device_interface != nullptr) {
-          src.device_interface->device_crop(nullptr, &src, &dst);
-        }
-      } |]
-      action (castPtr dst)
+          if (src.device != 0 && src.device_interface != nullptr) {
+            src.device_interface->device_crop(nullptr, &src, &dst);
+          }
+        } |]
+        action (castPtr dst)
 
 getBufferExtent :: forall n a. KnownNat n => Ptr (HalideBuffer n a) -> Int -> IO Int
 getBufferExtent (castPtr -> buf) (fromIntegral -> d)
   | d < fromIntegral (natVal (Proxy @n)) =
-    fromIntegral <$> [CU.exp| int { $(const halide_buffer_t* buf)->dim[$(int d)].extent } |]
+      fromIntegral <$> [CU.exp| int { $(const halide_buffer_t* buf)->dim[$(int d)].extent } |]
   | otherwise = error "index out of bounds"
 
 -- | Specifies that @a@ can be converted to a list. This is very similar to 'GHC.Exts.IsList' except that
