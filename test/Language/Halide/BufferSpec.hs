@@ -3,7 +3,7 @@
 module Language.Halide.BufferSpec (spec) where
 
 import Data.Int (Int64)
-import Foreign.Ptr (Ptr, nullPtr)
+import Foreign.Ptr (nullPtr)
 import Language.Halide
 import Test.Hspec
 import Test.Hspec.QuickCheck

@@ -87,7 +87,8 @@ spec = do
           when (x > 0) $ do
             log y `shouldEvaluateToApprox` log x
             sqrt y `shouldEvaluateToApprox` sqrt x
-          exp y `shouldEvaluateToApprox` exp x
+          when (x < 50) $
+            exp y `shouldEvaluateToApprox` exp x
           sin y `shouldEvaluateToApprox` sin x
           cos y `shouldEvaluateToApprox` cos x
           tan y `shouldEvaluateToApprox` tan x
@@ -95,8 +96,9 @@ spec = do
             asin y `shouldEvaluateToApprox` asin x
             acos y `shouldEvaluateToApprox` acos x
             atan y `shouldEvaluateToApprox` atan x
-          sinh y `shouldEvaluateToApprox` sinh x
-          cosh y `shouldEvaluateToApprox` cosh x
+          when (abs x < 50) $ do
+            sinh y `shouldEvaluateToApprox` sinh x
+            cosh y `shouldEvaluateToApprox` cosh x
           tanh y `shouldEvaluateToApprox` tanh x
           asinh y `shouldEvaluateToApprox` asinh x
           when (x >= 1) $

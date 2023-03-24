@@ -160,5 +160,6 @@ test-suite halide-haskell-test
   cxx-options:    -std=c++17 -Wall
   ghc-options:
     -threaded -rtsopts -with-rtsopts=-N -optcxx-std=c++17 -optcxx-Wall
+    -Wno-missing-export-lists
 
 -- build-tools-depends: hspec-discover:hspec-discover

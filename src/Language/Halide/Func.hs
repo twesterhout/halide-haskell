@@ -561,11 +561,14 @@ estimate
   -- ^ @extent@ estimate
   -> Func t n a
   -> IO ()
-estimate var min extent func =
-  withFunc func $ \f -> asVar var $ \i -> asExpr min $ \minExpr -> asExpr extent $ \extentExpr ->
-    [CU.exp| void {
-      $(Halide::Func* f)->set_estimate(
-        *$(Halide::Var* i), *$(Halide::Expr* minExpr), *$(Halide::Expr* extentExpr)) } |]
+estimate var start extent func =
+  withFunc func $ \f ->
+    asVar var $ \i ->
+      asExpr start $ \minExpr ->
+        asExpr extent $ \extentExpr ->
+          [CU.exp| void {
+            $(Halide::Func* f)->set_estimate(
+              *$(Halide::Var* i), *$(Halide::Expr* minExpr), *$(Halide::Expr* extentExpr)) } |]
 
 -- | Statically declare the range over which a function should be evaluated.
 --
@@ -583,11 +586,14 @@ bound
   -- ^ @extent@ estimate
   -> Func t n a
   -> IO ()
-bound var min extent func =
-  withFunc func $ \f -> asVar var $ \i -> asExpr min $ \minExpr -> asExpr extent $ \extentExpr ->
-    [CU.exp| void {
-      $(Halide::Func* f)->bound(
-        *$(Halide::Var* i), *$(Halide::Expr* minExpr), *$(Halide::Expr* extentExpr)) } |]
+bound var start extent func =
+  withFunc func $ \f ->
+    asVar var $ \i ->
+      asExpr start $ \minExpr ->
+        asExpr extent $ \extentExpr ->
+          [CU.exp| void {
+            $(Halide::Func* f)->bound(
+              *$(Halide::Var* i), *$(Halide::Expr* minExpr), *$(Halide::Expr* extentExpr)) } |]
 
 -- | Get the index arguments of the function.
 --

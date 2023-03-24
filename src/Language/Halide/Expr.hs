@@ -33,6 +33,8 @@ module Language.Halide.Expr
   , or
   , min
   , max
+  , div
+  , mod
   , bool
   , undef
     -- | For debugging, it's often useful to observe the value of an expression when it's evaluated. If you
@@ -86,10 +88,11 @@ import Language.C.Inline.Cpp.Exception qualified as C
 import Language.C.Inline.Unsafe qualified as CU
 import Language.Halide.Buffer
 import Language.Halide.Context
+import Language.Halide.RedundantConstraints
 import Language.Halide.Type
 import Language.Halide.Utils
 import System.IO.Unsafe (unsafePerformIO)
-import Prelude hiding (and, max, min, or)
+import Prelude hiding (and, div, max, min, mod, or)
 
 importHalide
 
@@ -166,8 +169,8 @@ mkRVar
   -> Expr Int32
   -- ^ extent
   -> IO (Expr Int32)
-mkRVar name min extent =
-  asExpr min $ \min' ->
+mkRVar name start extent =
+  asExpr start $ \min' ->
     asExpr extent $ \extent' ->
       wrapCxxRVar
         =<< [CU.exp| Halide::RVar* {
@@ -322,6 +325,22 @@ max :: IsHalideType a => Expr a -> Expr a -> Expr a
 max = binaryOp $ \a b ptr ->
   [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
     Halide::max(*$(Halide::Expr* a), *$(Halide::Expr* b))} } |]
+
+-- | Divide two integers, rounding towards zero.
+div :: forall a. (IsHalideType a, Integral a) => Expr a -> Expr a -> Expr a
+div = binaryOp $ \a b ptr ->
+  [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+    Halide::div_round_to_zero(*$(Halide::Expr* a), *$(Halide::Expr* b))} } |]
+  where
+    _ = keepRedundantConstraint (Proxy @(Integral a))
+
+-- | Compute the remainder of dividing two integers, when division is rounding toward zero.
+mod :: forall a. (IsHalideType a, Integral a) => Expr a -> Expr a -> Expr a
+mod = binaryOp $ \a b ptr ->
+  [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+    Halide::mod_round_to_zero(*$(Halide::Expr* a), *$(Halide::Expr* b))} } |]
+  where
+    _ = keepRedundantConstraint (Proxy @(Integral a))
 
 -- | Similar to the standard 'Prelude.bool' function from Prelude except that it's
 -- lifted to work with 'Expr' types.
