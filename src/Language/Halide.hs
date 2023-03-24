@@ -189,6 +189,7 @@ module Language.Halide
   , colMajorStrides
   , isDeviceDirty
   , isHostDirty
+  , getBufferExtent
   , bufferCopyToHost
   , withCopiedToHost
   , withCropped

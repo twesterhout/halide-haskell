@@ -44,6 +44,7 @@ module Language.Halide.Buffer
   , colMajorStrides
   , isDeviceDirty
   , isHostDirty
+  , getBufferExtent
   , bufferCopyToHost
   , withCopiedToHost
   , withCropped
@@ -519,6 +520,12 @@ withCropped (castPtr -> src) (fromIntegral -> d) (fromIntegral -> min) (fromInte
         }
       } |]
       action (castPtr dst)
+
+getBufferExtent :: forall n a. KnownNat n => Ptr (HalideBuffer n a) -> Int -> IO Int
+getBufferExtent (castPtr -> buf) (fromIntegral -> d)
+  | d < fromIntegral (natVal (Proxy @n)) =
+    fromIntegral <$> [CU.exp| int { $(const halide_buffer_t* buf)->dim[$(int d)].extent } |]
+  | otherwise = error "index out of bounds"
 
 -- | Specifies that @a@ can be converted to a list. This is very similar to 'GHC.Exts.IsList' except that
 -- we read the list from a @'Ptr'@ rather than converting directly.
