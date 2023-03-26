@@ -76,7 +76,7 @@ stdenv.mkDerivation rec {
     "-DAF_ASSETS_PATH=extern/assets"
     "-DAF_GLAD_PATH=extern/glad"
     "-DAF_THREADS_PATH=extern/threads"
-  ];
+  ] ++ (lib.optional stdenv.isDarwin "-DAF_BUILD_OPENCL=OFF");
 
   patches = [ ./arrayfire-no-download.patch ];
   postPatch = ''
