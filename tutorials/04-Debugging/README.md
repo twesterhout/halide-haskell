@@ -10,7 +10,7 @@ import Control.Monad (void)
 import Data.Text (Text)
 import Test.Hspec hiding (parallel)
 
-import Language.Halide hiding (evaluate)
+import Language.Halide hiding (evaluate, mod, div)
 import Prelude hiding (and)
 ```
 
