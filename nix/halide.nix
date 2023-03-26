@@ -1,5 +1,5 @@
 { stdenv
-, llvmPackages
+, llvmPackages_14
 , lib
 , fetchFromGitHub
 , cmake
@@ -27,14 +27,16 @@ stdenv.mkDerivation rec {
 
   cmakeFlags = [ "-DWARNINGS_AS_ERRORS=OFF" "-DWITH_PYTHON_BINDINGS=OFF" "-DTARGET_WEBASSEMBLY=OFF" ];
 
+  doCheck = true;
+
   # Note: only openblas and not atlas part of this Nix expression
   # see pkgs/development/libraries/science/math/liblapack/3.5.0.nix
   # to get a hint howto setup atlas instead of openblas
   buildInputs = [
-    llvmPackages.llvm
-    llvmPackages.lld
-    llvmPackages.openmp
-    llvmPackages.libclang
+    llvmPackages_14.llvm
+    llvmPackages_14.lld
+    llvmPackages_14.openmp
+    llvmPackages_14.libclang
     libpng
     libjpeg
     mesa

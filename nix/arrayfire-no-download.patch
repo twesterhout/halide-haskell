@@ -1,0 +1,99 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index e795f2a79..530341f0e 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -272,11 +272,12 @@ else()
+ endif()
+ 
+ if(NOT TARGET glad::glad)
+-  af_dep_check_and_populate(${glad_prefix}
+-    URI https://github.com/arrayfire/glad.git
+-    REF main
+-  )
+-  add_subdirectory(${${glad_prefix}_SOURCE_DIR} ${${glad_prefix}_BINARY_DIR})
++  # af_dep_check_and_populate(${glad_prefix}
++  #   URI https://github.com/arrayfire/glad.git
++  #   REF main
++  # )
++  set(${glad_prefix}_SOURCE_DIR ${AF_GLAD_PATH})
++  add_subdirectory(${${glad_prefix}_SOURCE_DIR})
+ 
+   add_library(af_glad STATIC $<TARGET_OBJECTS:af_glad_obj_lib>)
+   target_link_libraries(af_glad PUBLIC ${CMAKE_DL_LIBS})
+@@ -301,10 +302,11 @@ if(NOT TARGET nonstd::span-lite)
+ 
+ endif()
+ 
+-af_dep_check_and_populate(${assets_prefix}
+-  URI https://github.com/arrayfire/assets.git
+-  REF master
+-)
++# af_dep_check_and_populate(${assets_prefix}
++#   URI https://github.com/arrayfire/assets.git
++#   REF master
++# )
++set(${assets_prefix}_SOURCE_DIR ${AF_ASSETS_PATH})
+ set(ASSETS_DIR ${${assets_prefix}_SOURCE_DIR})
+ 
+ # when crosscompiling use the bin2cpp file from the native bin directory
+diff --git a/CMakeModules/build_CLBlast.cmake b/CMakeModules/build_CLBlast.cmake
+index 402e2b6f4..641158b20 100644
+--- a/CMakeModules/build_CLBlast.cmake
++++ b/CMakeModules/build_CLBlast.cmake
+@@ -24,10 +24,12 @@ if(TARGET clblast OR AF_WITH_EXTERNAL_PACKAGES_ONLY)
+     message(ERROR "CLBlast now found")
+   endif()
+ else()
+-  af_dep_check_and_populate(${clblast_prefix}
+-    URI https://github.com/cnugteren/CLBlast.git
+-    REF 4500a03440e2cc54998c0edab366babf5e504d67
+-  )
++  # af_dep_check_and_populate(${clblast_prefix}
++  #   URI https://github.com/cnugteren/CLBlast.git
++  #   REF 4500a03440e2cc54998c0edab366babf5e504d67
++  # )
++  set(${clblast_prefix}_SOURCE_DIR ${AF_CLBLAST_PATH})
++  set(${clblast_prefix}_BINARY_DIR ${CMAKE_BINARY_DIR}/clblast)
+ 
+   include(ExternalProject)
+   find_program(GIT git)
+diff --git a/CMakeModules/build_clFFT.cmake b/CMakeModules/build_clFFT.cmake
+index b3e56137b..e2e8b1b0d 100644
+--- a/CMakeModules/build_clFFT.cmake
++++ b/CMakeModules/build_clFFT.cmake
+@@ -5,10 +5,11 @@
+ # The complete license agreement can be obtained at:
+ # http://arrayfire.com/licenses/BSD-3-Clause
+ 
+-af_dep_check_and_populate(${clfft_prefix}
+-  URI https://github.com/arrayfire/clFFT.git
+-  REF arrayfire-release
+-)
++# af_dep_check_and_populate(${clfft_prefix}
++#   URI https://github.com/arrayfire/clFFT.git
++#   REF arrayfire-release
++# )
++set(${clfft_prefix}_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/extern/clfft)
+ 
+ set(current_build_type ${BUILD_SHARED_LIBS})
+ set(BUILD_SHARED_LIBS OFF)
+diff --git a/src/backend/cpu/CMakeLists.txt b/src/backend/cpu/CMakeLists.txt
+index d0137ed90..115c22bfe 100644
+--- a/src/backend/cpu/CMakeLists.txt
++++ b/src/backend/cpu/CMakeLists.txt
+@@ -272,10 +272,11 @@ if (AF_WITH_CPUID)
+   target_compile_definitions(afcpu PRIVATE -DAF_WITH_CPUID)
+ endif(AF_WITH_CPUID)
+ 
+-af_dep_check_and_populate(${threads_prefix}
+-  URI https://github.com/arrayfire/threads.git
+-  REF b666773940269179f19ef11c8f1eb77005e85d9a
+-)
++# af_dep_check_and_populate(${threads_prefix}
++#   URI https://github.com/arrayfire/threads.git
++#   REF b666773940269179f19ef11c8f1eb77005e85d9a
++# )
++set(${threads_prefix}_SOURCE_DIR ${AF_THREADS_PATH})
+ 
+ target_sources(afcpu
+   PRIVATE

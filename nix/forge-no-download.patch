@@ -1,0 +1,32 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index de1a80e..2ea09fe 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -68,17 +68,19 @@ if(Boost_FOUND AND NOT TARGET Boost::boost)
+ endif(Boost_FOUND AND NOT TARGET Boost::boost)
+ 
+ if(NOT TARGET glad::glad) # find_package(glad) failed
+-    fg_dep_check_and_populate(${glad_prefix}
+-        URI https://github.com/arrayfire/glad.git
+-        REF obj_lib
+-    )
+-    add_subdirectory(${${glad_prefix}_SOURCE_DIR} ${${glad_prefix}_BINARY_DIR})
+-
+-    add_library(forge_glad STATIC $<TARGET_OBJECTS:glad_obj_lib>)
++    # fg_dep_check_and_populate(${glad_prefix}
++    #     URI https://github.com/arrayfire/glad.git
++    #      REF obj_lib
++    #  )
++    #  add_subdirectory(${${glad_prefix}_SOURCE_DIR} ${${glad_prefix}_BINARY_DIR})
++    set(${glad_prefix}_SOURCE_DIR ${AF_GLAD_PATH})
++    add_subdirectory(${${glad_prefix}_SOURCE_DIR})
++
++    add_library(forge_glad STATIC $<TARGET_OBJECTS:af_glad_obj_lib>)
+     target_link_libraries(forge_glad PUBLIC ${CMAKE_DL_LIBS})
+     target_include_directories(forge_glad
+         PUBLIC
+-        $<BUILD_INTERFACE:$<TARGET_PROPERTY:glad_obj_lib,INTERFACE_INCLUDE_DIRECTORIES>>
++        $<BUILD_INTERFACE:$<TARGET_PROPERTY:af_glad_obj_lib,INTERFACE_INCLUDE_DIRECTORIES>>
+         )
+ else()
+     add_library(forge_glad ALIAS glad::glad)

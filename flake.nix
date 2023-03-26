@@ -25,6 +25,10 @@
       url = "github:twesterhout/inline-c";
       flake = false;
     };
+    arrayfire-haskell = {
+      url = "github:twesterhout/arrayfire-haskell/main";
+      flake = false;
+    };
     nixGL = {
       url = "github:guibou/nixGL";
       inputs.flake-utils.follows = "flake-utils";
@@ -36,7 +40,16 @@
     with builtins;
     let
       inherit (inputs.nixpkgs) lib;
-      pkgs = import inputs.nixpkgs { inherit system; };
+      pkgs = import inputs.nixpkgs {
+        inherit system;
+        overlays = [
+          (self: super: {
+            halide = self.callPackage ./nix/halide.nix { };
+            forge = self.callPackage ./nix/forge.nix { };
+            arrayfire = self.callPackage ./nix/arrayfire.nix { };
+          })
+        ];
+      };
 
       # Only consider source dirs and .cabal files as the source to our Haskell package.
       # This allows the project to rebuild only when the source files change.
@@ -52,46 +65,6 @@
           "LICENSE"
         ];
       };
-
-      Halide = (pkgs.callPackage ./halide.nix { llvmPackages = pkgs.llvmPackages_14; }).overrideAttrs (attrs: {
-        doCheck = true;
-        # cmakeFlags = (attrs.cmakeFlags or [ ]) ++ [ "-DHalide_ENABLE_EXCEPTIONS=OFF" ];
-        # patchPhase = (attrs.patchPhase or "") + ''
-        #   substituteInPlace test/correctness/CMakeLists.txt \
-        #     --replace 'exception.cpp' '# exception.cpp'
-        # '';
-      });
-      # checkedHalide = pkgs.halide.overrideAttrs (attrs: {
-      # });
-
-      testWriteExpr = pkgs.stdenv.mkDerivation {
-        pname = "testWriteExpr";
-        version = "0.0.1";
-        src = ./test;
-        dontConfigure = true;
-        buildPhase = ''
-          $CXX -std=c++17 write_to_ostream.cpp -lHalide
-        '';
-        checkPhase = ''
-          ./a.out
-        '';
-        doCheck = true;
-        installPhase = ''
-          mkdir -p $out/bin
-          install a.out $out/bin/
-        '';
-        buildInputs = [ Halide ];
-        nativeBuildInputs = with pkgs; [ stdenv.cc ];
-      };
-
-      # checkedHalide = pkgs.halide.overrideAttrs (attrs: {
-      #   doCheck = true;
-      #   cmakeFlags = (attrs.cmakeFlags or [ ]) ++ [ "-DHalide_ENABLE_EXCEPTIONS=OFF" ];
-      #   patchPhase = (attrs.patchPhase or "") + ''
-      #     substituteInPlace test/correctness/CMakeLists.txt \
-      #       --replace 'exception.cpp' '# exception.cpp'
-      #   '';
-      # });
 
       halide-haskell-for = haskellPackages:
         let
@@ -133,7 +106,7 @@
             });
         in
         lib.makeOverridable builder
-          { withIntelOpenCL = false; withCuda = false; inherit Halide; };
+          { withIntelOpenCL = false; withCuda = false; Halide = pkgs.halide; };
 
       with-markdown-unlit = hp: p: p.overrideAttrs (attrs: {
         nativeBuildInputs = (attrs.nativeBuildInputs or [ ]) ++ [ hp.markdown-unlit ];
@@ -150,9 +123,17 @@
             overrides = self: super: rec {
               inline-c-cpp =
                 (self.callCabal2nix "inline-c-cpp" "${inputs.inline-c.outPath}/inline-c-cpp" { });
+              arrayfire =
+                (self.callCabal2nix "arrayfire" inputs.arrayfire-haskell.outPath {
+                  af = pkgs.arrayfire;
+                }).overrideAttrs (attrs: {
+                  configureFlags = (attrs.configureFlags or [ ]) ++ [ "-fdisable-default-paths" ];
+                });
               halide-haskell = (halide-haskell-for self).override args;
               halide-JuicyPixels =
                 (self.callCabal2nix "halide-JuicyPixels" ./halide-JuicyPixels { });
+              halide-arrayfire =
+                (self.callCabal2nix "halide-arrayfire" ./halide-arrayfire { });
               halide-readme = with-markdown-unlit self
                 (self.callCabal2nix "halide-readme" ./test-readme { });
               halide-tutorial01 = with-markdown-unlit self
@@ -168,6 +149,7 @@
                 paths = [
                   halide-haskell
                   halide-JuicyPixels
+                  halide-arrayfire
                   halide-readme
                   halide-tutorial01
                   halide-tutorial03
@@ -194,7 +176,6 @@
             "${name}" = ps.${package} or ps;
             "${name}-cuda" = ps-cuda.${package} or ps-cuda;
             "${name}-intel-ocl" = ps-intel-ocl.${package} or ps-intel-ocl;
-            testWriteExpr = testWriteExpr;
           };
           devShells =
             let
@@ -207,6 +188,7 @@
                   packages = ps: with ps; [
                     halide-haskell
                     halide-JuicyPixels
+                    halide-arrayfire
                     halide-readme
                     halide-tutorial01
                     halide-tutorial03
@@ -215,6 +197,8 @@
                   ];
                   withHoogle = true;
                   nativeBuildInputs = with pkgs; with ps; [
+                    pkgs.arrayfire
+                    ps.arrayfire
                     # Building and testing
                     cabal-install
                     doctest
@@ -239,9 +223,7 @@
                   shellHook = ''
                     export PROMPT_COMMAND=""
                     export PS1='(nix) GHC ${haskellPackages.ghc.version} \w $ '
-                    export LD_LIBRARY_PATH=${pkgs.zlib}/lib:${Halide}/lib:$LD_LIBRARY_PATH
-                    export CC=${pkgs.clang_14}/bin/clang
-                    export CXX=${pkgs.clang_14}/bin/clang++
+                    export LD_LIBRARY_PATH=${pkgs.zlib}/lib:${pkgs.halide}/lib:$LD_LIBRARY_PATH
                   '' + (if withIntelOpenCL then ''
                     export LD_LIBRARY_PATH=${pkgs.ocl-icd}/lib:$LD_LIBRARY_PATH
                     export OCL_ICD_VENDORS="${pkgs.intel-ocl}/etc/OpenCL/vendors"

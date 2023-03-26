@@ -1,5 +1,22 @@
 {
   "nodes": {
+    "arrayfire-haskell": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1679858990,
+        "narHash": "sha256-408XU17APEsEEJSFkTfp8qRtfhPSfiz78DJfwHotKrg=",
+        "owner": "twesterhout",
+        "repo": "arrayfire-haskell",
+        "rev": "b552cda40e6be2c30d0ee1bc0da7ec20d1fc6006",
+        "type": "github"
+      },
+      "original": {
+        "owner": "twesterhout",
+        "ref": "main",
+        "repo": "arrayfire-haskell",
+        "type": "github"
+      }
+    },
     "flake-compat": {
       "flake": false,
       "locked": {
@@ -103,6 +120,7 @@
     },
     "root": {
       "inputs": {
+        "arrayfire-haskell": "arrayfire-haskell",
         "flake-compat": "flake-compat",
         "flake-utils": "flake-utils",
         "inline-c": "inline-c",
