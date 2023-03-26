@@ -72,7 +72,7 @@ stdenv.mkDerivation rec {
     '';
     license = licenses.bsd3;
     homepage = "https://arrayfire.com/";
-    platforms = platforms.linux;
+    platforms = platforms.linux ++ platforms.darwin;
     maintainers = with maintainers; [ chessai ];
   };
 }
