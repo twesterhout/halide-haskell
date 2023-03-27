@@ -80,25 +80,26 @@ stdenv.mkDerivation rec {
 
   patches = [ ./arrayfire-no-download.patch ];
   postPatch = ''
+    cp -R --no-preserve=mode,ownership ${assets} ./extern/assets
+    cp -R --no-preserve=mode,ownership ${glad} ./extern/glad
+
+    mkdir -p ./src/backend/cpu/extern
+    cp -R --no-preserve=mode,ownership ${threads} ./src/backend/cpu/extern/threads
+
+    cp -R --no-preserve=mode,ownership ${test-data} ./test/data
+
+    substituteInPlace src/api/unified/symbol_manager.cpp \
+      --replace '"/opt/arrayfire-3/lib/",' \
+                "\"$out/lib/\", \"/opt/arrayfire-3/lib/\","
+  '' + lib.optionalString stdenv.isLinux ''
     mkdir -p ./build/include/CL
     cp -R --no-preserve=mode,ownership ${opencl-clhpp}/include/CL/cl2.hpp ./build/include/CL/cl2.hpp
-
-    cp -R --no-preserve=mode,ownership ${assets} ./extern/assets
 
     mkdir -p ./build/third_party/CLBlast/src
     cp -R --no-preserve=mode,ownership ${clblast} ./build/third_party/CLBlast/src/CLBlast-ext
 
     mkdir -p ./src/backend/opencl/extern
     cp -R --no-preserve=mode,ownership ${clfft} ./src/backend/opencl/extern/clfft
-
-    cp -R --no-preserve=mode,ownership ${glad} ./extern/glad
-    mkdir -p ./src/backend/cpu/extern
-    cp -R --no-preserve=mode,ownership ${threads} ./src/backend/cpu/extern/threads
-    cp -R --no-preserve=mode,ownership ${test-data} ./test/data
-
-    substituteInPlace src/api/unified/symbol_manager.cpp \
-      --replace '"/opt/arrayfire-3/lib/",' \
-                "\"$out/lib/\", \"/opt/arrayfire-3/lib/\","
   '';
 
   # Some tests currently fail, see https://github.com/arrayfire/arrayfire/issues/3384
@@ -116,14 +117,10 @@ stdenv.mkDerivation rec {
     fftwFloat
     freeimage
     gtest
-    libGLU
-    libGL
-    mesa
     (openblas.override { blas64 = false; })
-    opencl-clhpp
     span-lite
     spdlog
-  ] ++ (lib.optional stdenv.isLinux ocl-icd);
+  ] ++ (lib.optionals stdenv.isLinux [ libGLU libGL mesa ocl-icd opencl-clhpp ]);
 
   nativeBuildInputs = [
     cmake
