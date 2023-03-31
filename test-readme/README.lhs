@@ -41,11 +41,11 @@ Haskell without C++ 😋.
 As a simple example, here's how you could implement array addition with halide-haskell:
 
 ```haskell
-{-# LANGUAGE AllowAmbiguousTypes, DataKinds, OverloadedStrings #-}
+{-# LANGUAGE AllowAmbiguousTypes, DataKinds, OverloadedStrings, ViewPatterns #-}
 import Language.Halide
 
 -- The algorithm
-mkArrayPlus = compile $ \a b -> do
+mkArrayPlus = compile $ \(buffer "a" -> a) (buffer "b" -> b) -> do
   -- Create an index variable
   i <- mkVar "i"
   -- Define the resulting function. We call it "out".

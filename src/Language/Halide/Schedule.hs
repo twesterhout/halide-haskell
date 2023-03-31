@@ -38,7 +38,7 @@ where
 
 import Control.Monad (void)
 import Data.Text (Text, pack, unpack)
-import qualified Data.Text as T
+import Data.Text qualified as T
 import Data.Text.Encoding (encodeUtf8)
 import Foreign.C.Types (CInt (..))
 import Foreign.ForeignPtr
@@ -46,9 +46,9 @@ import Foreign.Marshal (allocaArray, peekArray, toBool)
 import Foreign.Ptr (Ptr, nullPtr)
 import Foreign.Storable
 import GHC.TypeLits
-import qualified Language.C.Inline as C
-import qualified Language.C.Inline.Cpp.Exception as C
-import qualified Language.C.Inline.Unsafe as CU
+import Language.C.Inline qualified as C
+import Language.C.Inline.Cpp.Exception qualified as C
+import Language.C.Inline.Unsafe qualified as CU
 import Language.Halide.Context
 import Language.Halide.Expr
 import Language.Halide.Func
@@ -430,7 +430,7 @@ instance Storable Split where
 --         std::cout << "deleting ..." << std::endl;
 --         delete p; } |]
 
-getStageSchedule :: (KnownNat n, IsHalideType a) => Stage n a -> IO StageSchedule
+getStageSchedule :: KnownNat n => Stage n a -> IO StageSchedule
 getStageSchedule stage =
   withCxxStage stage $ \stage' ->
     peekStageSchedule
@@ -482,7 +482,7 @@ loadAutoScheduler scheduler = do
           Mullapudi2016 -> "autoschedule_mullapudi2016"
   loadLibrary path
 
-applyAutoScheduler :: (KnownNat n, IsHalideType a) => AutoScheduler -> Target -> Func t n a -> IO Text
+applyAutoScheduler :: KnownNat n => AutoScheduler -> Target -> Func t n a -> IO Text
 applyAutoScheduler scheduler target func = do
   let s = encodeUtf8 . pack . show $ scheduler
   withFunc func $ \f ->
@@ -501,7 +501,7 @@ applyAutoScheduler scheduler target func = do
 makeUnqualified :: Text -> Text
 makeUnqualified = snd . T.breakOnEnd "."
 
-applySplit :: (KnownNat n, IsHalideType a) => Split -> Stage n a -> IO ()
+applySplit :: KnownNat n => Split -> Stage n a -> IO ()
 applySplit (SplitVar x) stage = do
   oldVar <- mkVar (makeUnqualified x.splitOld)
   outerVar <- mkVar (makeUnqualified x.splitOuter)
@@ -513,10 +513,10 @@ applySplit (FuseVars x) stage = do
   outerVar <- mkVar (makeUnqualified x.fuseOuter)
   void $ Language.Halide.Func.fuse (innerVar, outerVar) newVar stage
 
-applySplits :: (KnownNat n, IsHalideType a) => [Split] -> Stage n a -> IO ()
+applySplits :: KnownNat n => [Split] -> Stage n a -> IO ()
 applySplits xs stage = mapM_ (`applySplit` stage) xs
 
-applyDim :: (KnownNat n, IsHalideType a) => Dim -> Stage n a -> IO ()
+applyDim :: KnownNat n => Dim -> Stage n a -> IO ()
 applyDim x stage = do
   var' <- mkVar (makeUnqualified x.var)
   void $
@@ -530,13 +530,13 @@ applyDim x stage = do
       ForGPUThread -> gpuThreads x.deviceApi var' stage
       ForGPULane -> gpuLanes x.deviceApi var' stage
 
-applyDims :: (KnownNat n, IsHalideType a) => [Dim] -> Stage n a -> IO ()
+applyDims :: KnownNat n => [Dim] -> Stage n a -> IO ()
 applyDims xs stage = do
   mapM_ (`applyDim` stage) xs
   vars <- mapM (mkVar . makeUnqualified . (.var)) xs
   void $ reorder vars stage
 
-applySchedule :: (KnownNat n, IsHalideType a) => StageSchedule -> Stage n a -> IO ()
+applySchedule :: KnownNat n => StageSchedule -> Stage n a -> IO ()
 applySchedule schedule stage = do
   applySplits schedule.splits stage
   applyDims schedule.dims stage

@@ -29,8 +29,8 @@ import Foreign.Marshal (peekArray)
 import Foreign.Ptr (FunPtr, Ptr, freeHaskellFunPtr)
 import Foreign.Storable
 import GHC.TypeLits
-import qualified Language.C.Inline as C
-import qualified Language.C.Inline.Unsafe as CU
+import Language.C.Inline qualified as C
+import Language.C.Inline.Unsafe qualified as CU
 import Language.Halide.Buffer
 import Language.Halide.Context
 import Language.Halide.Dimension
@@ -130,10 +130,13 @@ withTrace customTrace = bracket allocate destroy
     destroy = freeHaskellFunPtr
 
 setCustomTrace
-  :: (KnownNat n, IsHalideType a)
-  => (TraceEvent -> IO ()) -- ^ Custom trace function
-  -> Func t n a -- ^ For which func to enable it
-  -> IO b -- ^ For the duration of which computation to enable it
+  :: KnownNat n
+  => (TraceEvent -> IO ())
+  -- ^ Custom trace function
+  -> Func t n a
+  -- ^ For which func to enable it
+  -> IO b
+  -- ^ For the duration of which computation to enable it
   -> IO b
 setCustomTrace customTrace f action =
   withTrace customTrace $ \tracePtr ->
@@ -152,20 +155,20 @@ setCustomTrace customTrace f action =
           func.jit_handlers().custom_trace = nullptr;
         } |]
 
-traceStores :: (KnownNat n, IsHalideType a) => Func t n a -> IO (Func t n a)
+traceStores :: KnownNat n => Func t n a -> IO (Func t n a)
 traceStores f = do
   withFunc f $ \f' ->
     [CU.exp| void { $(Halide::Func* f')->trace_stores() } |]
   pure f
 
-traceLoads :: (KnownNat n, IsHalideType a) => Func t n a -> IO (Func t n a)
+traceLoads :: KnownNat n => Func t n a -> IO (Func t n a)
 traceLoads f = do
   withFunc f $ \f' ->
     [CU.exp| void { $(Halide::Func* f')->trace_loads() } |]
   pure f
 
 collectIterationOrder
-  :: (KnownNat n, IsHalideType a)
+  :: KnownNat n
   => (TraceEventCode -> Bool)
   -> Func t n a
   -> IO b

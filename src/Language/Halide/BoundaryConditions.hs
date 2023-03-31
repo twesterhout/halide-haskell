@@ -37,14 +37,14 @@ importHalide
 -- region :: (KnownNat n, IsHalideType a) => Func 'ParamTy n a -> IO (Region n)
 -- region = undefined
 
-repeatEdge :: (KnownNat n, IsHalideType a) => Func 'ParamTy n a -> IO (Func 'FuncTy n a)
+repeatEdge :: (KnownNat n, IsHalideType a) => Func 'ParamTy n (Expr a) -> IO (Func 'FuncTy n (Expr a))
 repeatEdge source =
   withBufferParam source $ \source' ->
     wrapCxxFunc
       =<< [CU.exp| Halide::Func* { new Halide::Func{
             Halide::BoundaryConditions::repeat_edge(*$(const Halide::ImageParam* source'))} } |]
 
-constantExterior :: (KnownNat n, IsHalideType a) => Expr a -> Func 'ParamTy n a -> IO (Func 'FuncTy n a)
+constantExterior :: (KnownNat n, IsHalideType a) => Expr a -> Func 'ParamTy n (Expr a) -> IO (Func 'FuncTy n (Expr a))
 constantExterior value source =
   withBufferParam source $ \source' ->
     asExpr value $ \value' ->

@@ -22,7 +22,7 @@ ways, and see what order pixels are computed in. For this, we define a helper
 function such that we don't have to constantly repeat the definition of it.
 
 ```haskell
-prepare :: IO (Expr Int32, Expr Int32, Func 'FuncTy 2 Int32)
+prepare :: IO (Expr Int32, Expr Int32, Func 'FuncTy 2 (Expr Int32))
 prepare = do
   x <- mkVar "x"
   y <- mkVar "y"
@@ -34,7 +34,7 @@ We also define a helper function to evaluate a `Func` and collect the order of
 stores performed by the function. We will use it for testing.
 
 ```haskell
-getIterationOrder :: (KnownNat n, IsHalideType a) => [Int] -> Func t n a -> IO [[Int]]
+getIterationOrder :: (KnownNat n, IsHalideType a) => [Int] -> Func t n (Expr a) -> IO [[Int]]
 getIterationOrder shape f =
   fmap fst $
     collectIterationOrder (TraceStore ==) f $ do

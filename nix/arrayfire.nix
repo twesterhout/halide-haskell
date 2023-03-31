@@ -71,12 +71,14 @@ stdenv.mkDerivation rec {
     "-DBUILD_TESTING=ON"
     "-DAF_BUILD_EXAMPLES=ON"
     "-DAF_BUILD_FORGE=OFF"
+    "-DAF_BUILD_OPENCL=OFF"
     "-DAF_USE_RELATIVE_TEST_DIR=ON"
 
     "-DAF_ASSETS_PATH=extern/assets"
     "-DAF_GLAD_PATH=extern/glad"
     "-DAF_THREADS_PATH=extern/threads"
-  ] ++ (lib.optional stdenv.isDarwin "-DAF_BUILD_OPENCL=OFF");
+  ];
+  # ++ (lib.optional stdenv.isDarwin "-DAF_BUILD_OPENCL=OFF");
 
   patches = [ ./arrayfire-no-download.patch ];
   postPatch = ''
@@ -91,16 +93,17 @@ stdenv.mkDerivation rec {
     substituteInPlace src/api/unified/symbol_manager.cpp \
       --replace '"/opt/arrayfire-3/lib/",' \
                 "\"$out/lib/\", \"/opt/arrayfire-3/lib/\","
-  '' + lib.optionalString stdenv.isLinux ''
-    mkdir -p ./build/include/CL
-    cp -R --no-preserve=mode,ownership ${opencl-clhpp}/include/CL/cl2.hpp ./build/include/CL/cl2.hpp
-
-    mkdir -p ./build/third_party/CLBlast/src
-    cp -R --no-preserve=mode,ownership ${clblast} ./build/third_party/CLBlast/src/CLBlast-ext
-
-    mkdir -p ./src/backend/opencl/extern
-    cp -R --no-preserve=mode,ownership ${clfft} ./src/backend/opencl/extern/clfft
   '';
+  # + lib.optionalString stdenv.isLinux ''
+  #   mkdir -p ./build/include/CL
+  #   cp -R --no-preserve=mode,ownership ${opencl-clhpp}/include/CL/cl2.hpp ./build/include/CL/cl2.hpp
+
+  #   mkdir -p ./build/third_party/CLBlast/src
+  #   cp -R --no-preserve=mode,ownership ${clblast} ./build/third_party/CLBlast/src/CLBlast-ext
+
+  #   mkdir -p ./src/backend/opencl/extern
+  #   cp -R --no-preserve=mode,ownership ${clfft} ./src/backend/opencl/extern/clfft
+  # '';
 
   # Some tests currently fail, see https://github.com/arrayfire/arrayfire/issues/3384
   doCheck = false;
@@ -117,10 +120,13 @@ stdenv.mkDerivation rec {
     fftwFloat
     freeimage
     gtest
+    libGL
+    mesa
     (openblas.override { blas64 = false; })
     span-lite
     spdlog
-  ] ++ (lib.optionals stdenv.isLinux [ libGLU libGL mesa ocl-icd opencl-clhpp ]);
+  ];
+  # ++ (lib.optionals stdenv.isLinux [ libGLU libGL mesa ocl-icd opencl-clhpp ]);
 
   nativeBuildInputs = [
     cmake

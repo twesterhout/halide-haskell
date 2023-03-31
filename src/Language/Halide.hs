@@ -80,6 +80,7 @@ module Language.Halide
   , allocaBuffer
     -- | Buffers can also be converted to lists to easily print them for debugging.
   , IsListPeek (..)
+  , peekScalar
     -- | For production usage however, you don't want to work with lists. Instead, you probably want Halide
     -- to work with your existing array data types. For this, we define 'IsHalideBuffer' typeclass that
     -- teaches Halide how to convert your data into a 'HalideBuffer'. Depending on how you implement the
@@ -175,7 +176,6 @@ module Language.Halide
   , IsTuple (..)
   , ToTuple
   , FromTuple
-  , IndexTuple
   , Length
   , All
 

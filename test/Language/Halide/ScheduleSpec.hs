@@ -10,7 +10,7 @@ import Test.Hspec
 import Test.Hspec.QuickCheck
 import Utils
 
-checkScheduleRoundTrip :: (KnownNat n, IsHalideType a) => IO (Func t n a) -> (Func t n a -> IO ()) -> Expectation
+checkScheduleRoundTrip :: (KnownNat n, IsHalideType a) => IO (Func t n (Expr a)) -> (Func t n (Expr a) -> IO ()) -> Expectation
 checkScheduleRoundTrip prepare schedule = do
   f1 <- prepare
   f2 <- prepare

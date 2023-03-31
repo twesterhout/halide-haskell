@@ -9,6 +9,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilyDependencies #-}
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 -- |
@@ -20,6 +21,8 @@ module Language.Halide.Func
     Func (..)
   , FuncTy (..)
   , Stage (..)
+  , Function
+  , Parameter
   , buffer
   , scalar
   , define
@@ -57,9 +60,9 @@ module Language.Halide.Func
   , prettyLoopNest
 
     -- * Internal
-  , IndexTuple
   , asBufferParam
   , withFunc
+  , withCxxFunc
   , withBufferParam
   , wrapCxxFunc
   , CxxStage
@@ -70,11 +73,14 @@ where
 
 import Control.Exception (bracket)
 import Control.Monad (forM)
+import Data.Constraint
+import Data.Functor ((<&>))
 import Data.IORef
 import Data.Kind (Type)
 import Data.Proxy
 import Data.Text (Text)
 import Data.Text.Encoding qualified as T
+import Debug.Trace
 import Foreign.ForeignPtr
 import Foreign.Marshal (toBool, with)
 import Foreign.Ptr (Ptr, castPtr)
@@ -92,6 +98,7 @@ import Language.Halide.Target
 import Language.Halide.Type
 import Language.Halide.Utils
 import System.IO.Unsafe (unsafePerformIO)
+import Unsafe.Coerce
 import Prelude hiding (min, tail)
 
 -- | Haskell counterpart of [Halide::Stage](https://halide-lang.org/docs/class_halide_1_1_stage.html).
@@ -106,7 +113,11 @@ importHalide
 -- C++ type.
 data Func (t :: FuncTy) (n :: Nat) (a :: Type) where
   Func :: {-# UNPACK #-} !(ForeignPtr CxxFunc) -> Func 'FuncTy n a
-  Param :: {-# UNPACK #-} !(IORef (Maybe (ForeignPtr CxxImageParam))) -> Func 'ParamTy n a
+  Param :: IsHalideType a => {-# UNPACK #-} !(IORef (Maybe (ForeignPtr CxxImageParam))) -> Func 'ParamTy n (Expr a)
+
+type Function n a = Func 'FuncTy n (Expr a)
+
+type Parameter n a = Func 'ParamTy n (Expr a)
 
 -- | Function type. It can either be 'FuncTy' which means that we have defined the function ourselves,
 -- or 'ParamTy' which means that it's a parameter to our pipeline.
@@ -195,13 +206,8 @@ data TailStrategy
     TailAuto
   deriving stock (Eq, Ord, Show)
 
--- | Specifies that @i@ is a tuple of @'Expr' Int32@.
---
--- @ts@ are deduced from @i@, so you don't have to specify them explicitly.
-type IndexTuple i ts = (IsTuple (Arguments ts) i, All ((~) (Expr Int32)) ts)
-
 -- | Common scheduling functions
-class (KnownNat n, IsHalideType a) => Schedulable f n a where
+class KnownNat n => Schedulable f (n :: Nat) (a :: Type) where
   -- | Vectorize the dimension.
   vectorize :: VarOrRVar -> f n a -> IO (f n a)
 
@@ -232,8 +238,8 @@ class (KnownNat n, IsHalideType a) => Schedulable f n a where
 
   specialize :: Expr Bool -> f n a -> IO (Stage n a)
   specializeFail :: Text -> f n a -> IO ()
-  gpuBlocks :: (IndexTuple i ts, 1 <= Length ts, Length ts <= 3) => DeviceAPI -> i -> f n a -> IO (f n a)
-  gpuThreads :: (IndexTuple i ts, 1 <= Length ts, Length ts <= 3) => DeviceAPI -> i -> f n a -> IO (f n a)
+  gpuBlocks :: (KnownNat k, k <= 3) => DeviceAPI -> IndexType k -> f n a -> IO (f n a)
+  gpuThreads :: (KnownNat k, k <= 3) => DeviceAPI -> IndexType k -> f n a -> IO (f n a)
   gpuLanes :: DeviceAPI -> VarOrRVar -> f n a -> IO (f n a)
 
   -- | Schedule the iteration over this stage to be fused with another stage from outermost loop to a
@@ -242,7 +248,10 @@ class (KnownNat n, IsHalideType a) => Schedulable f n a where
   -- For more info, see [Halide::Stage::compute_with](https://halide-lang.org/docs/class_halide_1_1_stage.html#a82a2ae25a009d6a2d52cb407a25f0a5b).
   computeWith :: LoopAlignStrategy -> f n a -> LoopLevel t -> IO ()
 
-instance (KnownNat n, IsHalideType a) => Schedulable Stage n a where
+proveTransitivityOfLessThanEqual :: (KnownNat k, KnownNat l, KnownNat m, k <= l, l <= m) => Dict (k <= m)
+proveTransitivityOfLessThanEqual = unsafeCoerce $ Dict @(1 <= 2)
+
+instance KnownNat n => Schedulable Stage n a where
   vectorize var stage = do
     withCxxStage stage $ \stage' ->
       asVarOrRVar var $ \var' ->
@@ -340,46 +349,54 @@ instance (KnownNat n, IsHalideType a) => Schedulable Stage n a where
             std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)});
         });
       } |]
-  gpuBlocks (fromIntegral . fromEnum -> api) vars stage = do
-    withCxxStage stage $ \stage' ->
-      asVectorOf @((~) (Expr Int32)) asVarOrRVar (fromTuple vars) $ \vars' -> do
-        [C.throwBlock| void {
-          handle_halide_exceptions([=](){
-            auto const& vars = *$(const std::vector<Halide::VarOrRVar>* vars');
-            auto& stage = *$(Halide::Stage* stage');
-            auto const device = static_cast<Halide::DeviceAPI>($(int api));
-            switch (vars.size()) {
-              case 1: stage.gpu_blocks(vars.at(0), device);
-                      break;
-              case 2: stage.gpu_blocks(vars.at(0), vars.at(1), device);
-                      break;
-              case 3: stage.gpu_blocks(vars.at(0), vars.at(1), vars.at(2), device);
-                      break;
-              default: throw std::runtime_error{"unexpected number of arguments in gpuBlocks"};
-            }
-          });
-        } |]
-    pure stage
-  gpuThreads (fromIntegral . fromEnum -> api) vars stage = do
-    withCxxStage stage $ \stage' ->
-      asVectorOf @((~) (Expr Int32)) asVarOrRVar (fromTuple vars) $ \vars' -> do
-        [C.throwBlock| void {
-          handle_halide_exceptions([=](){
-            auto const& vars = *$(const std::vector<Halide::VarOrRVar>* vars');
-            auto& stage = *$(Halide::Stage* stage');
-            auto const device = static_cast<Halide::DeviceAPI>($(int api));
-            switch (vars.size()) {
-              case 1: stage.gpu_threads(vars.at(0), device);
-                      break;
-              case 2: stage.gpu_threads(vars.at(0), vars.at(1), device);
-                      break;
-              case 3: stage.gpu_threads(vars.at(0), vars.at(1), vars.at(2), device);
-                      break;
-              default: throw std::runtime_error{"unexpected number of arguments in gpuThreads"};
-            }
-          });
-        } |]
-    pure stage
+  gpuBlocks :: forall k. (KnownNat k, k <= 3) => DeviceAPI -> IndexType k -> Stage n a -> IO (Stage n a)
+  gpuBlocks (fromIntegral . fromEnum -> api :: C.CInt) vars stage =
+    case proveTransitivityOfLessThanEqual @k @3 @10 of
+      Dict -> case indexTypeProperties @k of
+        Sub Dict ->
+          withCxxStage stage $ \stage' ->
+            asVectorOf @((~) (Expr Int32)) asVarOrRVar (fromTuple vars) $ \vars' -> do
+              [C.throwBlock| void {
+                handle_halide_exceptions([=](){
+                  auto const& vars = *$(const std::vector<Halide::VarOrRVar>* vars');
+                  auto& stage = *$(Halide::Stage* stage');
+                  auto const device = static_cast<Halide::DeviceAPI>($(int api));
+                  switch (vars.size()) {
+                    case 1: stage.gpu_blocks(vars.at(0), device);
+                            break;
+                    case 2: stage.gpu_blocks(vars.at(0), vars.at(1), device);
+                            break;
+                    case 3: stage.gpu_blocks(vars.at(0), vars.at(1), vars.at(2), device);
+                            break;
+                    default: throw std::runtime_error{"unexpected number of arguments in gpuBlocks"};
+                  }
+                });
+              } |]
+              pure stage
+  gpuThreads :: forall k. (KnownNat k, k <= 3) => DeviceAPI -> IndexType k -> Stage n a -> IO (Stage n a)
+  gpuThreads (fromIntegral . fromEnum -> api :: C.CInt) vars stage =
+    case proveTransitivityOfLessThanEqual @k @3 @10 of
+      Dict -> case indexTypeProperties @k of
+        Sub Dict -> do
+          withCxxStage stage $ \stage' ->
+            asVectorOf @((~) (Expr Int32)) asVarOrRVar (fromTuple vars) $ \vars' -> do
+              [C.throwBlock| void {
+                handle_halide_exceptions([=](){
+                  auto const& vars = *$(const std::vector<Halide::VarOrRVar>* vars');
+                  auto& stage = *$(Halide::Stage* stage');
+                  auto const device = static_cast<Halide::DeviceAPI>($(int api));
+                  switch (vars.size()) {
+                    case 1: stage.gpu_threads(vars.at(0), device);
+                            break;
+                    case 2: stage.gpu_threads(vars.at(0), vars.at(1), device);
+                            break;
+                    case 3: stage.gpu_threads(vars.at(0), vars.at(1), vars.at(2), device);
+                            break;
+                    default: throw std::runtime_error{"unexpected number of arguments in gpuThreads"};
+                  }
+                });
+              } |]
+          pure stage
   gpuLanes (fromIntegral . fromEnum -> api) var stage = do
     withCxxStage stage $ \stage' ->
       asVarOrRVar var $ \var' ->
@@ -403,7 +420,7 @@ instance (KnownNat n, IsHalideType a) => Schedulable Stage n a where
         } |]
 
 viaStage1
-  :: (KnownNat n, IsHalideType b)
+  :: KnownNat n
   => (a -> Stage n b -> IO (Stage n b))
   -> a
   -> Func t n b
@@ -413,7 +430,7 @@ viaStage1 f a1 func = do
   pure func
 
 viaStage2
-  :: (KnownNat n, IsHalideType b)
+  :: (KnownNat n)
   => (a1 -> a2 -> Stage n b -> IO (Stage n b))
   -> a1
   -> a2
@@ -438,7 +455,7 @@ viaStage3 f a1 a2 a3 func = do
 -}
 
 viaStage4
-  :: (KnownNat n, IsHalideType b)
+  :: (KnownNat n)
   => (a1 -> a2 -> a3 -> a4 -> Stage n b -> IO (Stage n b))
   -> a1
   -> a2
@@ -450,7 +467,7 @@ viaStage4 f a1 a2 a3 a4 func = do
   _ <- f a1 a2 a3 a4 =<< getStage func
   pure func
 
-instance (KnownNat n, IsHalideType a) => Schedulable (Func t) n a where
+instance KnownNat n => Schedulable (Func t) n a where
   vectorize = viaStage1 vectorize
   unroll = viaStage1 unroll
   reorder = viaStage1 reorder
@@ -552,7 +569,7 @@ instance Enum TailStrategy where
 -- The auto generated schedules might break when the sizes of the dimensions are very different from the
 -- estimates specified. These estimates are used only by the auto scheduler if the function is a pipeline output.
 estimate
-  :: (KnownNat n, IsHalideType a)
+  :: KnownNat n
   => Expr Int32
   -- ^ index variable
   -> Expr Int32
@@ -577,7 +594,7 @@ estimate var start extent func =
 -- If bounds inference decides that it requires more of this function than the bounds you have stated,
 -- a runtime error will occur when you try to run your pipeline.
 bound
-  :: (KnownNat n, IsHalideType a)
+  :: KnownNat n
   => Expr Int32
   -- ^ index variable
   -> Expr Int32
@@ -598,7 +615,7 @@ bound var start extent func =
 -- | Get the index arguments of the function.
 --
 -- The returned list contains exactly @n@ elements.
-getArgs :: (KnownNat n, IsHalideType a) => Func t n a -> IO [Var]
+getArgs :: KnownNat n => Func t n a -> IO [Var]
 getArgs func =
   withFunc func $ \func' -> do
     let allocate =
@@ -615,7 +632,7 @@ getArgs func =
 -- | Compute all of this function once ahead of time.
 --
 -- See [Halide::Func::compute_root](https://halide-lang.org/docs/class_halide_1_1_func.html#a29df45a4a16a63eb81407261a9783060) for more info.
-computeRoot :: (KnownNat n, IsHalideType a) => Func t n a -> IO (Func t n a)
+computeRoot :: KnownNat n => Func t n a -> IO (Func t n a)
 computeRoot func = do
   withFunc func $ \f ->
     [C.throwBlock| void { handle_halide_exceptions([=](){ $(Halide::Func* f)->compute_root(); }); } |]
@@ -628,7 +645,7 @@ computeRoot func = do
 --
 -- For more info, see [Halide::Func::in](https://halide-lang.org/docs/class_halide_1_1_func.html#a9d619f2d0111ea5bf640781d1324d050).
 asUsedBy
-  :: (KnownNat n, KnownNat m, IsHalideType a, IsHalideType b)
+  :: (KnownNat n, KnownNat m)
   => Func t1 n a
   -> Func 'FuncTy m b
   -> IO (Func 'FuncTy n a)
@@ -642,7 +659,7 @@ asUsedBy g f =
 --
 -- If a global wrapper already exists, returns it. The global identity wrapper is only used by callers
 -- for which no custom wrapper has been specified.
-asUsed :: (KnownNat n, IsHalideType a) => Func t n a -> IO (Func 'FuncTy n a)
+asUsed :: KnownNat n => Func t n a -> IO (Func 'FuncTy n a)
 asUsed f =
   withFunc f $ \fPtr ->
     wrapCxxFunc
@@ -654,7 +671,7 @@ asUsed f =
 -- Asserts that the @Func@ has a pure definition which is a simple call to a single input, and no update
 -- definitions. The wrapper @Func@s returned by 'asUsed' are suitable candidates. Consumes all pure variables,
 -- and rewrites the @Func@ to have an extern definition that calls @halide_buffer_copy@.
-copyToDevice :: (KnownNat n, IsHalideType a) => DeviceAPI -> Func t n a -> IO (Func t n a)
+copyToDevice :: KnownNat n => DeviceAPI -> Func t n a -> IO (Func t n a)
 copyToDevice deviceApi func = do
   withFunc func $ \f ->
     [C.throwBlock| void {
@@ -667,7 +684,7 @@ copyToDevice deviceApi func = do
     api = fromIntegral . fromEnum $ deviceApi
 
 -- | Same as @'copyToDevice' 'DeviceHost'@
-copyToHost :: (KnownNat n, IsHalideType a) => Func t n a -> IO (Func t n a)
+copyToHost :: KnownNat n => Func t n a -> IO (Func t n a)
 copyToHost = copyToDevice DeviceHost
 
 -- | Split a dimension into inner and outer subdimensions with the given names, where the inner dimension
@@ -792,7 +809,7 @@ getBufferParameter name r =
 withBufferParam
   :: forall n a b
    . (HasCallStack, KnownNat n, IsHalideType a)
-  => Func 'ParamTy n a
+  => Func 'ParamTy n (Expr a)
   -> (Ptr CxxImageParam -> IO b)
   -> IO b
 withBufferParam (Param r) action =
@@ -808,25 +825,65 @@ withBufferParam (Param r) action =
 --         writeIORef r (Just fp)
 
 -- | Get the underlying pointer to @Halide::Func@ and invoke an 'IO' action with it.
-withFunc :: (KnownNat n, IsHalideType a) => Func t n a -> (Ptr CxxFunc -> IO b) -> IO b
-withFunc f = withForeignPtr (funcToForeignPtr f)
+withFunc :: KnownNat n => Func t n a -> (Ptr CxxFunc -> IO b) -> IO b
+withFunc f action = case f of
+  Func fp -> withForeignPtr fp action
+  p@(Param _) -> forceFunc p >>= \(Func fp) -> withForeignPtr fp action
+
+withCxxFunc :: KnownNat n => Func 'FuncTy n a -> (Ptr CxxFunc -> IO b) -> IO b
+withCxxFunc (Func fp) = withForeignPtr fp
 
 wrapCxxFunc :: Ptr CxxFunc -> IO (Func 'FuncTy n a)
 wrapCxxFunc = fmap Func . newForeignPtr deleter
   where
     deleter = [C.funPtr| void deleteFunc(Halide::Func *x) { delete x; } |]
 
-forceFunc :: forall t n a. (KnownNat n, IsHalideType a) => Func t n a -> IO (Func 'FuncTy n a)
-forceFunc x@(Func _) = pure x
-forceFunc (Param r) = do
-  fp <- getBufferParameter @n @a Nothing r
-  withForeignPtr fp $ \p ->
-    wrapCxxFunc
-      =<< [CU.exp| Halide::Func* {
-            new Halide::Func{static_cast<Halide::Func>(*$(Halide::ImageParam* p))} } |]
+forceFunc :: forall t n a. KnownNat n => Func t n (Expr a) -> IO (Func 'FuncTy n (Expr a))
+forceFunc = \case
+  x@(Func _) -> pure x
+  (Param r) -> do
+    fp <- getBufferParameter @n @a Nothing r
+    withForeignPtr fp $ \p ->
+      wrapCxxFunc
+        =<< [CU.exp| Halide::Func* {
+              new Halide::Func{static_cast<Halide::Func>(*$(Halide::ImageParam* p))} } |]
 
-funcToForeignPtr :: (KnownNat n, IsHalideType a) => Func t n a -> ForeignPtr CxxFunc
+funcToForeignPtr :: KnownNat n => Func t n (Expr a) -> ForeignPtr CxxFunc
 funcToForeignPtr x = unsafePerformIO $! forceFunc x >>= \(Func fp) -> pure fp
+
+type family UnliftExpr d = t where
+  UnliftExpr (Expr a1, Expr a2) = (a1, a2)
+  UnliftExpr (Expr a1) = a1
+
+type family LiftExpr d = t | t -> d where
+  LiftExpr (a1, a2) = (Expr a1, Expr a2)
+  LiftExpr a1 = Expr a1
+
+class IsFuncDefinition d where
+  definitionToExprList :: d -> [ForeignPtr CxxExpr]
+  exprListToDefinition :: [ForeignPtr CxxExpr] -> d
+
+instance IsHalideType a => IsFuncDefinition (Expr a) where
+  definitionToExprList = pure . exprToForeignPtr
+  exprListToDefinition [x1] = unsafePerformIO $ withForeignPtr x1 (checkType @a) >> pure (Expr x1)
+  exprListToDefinition _ = error "should never happen"
+
+instance (IsHalideType a1, IsHalideType a2) => IsFuncDefinition (Expr a1, Expr a2) where
+  definitionToExprList (x1, x2) = [exprToForeignPtr x1, exprToForeignPtr x2]
+  exprListToDefinition [x1, x2] = unsafePerformIO $ do
+    withForeignPtr x1 (checkType @a1)
+    withForeignPtr x2 (checkType @a2)
+    pure (Expr x1, Expr x2)
+  exprListToDefinition _ = error "should never happen"
+
+instance (IsHalideType a1, IsHalideType a2, IsHalideType a3) => IsFuncDefinition (Expr a1, Expr a2, Expr a3) where
+  definitionToExprList (x1, x2, x3) = [exprToForeignPtr x1, exprToForeignPtr x2, exprToForeignPtr x3]
+  exprListToDefinition [x1, x2, x3] = unsafePerformIO $ do
+    withForeignPtr x1 (checkType @a1)
+    withForeignPtr x2 (checkType @a2)
+    withForeignPtr x3 (checkType @a3)
+    pure (Expr x1, Expr x2, Expr x3)
+  exprListToDefinition _ = error "should never happen"
 
 -- | Define a Halide function.
 --
@@ -839,54 +896,63 @@ funcToForeignPtr x = unsafePerformIO $! forceFunc x >>= \(Func fp) -> pure fp
 -- >>> f2 <- define "f2" (x, y) (0 :: Expr Float)
 -- >>> f3 <- define "f3" (x, y, z) (0 :: Expr Float)
 define
-  :: ( IsTuple (Arguments ts) i
-     , All ((~) Var) ts
-     , Length ts ~ n
-     , KnownNat n
-     , IsHalideType a
-     )
+  :: forall n d
+   . (HasIndexType n, IsFuncDefinition d)
   => Text
-  -> i
-  -> Expr a
-  -> IO (Func 'FuncTy n a)
-define name args expr =
-  asVectorOf @((~) (Expr Int32)) asVar (fromTuple args) $ \x -> do
-    let s = T.encodeUtf8 name
-    asExpr expr $ \y ->
-      wrapCxxFunc
-        =<< [CU.block| Halide::Func* {
-              Halide::Func f{std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}};
-              f(*$(std::vector<Halide::Var>* x)) = *$(Halide::Expr* y);
-              return new Halide::Func{f};
-            } |]
+  -> IndexType n
+  -> d
+  -> IO (Func 'FuncTy n d)
+define name args definition =
+  case indexTypeProperties @n of
+    Sub Dict -> asVectorOf @((~) (Expr Int32)) asVar (fromTuple args) $ \x -> do
+      let s = T.encodeUtf8 name
+      withMany withForeignPtr (definitionToExprList definition) $ \v ->
+        wrapCxxFunc
+          =<< [CU.block| Halide::Func* {
+                Halide::Func f{std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}};
+                auto const& args = *$(const std::vector<Halide::Var>* x);
+                auto const& def = *$(const std::vector<Halide::Expr>* v);
+                if (def.size() == 1) {
+                  f(args) = def.at(0);
+                }
+                else {
+                  f(args) = Halide::Tuple{def};
+                }
+                return new Halide::Func{f};
+              } |]
 
 -- | Create an update definition for a Halide function.
 --
 -- @update f i e@ creates an update definition for @f@ that performs @f[i] = e@.
 update
-  :: ( IsTuple (Arguments ts) i
-     , All ((~) (Expr Int32)) ts
-     , Length ts ~ n
-     , KnownNat n
-     , IsHalideType a
-     )
-  => Func 'FuncTy n a
-  -> i
-  -> Expr a
+  :: forall n d
+   . (HasIndexType n, IsFuncDefinition d)
+  => Func 'FuncTy n d
+  -> IndexType n
+  -> d
   -> IO ()
-update func args expr =
+update func args definition =
   withFunc func $ \f ->
-    asVectorOf @((~) (Expr Int32)) asExpr (fromTuple args) $ \x ->
-      asExpr expr $ \y ->
-        [C.throwBlock| void {
-          handle_halide_exceptions([=](){
-            $(Halide::Func* f)->operator()(*$(std::vector<Halide::Expr>* x)) = *$(Halide::Expr* y);
-          });
-        } |]
+    case indexTypeProperties @n of
+      Sub Dict -> asVectorOf @((~) (Expr Int32)) asExpr (fromTuple args) $ \index ->
+        withMany withForeignPtr (definitionToExprList definition) $ \value ->
+          [C.throwBlock| void {
+            handle_halide_exceptions([=](){
+              auto& f = *$(Halide::Func* f);
+              auto const& index = *$(const std::vector<Halide::Expr>* index);
+              auto const& value = *$(const std::vector<Halide::Expr>* value);
+              if (value.size() == 1) {
+                f(index) = value.at(0);
+              }
+              else {
+                f(index) = Halide::Tuple{value};
+              }
+            });
+          } |]
 
 infix 9 !
 
-type family IndexType (n :: Nat) :: Type where
+type family IndexType (n :: Nat) = (t :: Type) | t -> n where
   IndexType 0 = ()
   IndexType 1 = Expr Int32
   IndexType 2 = (Expr Int32, Expr Int32)
@@ -899,34 +965,81 @@ type family IndexType (n :: Nat) :: Type where
   IndexType 9 = (Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32)
   IndexType 10 = (Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32)
 
+type IndexTypeProperties n =
+  ( IsTuple (FromTuple (IndexType n)) (IndexType n)
+  , All ((~) (Expr Int32)) (FromTuple (IndexType n))
+  )
+
+indexTypeProperties :: forall n. (KnownNat n, n <= 10) :- IndexTypeProperties n
+indexTypeProperties = Sub $
+  case fromIntegral (natVal (Proxy @n)) :: Int of
+    0 -> unsafeCoerce $ Dict @(IndexTypeProperties 0)
+    1 -> unsafeCoerce $ Dict @(IndexTypeProperties 1)
+    2 -> unsafeCoerce $ Dict @(IndexTypeProperties 2)
+    3 -> unsafeCoerce $ Dict @(IndexTypeProperties 3)
+    4 -> unsafeCoerce $ Dict @(IndexTypeProperties 4)
+    5 -> unsafeCoerce $ Dict @(IndexTypeProperties 5)
+    6 -> unsafeCoerce $ Dict @(IndexTypeProperties 6)
+    7 -> unsafeCoerce $ Dict @(IndexTypeProperties 7)
+    8 -> unsafeCoerce $ Dict @(IndexTypeProperties 8)
+    9 -> unsafeCoerce $ Dict @(IndexTypeProperties 9)
+    10 -> unsafeCoerce $ Dict @(IndexTypeProperties 10)
+    _ -> error "cannot happen"
+{-# NOINLINE indexTypeProperties #-}
+
+type HasIndexType n = (KnownNat n, n <= 10)
+
+withExprIndices :: forall n a. HasIndexType n => IndexType n -> (Ptr (CxxVector CxxExpr) -> IO a) -> IO a
+withExprIndices indices action =
+  case indexTypeProperties @n of
+    Sub Dict -> asVectorOf @((~) (Expr Int32)) asExpr (fromTuple indices) $ \x ->
+      action x
+
+indexFunc :: forall n a t. HasIndexType n => Func t n a -> IndexType n -> IO [ForeignPtr CxxExpr]
+indexFunc func indices = withExprIndices indices $ \x ->
+  withFunc func $ \f -> do
+    let allocate =
+          [CU.block| std::vector<Halide::Expr>* {
+            Halide::FuncRef ref = $(Halide::Func* f)->operator()(*$(std::vector<Halide::Expr>* x));
+            std::vector<Halide::Expr> v;
+            if (ref.size() == 1) {
+              v.push_back(static_cast<Halide::Expr>(ref));
+            }
+            else {
+              for (auto i = size_t{0}; i < ref.size(); ++i) {
+                v.push_back(ref[i]);
+              }
+            }
+            return new std::vector<Halide::Expr>{std::move(v)};
+          } |]
+    bracket allocate deleteCxxVector $ \v -> do
+      size <- fromIntegral <$> cxxVectorSize v
+      forM [0 .. size - 1] $ \i ->
+        cxxConstruct $ \ptr ->
+          [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+                $(const std::vector<Halide::Expr>* v)->at($(size_t i))} } |]
+
 -- | Apply a Halide function. Conceptually, @f ! i@ is equivalent to @f[i]@, i.e.
 -- indexing into a lazy array.
-(!)
-  :: ( IsTuple (Arguments ts) (IndexType n)
-     , All ((~) (Expr Int32)) ts
-     , Length ts ~ n
-     , KnownNat n
-     , IsHalideType a
-     )
-  => Func t n a
-  -> IndexType n
-  -> Expr a
+(!) :: (HasIndexType n, IsFuncDefinition a) => Func t n a -> IndexType n -> a
 (!) func args =
   unsafePerformIO $
-    withFunc func $ \f ->
-      asVectorOf @((~) (Expr Int32)) asExpr (fromTuple args) $ \x ->
-        cxxConstructExpr $ \ptr ->
-          [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
-            $(Halide::Func* f)->operator()(*$(std::vector<Halide::Expr>* x))} } |]
+    indexFunc func args <&> exprListToDefinition
+
+-- withFunc func $ \f ->
+--   asVectorOf @((~) (Expr Int32)) asExpr (fromTuple args) $ \x ->
+--     cxxConstructExpr $ \ptr ->
+--       [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
+--         $(Halide::Func* f)->operator()(*$(std::vector<Halide::Expr>* x))} } |]
 
 -- | Get a particular dimension of a pipeline parameter.
 dim
   :: forall n a
-   . (HasCallStack, KnownNat n, IsHalideType a)
+   . (HasCallStack, KnownNat n)
   => Int
-  -> Func 'ParamTy n a
+  -> Func 'ParamTy n (Expr a)
   -> IO Dimension
-dim k func
+dim k func@(Param _)
   | 0 <= k && k < fromIntegral (natVal (Proxy @n)) =
       let n = fromIntegral k
        in withBufferParam func $ \f ->
@@ -957,7 +1070,7 @@ dim k func
 --
 -- For more info, see
 -- [@Halide::Func::print_loop_nest@](https://halide-lang.org/docs/class_halide_1_1_func.html#a03f839d9e13cae4b87a540aa618589ae)
-prettyLoopNest :: (KnownNat n, IsHalideType r) => Func t n r -> IO Text
+prettyLoopNest :: KnownNat n => Func t n r -> IO Text
 prettyLoopNest func = withFunc func $ \f ->
   peekAndDeleteCxxString
     =<< [C.throwBlock| std::string* {
@@ -971,7 +1084,7 @@ prettyLoopNest func = withFunc func $ \f ->
 realize
   :: forall n a t b
    . (KnownNat n, IsHalideType a)
-  => Func t n a
+  => Func t n (Expr a)
   -- ^ Function to evaluate
   -> [Int]
   -- ^ Domain over which to evaluate
@@ -989,7 +1102,7 @@ realizeOnTarget
    . (KnownNat n, IsHalideType a)
   => Target
   -- ^ Target on which to run the pipeline
-  -> Func t n a
+  -> Func t n (Expr a)
   -- ^ Function to evaluate
   -> [Int]
   -- ^ Domain over which to evaluate
@@ -1046,7 +1159,7 @@ realizeOnTarget target func shape action =
 --   i <- mkVar "i"
 --   define "dest" i $ src ! i
 -- :}
-buffer :: forall n a. (KnownNat n, IsHalideType a) => Text -> Func 'ParamTy n a -> Func 'ParamTy n a
+buffer :: forall n a. (KnownNat n, IsHalideType a) => Text -> Func 'ParamTy n (Expr a) -> Func 'ParamTy n (Expr a)
 buffer name p@(Param r) = unsafePerformIO $ do
   _ <- getBufferParameter @n @a (Just name) r
   pure p
@@ -1070,29 +1183,29 @@ scalar name (ScalarParam r) = unsafePerformIO $ do
   pure (ScalarParam r)
 scalar _ _ = error "cannot set the name of an expression that is not a parameter"
 
-wrapCxxStage :: (KnownNat n, IsHalideType a) => Ptr CxxStage -> IO (Stage n a)
+wrapCxxStage :: Ptr CxxStage -> IO (Stage n a)
 wrapCxxStage = fmap Stage . newForeignPtr deleter
   where
     deleter = [C.funPtr| void deleteStage(Halide::Stage* p) { delete p; } |]
 
-withCxxStage :: (KnownNat n, IsHalideType a) => Stage n a -> (Ptr CxxStage -> IO b) -> IO b
+withCxxStage :: Stage n a -> (Ptr CxxStage -> IO b) -> IO b
 withCxxStage (Stage fp) = withForeignPtr fp
 
 -- | Get the pure stage of a 'Func' for the purposes of scheduling it.
-getStage :: (KnownNat n, IsHalideType a) => Func t n a -> IO (Stage n a)
+getStage :: KnownNat n => Func t n a -> IO (Stage n a)
 getStage func =
   withFunc func $ \func' ->
     [CU.exp| Halide::Stage* { new Halide::Stage{static_cast<Halide::Stage>(*$(Halide::Func* func'))} } |]
       >>= wrapCxxStage
 
 -- | Return 'True' when the function has update definitions, 'False' otherwise.
-hasUpdateDefinitions :: (KnownNat n, IsHalideType a) => Func t n a -> IO Bool
+hasUpdateDefinitions :: KnownNat n => Func t n a -> IO Bool
 hasUpdateDefinitions func =
   withFunc func $ \func' ->
     toBool <$> [CU.exp| bool { $(const Halide::Func* func')->has_update_definition() } |]
 
 -- | Get a handle to an update step for the purposes of scheduling it.
-getUpdateStage :: (KnownNat n, IsHalideType a) => Int -> Func 'FuncTy n a -> IO (Stage n a)
+getUpdateStage :: KnownNat n => Int -> Func 'FuncTy n a -> IO (Stage n a)
 getUpdateStage k func =
   withFunc func $ \func' ->
     let k' = fromIntegral k
@@ -1101,7 +1214,7 @@ getUpdateStage k func =
 
 -- | Identify the loop nest corresponding to some dimension of some function.
 getLoopLevelAtStage
-  :: (KnownNat n, IsHalideType a)
+  :: KnownNat n
   => Func t n a
   -> Expr Int32
   -> Int
@@ -1125,7 +1238,7 @@ getLoopLevelAtStage func var stageIndex =
     k = fromIntegral stageIndex
 
 -- | Same as 'getLoopLevelAtStage' except that the stage is @-1@.
-getLoopLevel :: (KnownNat n, IsHalideType a) => Func t n a -> Expr Int32 -> IO (LoopLevel 'LockedTy)
+getLoopLevel :: KnownNat n => Func t n a -> Expr Int32 -> IO (LoopLevel 'LockedTy)
 getLoopLevel f i = getLoopLevelAtStage f i (-1)
 
 -- | Allocate storage for this function within a particular loop level.
@@ -1134,7 +1247,7 @@ getLoopLevel f i = getLoopLevelAtStage f i (-1)
 -- from the loop level at which computation occurs to trade off between locality and redundant work.
 --
 -- For more info, see [Halide::Func::store_at](https://halide-lang.org/docs/class_halide_1_1_func.html#a417c08f8aa3a5cdf9146fba948b65193).
-storeAt :: (KnownNat n, IsHalideType a) => Func 'FuncTy n a -> LoopLevel t -> IO (Func 'FuncTy n a)
+storeAt :: KnownNat n => Func 'FuncTy n a -> LoopLevel t -> IO (Func 'FuncTy n a)
 storeAt func level = do
   withFunc func $ \f ->
     withCxxLoopLevel level $ \l ->
@@ -1144,7 +1257,7 @@ storeAt func level = do
 -- | Schedule a function to be computed within the iteration over a given loop level.
 --
 -- For more info, see [Halide::Func::compute_at](https://halide-lang.org/docs/class_halide_1_1_func.html#a800cbcc3ca5e3d3fa1707f6e1990ec83).
-computeAt :: (KnownNat n, IsHalideType a) => Func 'FuncTy n a -> LoopLevel t -> IO (Func 'FuncTy n a)
+computeAt :: KnownNat n => Func 'FuncTy n a -> LoopLevel t -> IO (Func 'FuncTy n a)
 computeAt func level = do
   withFunc func $ \f ->
     withCxxLoopLevel level $ \l ->
@@ -1167,7 +1280,7 @@ asBufferParam
    . IsHalideBuffer t n a
   => t
   -- ^ Object to treat as a buffer
-  -> (Func 'ParamTy n a -> IO b)
+  -> (Func 'ParamTy n (Expr a) -> IO b)
   -- ^ What to do with the __temporary__ buffer
   -> IO b
 asBufferParam arr action =

@@ -149,13 +149,12 @@
                 paths = [
                   halide-haskell
                   halide-JuicyPixels
-                  halide-arrayfire
                   halide-readme
                   halide-tutorial01
                   halide-tutorial03
                   halide-tutorial04
                   halide-tutorial05
-                ];
+                ] ++ lib.optional pkgs.stdenv.isLinux halide-arrayfire;
               };
             };
           };
@@ -188,13 +187,12 @@
                   packages = ps: with ps; [
                     halide-haskell
                     halide-JuicyPixels
-                    halide-arrayfire
                     halide-readme
                     halide-tutorial01
                     halide-tutorial03
                     halide-tutorial04
                     halide-tutorial05
-                  ];
+                  ] ++ lib.optional pkgs.stdenv.isLinux halide-arrayfire;
                   withHoogle = true;
                   nativeBuildInputs = with pkgs; with ps; [
                     pkgs.arrayfire

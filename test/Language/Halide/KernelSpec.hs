@@ -13,13 +13,13 @@ spec = do
     it "compiles a kernel that adds two vectors together" $ do
       vectorPlus <- compile $ \a b -> do
         i <- mkVar "i"
-        define "out" i $ a ! i + b ! i
+        define "out" i $ (a ! i :: Expr Float) + b ! i
       let n = 10
           a = replicate 10 (1 :: Float)
           b = replicate 10 (2 :: Float)
-      withHalideBuffer a $ \a' ->
-        withHalideBuffer b $ \b' ->
-          allocaCpuBuffer [n] $ \out' -> do
+      withHalideBuffer @1 @Float a $ \a' ->
+        withHalideBuffer @_ @Float b $ \b' ->
+          allocaCpuBuffer @_ @Float [n] $ \out' -> do
             vectorPlus a' b' out'
             peekToList out' `shouldReturn` zipWith (+) a b
 
@@ -43,7 +43,7 @@ spec = do
       scaledDiagonal <- compile $ \(scale :: Expr Double) v -> do
         i <- mkVar "i"
         j <- mkVar "j"
-        out <- define "out" (i, j) 0
+        out <- define "out" (i, j) (mkExpr 0)
         update out (i, i) (v ! i / scale)
         pure out
       let a :: [Double]

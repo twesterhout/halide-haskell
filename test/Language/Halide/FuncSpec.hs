@@ -33,7 +33,7 @@ spec = do
       let x = mkExpr (5 :: Double)
       f <- define "f" () $ x * x - 2 * x + 5 + 3 / x
       g <- define "g" () $ f ! ()
-      realize g [] peekToList `shouldReturn` [20.6]
+      realize g [] peekScalar `shouldReturn` 20.6
 
   describe "vectorize" $ do
     it "vectorizes loops" $ do
@@ -240,7 +240,7 @@ spec = do
         n <- (.extent) <$> dim 0 src
         r <- mkRVar "r" 0 n
         i <- mkVar "i"
-        f <- define "sum" i 0
+        f <- define "sum" i (mkExpr 0)
         update f (0 :: Expr Int32) $ f ! 0 + src ! r
         realize f [1] peekToList `shouldReturn` ([15] :: [Int32])
 
@@ -250,3 +250,23 @@ spec = do
       f <- define "f" i $ bool (i `gt` 5) i 0
       update f i $ bool ((f ! i) `eq` 0) (2 * i) undef
       realize f [10] peekToList `shouldReturn` ([0, 2, 4, 6, 8, 10] <> [6 .. 9] :: [Int32])
+
+  describe "Tuples" $ do
+    it "defines tuple Funcs" $ do
+      i <- mkVar "i"
+      f <- define "f" i (i, i)
+      _ <- computeRoot f
+      g <- define "g" i $ fst (f ! i)
+      _ <- computeRoot g
+      realize g [5] peekToList `shouldReturn` [0 .. 4]
+      pure ()
+    it "compiles tuple Funcs" $ do
+      kernel <- compile $ do
+        i <- mkVar "i"
+        define "f" i (i, i + 1)
+
+      allocaCpuBuffer [5] $ \a ->
+        allocaCpuBuffer [5] $ \b -> do
+          kernel a b
+          peekToList a `shouldReturn` [0 .. 4]
+          peekToList b `shouldReturn` [1 .. 5]

@@ -6,6 +6,7 @@
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilyDependencies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-unused-local-binds -Wno-unused-matches #-}
 
@@ -23,7 +24,6 @@ module Language.Halide.Type
   , CxxVarOrRVar
   , CxxFunc
   , CxxParameter
-  , CxxArgument
   , CxxImageParam
   , CxxVector
   , CxxUserContext
@@ -34,6 +34,7 @@ module Language.Halide.Type
   , Arguments (..)
   , Length
   , Append
+  , Concat
   , argumentsAppend
   , FunctionArguments
   , FunctionReturn
@@ -43,9 +44,6 @@ module Language.Halide.Type
   , defineIsHalideTypeInstances
   , instanceHasCxxVector
   , HasCxxVector (..)
-  , IsTuple (..)
-  , FromTuple
-  , ToTuple
   , instanceCxxConstructible
   , CxxConstructible (..)
   -- defineCastableInstances,
@@ -60,7 +58,7 @@ import Data.Coerce
 import Data.Constraint
 import Data.Int
 import Data.Kind (Type)
-import qualified Data.Text as T
+import Data.Text qualified as T
 import Data.Word
 import Foreign.C.Types
 import Foreign.ForeignPtr
@@ -68,9 +66,9 @@ import Foreign.Ptr
 import Foreign.Storable
 import GHC.ForeignPtr (mallocForeignPtrAlignedBytes)
 import GHC.TypeLits
-import qualified Language.C.Inline as C
-import qualified Language.C.Inline.Unsafe as CU
-import qualified Language.Haskell.TH as TH
+import Language.C.Inline qualified as C
+import Language.C.Inline.Unsafe qualified as CU
+import Language.Haskell.TH qualified as TH
 import Language.Haskell.TH.Syntax (Lift)
 
 -- | Haskell counterpart of @Halide::Expr@.
@@ -87,9 +85,6 @@ data CxxVarOrRVar
 
 -- | Haskell counterpart of @Halide::Internal::Parameter@.
 data CxxParameter
-
--- | Haskell counterpart of @Halide::Argument@.
-data CxxArgument
 
 -- | Haskell counterpart of @Halide::ImageParam@.
 data CxxImageParam
@@ -312,6 +307,10 @@ type family Append (xs :: [k]) (y :: k) :: [k] where
   Append '[] y = '[y]
   Append (x ': xs) y = x ': Append xs y
 
+type family Concat (xs :: [k]) (ys :: [k]) :: [k] where
+  Concat '[] ys = ys
+  Concat (x ': xs) ys = x ': Concat xs ys
+
 -- | Append a value to 'Arguments'
 argumentsAppend :: Arguments xs -> t -> Arguments (Append xs t)
 argumentsAppend = go
@@ -331,7 +330,7 @@ type family FunctionReturn (f :: Type) :: Type where
   FunctionReturn a = a
 
 -- | Apply constraint to all types in a list.
-type family All (c :: Type -> Constraint) (ts :: [Type]) :: Constraint where
+type family All (c :: Type -> Constraint) (ts :: [Type]) = (p :: Constraint) | p -> ts where
   All c '[] = ()
   All c (t ': ts) = (c t, All c ts)
 
@@ -340,7 +339,7 @@ type family All (c :: Type -> Constraint) (ts :: [Type]) :: Constraint where
 --
 -- For instance, if we have a function @f :: Int -> Float -> Double@, then it
 -- will be converted to @f' :: Arguments '[Int, Float] -> Double@.
-class UnCurry (f :: Type) (args :: [Type]) (r :: Type) | args r -> f where
+class UnCurry (f :: Type) (args :: [Type]) (r :: Type) | args r -> f, args f -> r where
   uncurryG :: f -> Arguments args -> r
 
 instance (FunctionArguments f ~ '[], FunctionReturn f ~ r, f ~ r) => UnCurry f '[] r where
@@ -365,53 +364,3 @@ instance Curry '[] r r where
 
 instance Curry args r f => Curry (a ': args) r (a -> f) where
   curryG f a = curryG (\args -> f (a ::: args))
-
--- | Type family that maps @'Arguments' ts@ to the corresponding tuple type.
-type family ToTuple t where
-  ToTuple (Arguments '[]) = ()
-  ToTuple (Arguments '[a1]) = a1
-  ToTuple (Arguments '[a1, a2]) = (a1, a2)
-  ToTuple (Arguments '[a1, a2, a3]) = (a1, a2, a3)
-  ToTuple (Arguments '[a1, a2, a3, a4]) = (a1, a2, a3, a4)
-  ToTuple (Arguments '[a1, a2, a3, a4, a5]) = (a1, a2, a3, a4, a5)
-
--- | Type family that maps tuples to the corresponding @'Arguments' ts@ type. This is essentially the inverse
--- of 'ToTuple'.
-type family FromTuple t
-
-type instance FromTuple () = Arguments '[]
-type instance FromTuple (a1, a2) = Arguments '[a1, a2]
-type instance FromTuple (a1, a2, a3) = Arguments '[a1, a2, a3]
-type instance FromTuple (a1, a2, a3, a4) = Arguments '[a1, a2, a3, a4]
-type instance FromTuple (a1, a2, a3, a4, a5) = Arguments '[a1, a2, a3, a4, a5]
-
--- | Specifies that there is an isomorphism between a type @a@ and a tuple @t@.
---
--- We use this class to convert between 'Arguments' and normal tuples.
-class (ToTuple a ~ t, FromTuple t ~ a) => IsTuple a t | a -> t, t -> a where
-  toTuple :: a -> t
-  fromTuple :: t -> a
-
-instance IsTuple (Arguments '[]) () where
-  toTuple Nil = ()
-  fromTuple () = Nil
-
-instance IsTuple (Arguments '[a1, a2]) (a1, a2) where
-  toTuple (a1 ::: a2 ::: Nil) = (a1, a2)
-  fromTuple (a1, a2) = a1 ::: a2 ::: Nil
-
-instance IsTuple (Arguments '[a1, a2, a3]) (a1, a2, a3) where
-  toTuple (a1 ::: a2 ::: a3 ::: Nil) = (a1, a2, a3)
-  fromTuple (a1, a2, a3) = a1 ::: a2 ::: a3 ::: Nil
-
-instance IsTuple (Arguments '[a1, a2, a3, a4]) (a1, a2, a3, a4) where
-  toTuple (a1 ::: a2 ::: a3 ::: a4 ::: Nil) = (a1, a2, a3, a4)
-  fromTuple (a1, a2, a3, a4) = a1 ::: a2 ::: a3 ::: a4 ::: Nil
-
-instance IsTuple (Arguments '[a1, a2, a3, a4, a5]) (a1, a2, a3, a4, a5) where
-  toTuple (a1 ::: a2 ::: a3 ::: a4 ::: a5 ::: Nil) = (a1, a2, a3, a4, a5)
-  fromTuple (a1, a2, a3, a4, a5) = a1 ::: a2 ::: a3 ::: a4 ::: a5 ::: Nil
-
--- instance IsTuple (Arguments '[Expr a]) (Expr a) where
---   toTuple (x ::: Nil) = x
---   fromTuple () = Nil

@@ -1,5 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Main (main) where
 
@@ -12,7 +13,7 @@ import System.IO.Unsafe (unsafePerformIO)
 import Prelude hiding (min)
 
 brighten :: Ptr (HalideBuffer 3 Word8) -> Ptr (HalideBuffer 3 Word8) -> IO ()
-brighten = unsafePerformIO . compile $ \input -> do
+brighten = unsafePerformIO . compile $ \(buffer "input" -> input) -> do
   [x, y, c] <- mapM mkVar ["x", "y", "c"]
   let value = cast @Word8 . min 255 . (1.5 *) . cast @Float $ input ! (c, x, y)
   define "brighter" (c, x, y) value
@@ -29,5 +30,8 @@ main = do
       withHalideBuffer @3 @Word8 (HalideImage rgb) $ \input ->
         withHalideBuffer @3 @Word8 (HalideMutableImage output) $ \output' ->
           brighten input output'
+
+      allocaCpuBuffer [100, 100] $ \output ->
+        pure ()
 
       savePngImage "test.png" . ImageRGB8 =<< unsafeFreezeImage output

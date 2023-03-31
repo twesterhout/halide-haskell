@@ -3,6 +3,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 -- |
 -- Module      : Language.Halide.Buffer
@@ -26,6 +27,7 @@ module Language.Halide.Buffer
   , allocaBuffer
     -- | Buffers can also be converted to lists to easily print them for debugging.
   , IsListPeek (..)
+  , peekScalar
     -- | For production usage however, you don't want to work with lists. Instead, you probably want Halide
     -- to work with your existing array data types. For this, we define 'IsHalideBuffer' typeclass that
     -- teaches Halide how to convert your data into a 'HalideBuffer'. Depending on how you implement the
@@ -533,33 +535,52 @@ getBufferExtent (castPtr -> buf) (fromIntegral -> d)
       fromIntegral <$> [CU.exp| int { $(const halide_buffer_t* buf)->dim[$(int d)].extent } |]
   | otherwise = error "index out of bounds"
 
+peekScalar :: forall a. (HasCallStack, IsHalideType a) => Ptr (HalideBuffer 0 a) -> IO a
+peekScalar p = withCopiedToHost p $ do
+  raw <- peek (castPtr @_ @RawHalideBuffer p)
+  checkNumberOfDimensions @0 raw
+  when (raw.halideBufferHost == nullPtr) . error $ "host is NULL"
+  peek $ castPtr @_ @a raw.halideBufferHost
+
 -- | Specifies that @a@ can be converted to a list. This is very similar to 'GHC.Exts.IsList' except that
 -- we read the list from a @'Ptr'@ rather than converting directly.
-class IsListPeek a where
-  type ListPeekElem a :: Type
-  peekToList :: HasCallStack => Ptr a -> IO [ListPeekElem a]
+-- class IsListPeek a where
+--   type ListPeekElem a :: Type
+--   peekToList :: HasCallStack => Ptr a -> IO [ListPeekElem a]
+type family NestedList (n :: Nat) (a :: Type) where
+  NestedList 0 a = a
+  NestedList 1 a = [a]
+  NestedList 2 a = [[a]]
+  NestedList 3 a = [[[a]]]
+  NestedList 4 a = [[[[a]]]]
+  NestedList 5 a = [[[[[a]]]]]
 
-withCopiedToHost :: Ptr (HalideBuffer n a) -> IO b -> IO b
-withCopiedToHost (castPtr @_ @RawHalideBuffer -> buf) action = do
-  raw <- peek buf
-  let allocate = when (raw.halideBufferDevice /= 0) $ allocateHostMemory buf
-      deallocate = when (raw.halideBufferDevice /= 0) $ freeHostMemory buf
-  bracket_ allocate deallocate $ do
-    when (raw.halideBufferDevice /= 0) $ do
-      setDeviceDirty True buf
-      bufferCopyToHost buf
-    action
+type family NestedListLevel (a :: Type) :: Nat where
+  NestedListLevel [a] = 1 + NestedListLevel a
+  NestedListLevel a = 0
 
-instance IsHalideType a => IsListPeek (HalideBuffer 0 a) where
-  type ListPeekElem (HalideBuffer 0 a) = a
-  peekToList p = withCopiedToHost p $ do
-    raw <- peek (castPtr @_ @RawHalideBuffer p)
-    checkNumberOfDimensions @0 raw
-    when (raw.halideBufferHost == nullPtr) . error $ "host is NULL"
-    fmap pure . peek $ castPtr @_ @a raw.halideBufferHost
+type family NestedListType (a :: Type) :: Type where
+  NestedListType [a] = NestedListType a
+  NestedListType a = a
 
-instance IsHalideType a => IsListPeek (HalideBuffer 1 a) where
-  type ListPeekElem (HalideBuffer 1 a) = a
+class
+  ( KnownNat n
+  , IsHalideType a
+  , NestedList n a ~ b
+  , NestedListLevel b ~ n
+  , NestedListType b ~ a
+  ) =>
+  IsListPeek n a b
+    | n a -> b
+    , n b -> a
+    , a b -> n
+  where
+  peekToList :: HasCallStack => Ptr (HalideBuffer n a) -> IO b
+
+instance
+  (IsHalideType a, NestedListLevel [a] ~ 1, NestedListType [a] ~ a)
+  => IsListPeek 1 a [a]
+  where
   peekToList p = withCopiedToHost p $ do
     raw <- peek (castPtr @_ @RawHalideBuffer p)
     (HalideDimension min0 extent0 stride0 _) <- peekElemOff (halideBufferDim raw) 0
@@ -568,8 +589,10 @@ instance IsHalideType a => IsListPeek (HalideBuffer 1 a) where
     forM [0 .. extent0 - 1] $ \i0 ->
       peekElemOff ptr0 (fromIntegral (min0 + stride0 * i0))
 
-instance IsHalideType a => IsListPeek (HalideBuffer 2 a) where
-  type ListPeekElem (HalideBuffer 2 a) = [a]
+instance
+  (IsHalideType a, NestedListLevel [[a]] ~ 2, NestedListType [[a]] ~ a)
+  => IsListPeek 2 a [[a]]
+  where
   peekToList p = withCopiedToHost p $ do
     raw <- peek (castPtr @_ @RawHalideBuffer p)
     (HalideDimension min0 extent0 stride0 _) <- peekElemOff (halideBufferDim raw) 0
@@ -581,8 +604,10 @@ instance IsHalideType a => IsListPeek (HalideBuffer 2 a) where
       forM [0 .. extent1 - 1] $ \i1 ->
         peekElemOff ptr1 (fromIntegral (min1 + stride1 * i1))
 
-instance IsHalideType a => IsListPeek (HalideBuffer 3 a) where
-  type ListPeekElem (HalideBuffer 3 a) = [[a]]
+instance
+  (IsHalideType a, NestedListLevel [[[a]]] ~ 3, NestedListType [[[a]]] ~ a)
+  => IsListPeek 3 a [[[a]]]
+  where
   peekToList p = withCopiedToHost p $ do
     raw <- peek (castPtr @_ @RawHalideBuffer p)
     (HalideDimension min0 extent0 stride0 _) <- peekElemOff (halideBufferDim raw) 0
@@ -597,8 +622,10 @@ instance IsHalideType a => IsListPeek (HalideBuffer 3 a) where
         forM [0 .. extent2 - 1] $ \i2 ->
           peekElemOff ptr2 (fromIntegral (min2 + stride2 * i2))
 
-instance IsHalideType a => IsListPeek (HalideBuffer 4 a) where
-  type ListPeekElem (HalideBuffer 4 a) = [[[a]]]
+instance
+  (IsHalideType a, NestedListLevel [[[[a]]]] ~ 4, NestedListType [[[[a]]]] ~ a)
+  => IsListPeek 4 a [[[[a]]]]
+  where
   peekToList p = withCopiedToHost p $ do
     raw <- peek (castPtr @_ @RawHalideBuffer p)
     (HalideDimension min0 extent0 stride0 _) <- peekElemOff (halideBufferDim raw) 0
@@ -615,3 +642,80 @@ instance IsHalideType a => IsListPeek (HalideBuffer 4 a) where
           let ptr3 = ptr2 `advancePtr` fromIntegral (min2 + stride2 * i2)
           forM [0 .. extent3 - 1] $ \i3 ->
             peekElemOff ptr3 (fromIntegral (min3 + stride3 * i3))
+
+withCopiedToHost :: Ptr (HalideBuffer n a) -> IO b -> IO b
+withCopiedToHost (castPtr @_ @RawHalideBuffer -> buf) action = do
+  raw <- peek buf
+  let allocate = when (raw.halideBufferDevice /= 0) $ allocateHostMemory buf
+      deallocate = when (raw.halideBufferDevice /= 0) $ freeHostMemory buf
+  bracket_ allocate deallocate $ do
+    when (raw.halideBufferDevice /= 0) $ do
+      setDeviceDirty True buf
+      bufferCopyToHost buf
+    action
+
+-- instance IsHalideType a => IsListPeek (HalideBuffer 0 a) where
+--   type ListPeekElem (HalideBuffer 0 a) = a
+--   peekToList p = withCopiedToHost p $ do
+--     raw <- peek (castPtr @_ @RawHalideBuffer p)
+--     checkNumberOfDimensions @0 raw
+--     when (raw.halideBufferHost == nullPtr) . error $ "host is NULL"
+--     fmap pure . peek $ castPtr @_ @a raw.halideBufferHost
+
+-- instance IsHalideType a => IsListPeek (HalideBuffer 1 a) where
+--   type ListPeekElem (HalideBuffer 1 a) = a
+--   peekToList p = withCopiedToHost p $ do
+--     raw <- peek (castPtr @_ @RawHalideBuffer p)
+--     (HalideDimension min0 extent0 stride0 _) <- peekElemOff (halideBufferDim raw) 0
+--     let ptr0 = castPtr @_ @a (halideBufferHost raw)
+--     when (ptr0 == nullPtr) . error $ "host is NULL"
+--     forM [0 .. extent0 - 1] $ \i0 ->
+--       peekElemOff ptr0 (fromIntegral (min0 + stride0 * i0))
+
+-- instance IsHalideType a => IsListPeek (HalideBuffer 2 a) where
+--   type ListPeekElem (HalideBuffer 2 a) = [a]
+--   peekToList p = withCopiedToHost p $ do
+--     raw <- peek (castPtr @_ @RawHalideBuffer p)
+--     (HalideDimension min0 extent0 stride0 _) <- peekElemOff (halideBufferDim raw) 0
+--     (HalideDimension min1 extent1 stride1 _) <- peekElemOff (halideBufferDim raw) 1
+--     let ptr0 = castPtr @_ @a (halideBufferHost raw)
+--     when (ptr0 == nullPtr) . error $ "host is NULL"
+--     forM [0 .. extent0 - 1] $ \i0 -> do
+--       let ptr1 = ptr0 `advancePtr` fromIntegral (min0 + stride0 * i0)
+--       forM [0 .. extent1 - 1] $ \i1 ->
+--         peekElemOff ptr1 (fromIntegral (min1 + stride1 * i1))
+
+-- instance IsHalideType a => IsListPeek (HalideBuffer 3 a) where
+--   type ListPeekElem (HalideBuffer 3 a) = [[a]]
+--   peekToList p = withCopiedToHost p $ do
+--     raw <- peek (castPtr @_ @RawHalideBuffer p)
+--     (HalideDimension min0 extent0 stride0 _) <- peekElemOff (halideBufferDim raw) 0
+--     (HalideDimension min1 extent1 stride1 _) <- peekElemOff (halideBufferDim raw) 1
+--     (HalideDimension min2 extent2 stride2 _) <- peekElemOff (halideBufferDim raw) 2
+--     let ptr0 = castPtr @_ @a (halideBufferHost raw)
+--     when (ptr0 == nullPtr) . error $ "host is NULL"
+--     forM [0 .. extent0 - 1] $ \i0 -> do
+--       let ptr1 = ptr0 `advancePtr` fromIntegral (min0 + stride0 * i0)
+--       forM [0 .. extent1 - 1] $ \i1 -> do
+--         let ptr2 = ptr1 `advancePtr` fromIntegral (min1 + stride1 * i1)
+--         forM [0 .. extent2 - 1] $ \i2 ->
+--           peekElemOff ptr2 (fromIntegral (min2 + stride2 * i2))
+
+-- instance IsHalideType a => IsListPeek (HalideBuffer 4 a) where
+--   type ListPeekElem (HalideBuffer 4 a) = [[[a]]]
+--   peekToList p = withCopiedToHost p $ do
+--     raw <- peek (castPtr @_ @RawHalideBuffer p)
+--     (HalideDimension min0 extent0 stride0 _) <- peekElemOff (halideBufferDim raw) 0
+--     (HalideDimension min1 extent1 stride1 _) <- peekElemOff (halideBufferDim raw) 1
+--     (HalideDimension min2 extent2 stride2 _) <- peekElemOff (halideBufferDim raw) 2
+--     (HalideDimension min3 extent3 stride3 _) <- peekElemOff (halideBufferDim raw) 3
+--     let ptr0 = castPtr @_ @a (halideBufferHost raw)
+--     when (ptr0 == nullPtr) . error $ "host is NULL"
+--     forM [0 .. extent0 - 1] $ \i0 -> do
+--       let ptr1 = ptr0 `advancePtr` fromIntegral (min0 + stride0 * i0)
+--       forM [0 .. extent1 - 1] $ \i1 -> do
+--         let ptr2 = ptr1 `advancePtr` fromIntegral (min1 + stride1 * i1)
+--         forM [0 .. extent2 - 1] $ \i2 -> do
+--           let ptr3 = ptr2 `advancePtr` fromIntegral (min2 + stride2 * i2)
+--           forM [0 .. extent3 - 1] $ \i3 ->
+--             peekElemOff ptr3 (fromIntegral (min3 + stride3 * i3))

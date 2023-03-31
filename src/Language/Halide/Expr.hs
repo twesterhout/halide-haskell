@@ -7,6 +7,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilyDependencies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- |
@@ -66,6 +67,9 @@ module Language.Halide.Expr
   , unaryOp
   , checkType
   , testWriteToStderr
+  , IsTuple (..)
+  , FromTuple
+  , ToTuple
   )
 where
 
@@ -73,6 +77,7 @@ import Control.Exception (bracket)
 import Control.Monad (unless)
 import Data.IORef
 import Data.Int (Int32)
+import Data.Kind
 import Data.Proxy
 import Data.Ratio (denominator, numerator)
 import Data.Text (Text, pack, unpack)
@@ -118,7 +123,109 @@ instance IsHalideType Bool where
     cxxConstruct $ \ptr ->
       [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{cast(Halide::UInt(1), Halide::Expr{$(int x)})} } |]
 
-type instance FromTuple (Expr a) = Arguments '[Expr a]
+-- | Type family that maps @'Arguments' ts@ to the corresponding tuple type.
+type family ToTuple t = s | s -> t where
+  ToTuple '[] = ()
+  ToTuple '[Expr a1] = Expr a1
+  ToTuple '[a1, a2] = (a1, a2)
+  ToTuple '[a1, a2, a3] = (a1, a2, a3)
+  ToTuple '[a1, a2, a3, a4] = (a1, a2, a3, a4)
+  ToTuple '[a1, a2, a3, a4, a5] = (a1, a2, a3, a4, a5)
+  ToTuple '[a1, a2, a3, a4, a5, a6] = (a1, a2, a3, a4, a5, a6)
+  ToTuple '[a1, a2, a3, a4, a5, a6, a7] = (a1, a2, a3, a4, a5, a6, a7)
+  ToTuple '[a1, a2, a3, a4, a5, a6, a7, a8] = (a1, a2, a3, a4, a5, a6, a7, a8)
+  ToTuple '[a1, a2, a3, a4, a5, a6, a7, a8, a9] = (a1, a2, a3, a4, a5, a6, a7, a8, a9)
+  ToTuple '[a1, a2, a3, a4, a5, a6, a7, a8, a9, a10] = (a1, a2, a3, a4, a5, a6, a7, a8, a9, a10)
+
+-- | Type family that maps tuples to the corresponding @'Arguments' ts@ type. This is essentially the inverse
+-- of 'ToTuple'.
+type family FromTuple t = s | s -> t where
+  FromTuple () = '[]
+  FromTuple (Expr a1) = '[Expr a1]
+  FromTuple (a1, a2) = '[a1, a2]
+  FromTuple (a1, a2, a3) = '[a1, a2, a3]
+  FromTuple (a1, a2, a3, a4) = '[a1, a2, a3, a4]
+  FromTuple (a1, a2, a3, a4, a5) = '[a1, a2, a3, a4, a5]
+  FromTuple (a1, a2, a3, a4, a5, a6) = '[a1, a2, a3, a4, a5, a6]
+  FromTuple (a1, a2, a3, a4, a5, a6, a7) = '[a1, a2, a3, a4, a5, a6, a7]
+  FromTuple (a1, a2, a3, a4, a5, a6, a7, a8) = '[a1, a2, a3, a4, a5, a6, a7, a8]
+  FromTuple (a1, a2, a3, a4, a5, a6, a7, a8, a9) = '[a1, a2, a3, a4, a5, a6, a7, a8, a9]
+  FromTuple (a1, a2, a3, a4, a5, a6, a7, a8, a9, a10) = '[a1, a2, a3, a4, a5, a6, a7, a8, a9, a10]
+
+-- | Specifies that there is an isomorphism between a type @a@ and a tuple @t@.
+--
+-- We use this class to convert between 'Arguments' and normal tuples.
+class (ToTuple a ~ t, FromTuple t ~ a) => IsTuple a t | a -> t, t -> a where
+  toTuple :: Arguments a -> t
+  fromTuple :: t -> Arguments a
+
+instance IsTuple '[] () where
+  toTuple Nil = ()
+  fromTuple () = Nil
+
+instance IsTuple '[Expr a1] (Expr a1) where
+  toTuple (a1 ::: Nil) = a1
+  {-# INLINE toTuple #-}
+  fromTuple a1 = a1 ::: Nil
+  {-# INLINE fromTuple #-}
+
+instance IsTuple '[a1, a2] (a1, a2) where
+  toTuple (a1 ::: a2 ::: Nil) = (a1, a2)
+  {-# INLINE toTuple #-}
+  fromTuple (a1, a2) = a1 ::: a2 ::: Nil
+  {-# INLINE fromTuple #-}
+
+instance IsTuple '[a1, a2, a3] (a1, a2, a3) where
+  toTuple (a1 ::: a2 ::: a3 ::: Nil) = (a1, a2, a3)
+  {-# INLINE toTuple #-}
+  fromTuple (a1, a2, a3) = a1 ::: a2 ::: a3 ::: Nil
+  {-# INLINE fromTuple #-}
+
+instance IsTuple '[a1, a2, a3, a4] (a1, a2, a3, a4) where
+  toTuple (a1 ::: a2 ::: a3 ::: a4 ::: Nil) = (a1, a2, a3, a4)
+  {-# INLINE toTuple #-}
+  fromTuple (a1, a2, a3, a4) = a1 ::: a2 ::: a3 ::: a4 ::: Nil
+  {-# INLINE fromTuple #-}
+
+instance IsTuple '[a1, a2, a3, a4, a5] (a1, a2, a3, a4, a5) where
+  toTuple (a1 ::: a2 ::: a3 ::: a4 ::: a5 ::: Nil) = (a1, a2, a3, a4, a5)
+  {-# INLINE toTuple #-}
+  fromTuple (a1, a2, a3, a4, a5) = a1 ::: a2 ::: a3 ::: a4 ::: a5 ::: Nil
+  {-# INLINE fromTuple #-}
+
+instance IsTuple '[a1, a2, a3, a4, a5, a6] (a1, a2, a3, a4, a5, a6) where
+  toTuple (a1 ::: a2 ::: a3 ::: a4 ::: a5 ::: a6 ::: Nil) = (a1, a2, a3, a4, a5, a6)
+  {-# INLINE toTuple #-}
+  fromTuple (a1, a2, a3, a4, a5, a6) = a1 ::: a2 ::: a3 ::: a4 ::: a5 ::: a6 ::: Nil
+  {-# INLINE fromTuple #-}
+
+instance IsTuple '[a1, a2, a3, a4, a5, a6, a7] (a1, a2, a3, a4, a5, a6, a7) where
+  toTuple (a1 ::: a2 ::: a3 ::: a4 ::: a5 ::: a6 ::: a7 ::: Nil) = (a1, a2, a3, a4, a5, a6, a7)
+  {-# INLINE toTuple #-}
+  fromTuple (a1, a2, a3, a4, a5, a6, a7) = a1 ::: a2 ::: a3 ::: a4 ::: a5 ::: a6 ::: a7 ::: Nil
+  {-# INLINE fromTuple #-}
+
+instance IsTuple '[a1, a2, a3, a4, a5, a6, a7, a8] (a1, a2, a3, a4, a5, a6, a7, a8) where
+  toTuple (a1 ::: a2 ::: a3 ::: a4 ::: a5 ::: a6 ::: a7 ::: a8 ::: Nil) = (a1, a2, a3, a4, a5, a6, a7, a8)
+  {-# INLINE toTuple #-}
+  fromTuple (a1, a2, a3, a4, a5, a6, a7, a8) = a1 ::: a2 ::: a3 ::: a4 ::: a5 ::: a6 ::: a7 ::: a8 ::: Nil
+  {-# INLINE fromTuple #-}
+
+instance IsTuple '[a1, a2, a3, a4, a5, a6, a7, a8, a9] (a1, a2, a3, a4, a5, a6, a7, a8, a9) where
+  toTuple (a1 ::: a2 ::: a3 ::: a4 ::: a5 ::: a6 ::: a7 ::: a8 ::: a9 ::: Nil) = (a1, a2, a3, a4, a5, a6, a7, a8, a9)
+  {-# INLINE toTuple #-}
+  fromTuple (a1, a2, a3, a4, a5, a6, a7, a8, a9) = a1 ::: a2 ::: a3 ::: a4 ::: a5 ::: a6 ::: a7 ::: a8 ::: a9 ::: Nil
+  {-# INLINE fromTuple #-}
+
+instance IsTuple '[a1, a2, a3, a4, a5, a6, a7, a8, a9, a10] (a1, a2, a3, a4, a5, a6, a7, a8, a9, a10) where
+  toTuple (a1 ::: a2 ::: a3 ::: a4 ::: a5 ::: a6 ::: a7 ::: a8 ::: a9 ::: a10 ::: Nil) = (a1, a2, a3, a4, a5, a6, a7, a8, a9, a10)
+  {-# INLINE toTuple #-}
+  fromTuple (a1, a2, a3, a4, a5, a6, a7, a8, a9, a10) = a1 ::: a2 ::: a3 ::: a4 ::: a5 ::: a6 ::: a7 ::: a8 ::: a9 ::: a10 ::: Nil
+  {-# INLINE fromTuple #-}
+
+-- instance IsTuple (Arguments '[Expr a]) (Expr a) where
+--   toTuple (x ::: Nil) = x
+--   fromTuple () = Nil
 
 -- | A scalar expression in Halide.
 --
@@ -391,10 +498,6 @@ toIntImm expr = unsafePerformIO $
     if intPtr == nullPtr
       then pure Nothing
       else Just . fromIntegral <$> peek intPtr
-
-instance IsTuple (Arguments '[Expr a]) (Expr a) where
-  toTuple (x ::: Nil) = x
-  fromTuple x = x ::: Nil
 
 instance IsHalideType a => Show (Expr a) where
   show (Expr expr) =
