@@ -430,7 +430,7 @@ instance Storable Split where
 --         std::cout << "deleting ..." << std::endl;
 --         delete p; } |]
 
-getStageSchedule :: KnownNat n => Stage n a -> IO StageSchedule
+getStageSchedule :: Stage n a -> IO StageSchedule
 getStageSchedule stage =
   withCxxStage stage $ \stage' ->
     peekStageSchedule

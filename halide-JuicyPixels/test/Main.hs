@@ -31,7 +31,4 @@ main = do
         withHalideBuffer @3 @Word8 (HalideMutableImage output) $ \output' ->
           brighten input output'
 
-      allocaCpuBuffer [100, 100] $ \output ->
-        pure ()
-
       savePngImage "test.png" . ImageRGB8 =<< unsafeFreezeImage output

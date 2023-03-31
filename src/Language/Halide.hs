@@ -196,13 +196,11 @@ module Language.Halide
   , withCopiedToHost
   , withCropped
   , module Language.Halide.Schedule
-  , IsFuncBuilder
-  , ReturnsFunc
   , FunctionArguments
   , FunctionReturn
   , Curry (..)
   , UnCurry (..)
-  , Lowered
+  , LoweredSignature
 
     -- ** inline-c helpers
   , importHalide

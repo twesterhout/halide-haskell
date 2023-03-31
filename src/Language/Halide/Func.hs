@@ -80,7 +80,6 @@ import Data.Kind (Type)
 import Data.Proxy
 import Data.Text (Text)
 import Data.Text.Encoding qualified as T
-import Debug.Trace
 import Foreign.ForeignPtr
 import Foreign.Marshal (toBool, with)
 import Foreign.Ptr (Ptr, castPtr)
@@ -109,20 +108,26 @@ importHalide
 -- | A function in Halide. Conceptually, it can be thought of as a lazy
 -- @n@-dimensional buffer of type @a@.
 --
+-- Here, @a@ is most often @'Expr' t@ for a type @t@ that is an instance of 'IsHalideType'.
+-- However, one can also define @Func@s that return multiple values. In this case, @a@ will
+-- be a tuple of 'Expr's.
+--
 -- This is a wrapper around the [@Halide::Func@](https://halide-lang.org/docs/class_halide_1_1_func.html)
 -- C++ type.
 data Func (t :: FuncTy) (n :: Nat) (a :: Type) where
   Func :: {-# UNPACK #-} !(ForeignPtr CxxFunc) -> Func 'FuncTy n a
   Param :: IsHalideType a => {-# UNPACK #-} !(IORef (Maybe (ForeignPtr CxxImageParam))) -> Func 'ParamTy n (Expr a)
 
-type Function n a = Func 'FuncTy n (Expr a)
-
-type Parameter n a = Func 'ParamTy n (Expr a)
-
 -- | Function type. It can either be 'FuncTy' which means that we have defined the function ourselves,
 -- or 'ParamTy' which means that it's a parameter to our pipeline.
 data FuncTy = FuncTy | ParamTy
   deriving stock (Show, Eq, Ord)
+
+-- | Synonym for the most commonly used function type.
+type Function n a = Func 'FuncTy n (Expr a)
+
+-- | Synonym for the most commonly used parameter type.
+type Parameter n a = Func 'ParamTy n (Expr a)
 
 -- | A single definition of a t'Func'.
 newtype Stage (n :: Nat) (a :: Type) = Stage (ForeignPtr CxxStage)
@@ -215,7 +220,15 @@ class KnownNat n => Schedulable f (n :: Nat) (a :: Type) where
   unroll :: VarOrRVar -> f n a -> IO (f n a)
 
   -- | Reorder variables to have the given nesting order, from innermost out.
-  reorder :: [VarOrRVar] -> f n a -> IO (f n a)
+  --
+  -- Note that @variables@ should only contain variables that belong to the function.
+  -- If this is not the case, a runtime error will be thrown.
+  reorder
+    :: [VarOrRVar]
+    -- ^ variables
+    -> f n a
+    -- ^ function or stage
+    -> IO (f n a)
 
   -- | Split a dimension into inner and outer subdimensions with the given names, where the inner dimension
   -- iterates from @0@ to @factor-1@.
@@ -248,6 +261,7 @@ class KnownNat n => Schedulable f (n :: Nat) (a :: Type) where
   -- For more info, see [Halide::Stage::compute_with](https://halide-lang.org/docs/class_halide_1_1_stage.html#a82a2ae25a009d6a2d52cb407a25f0a5b).
   computeWith :: LoopAlignStrategy -> f n a -> LoopLevel t -> IO ()
 
+-- | GHC is not able to automatically prove the transitivity property for type-level naturals. We help GHC out 😀.
 proveTransitivityOfLessThanEqual :: (KnownNat k, KnownNat l, KnownNat m, k <= l, l <= m) => Dict (k <= m)
 proveTransitivityOfLessThanEqual = unsafeCoerce $ Dict @(1 <= 2)
 
@@ -502,67 +516,6 @@ instance Enum TailStrategy where
     | fromIntegral k == [CU.pure| int { static_cast<int>(Halide::TailStrategy::Auto) } |] = TailAuto
     | otherwise = error $ "invalid TailStrategy: " <> show k
 
--- vectorize
---   :: (KnownNat n, IsHalideType a)
---   => TailStrategy
---   -> Func t n a
---   -> Expr Int32
---   -- ^ Variable to vectorize
---   -> Expr Int32
---   -- ^ Split factor
---   -> IO ()
--- vectorize strategy func var factor =
---   withFunc func $ \f ->
---     asVarOrRVar var $ \x ->
---       asExpr factor $ \n ->
---         [C.throwBlock| void {
---           $(Halide::Func* f)->vectorize(*$(Halide::VarOrRVar* x), *$(Halide::Expr* n),
---                                         static_cast<Halide::TailStrategy>($(int tail)));
---         } |]
---   where
---     tail = fromIntegral (fromEnum strategy)
-
--- | Split a dimension by the given factor, then unroll the inner dimension.
---
--- This is how you unroll a loop of unknown size by some constant factor. After
--- this call, @var@ refers to the outer dimension of the split.
--- unroll
---   :: (KnownNat n, IsHalideType a)
---   => TailStrategy
---   -> Func t n a
---   -> Expr Int32
---   -- ^ Variable @var@ to vectorize
---   -> Expr Int32
---   -- ^ Split factor
---   -> IO ()
--- unroll strategy func var factor =
---   withFunc func $ \f ->
---     asVarOrRVar var $ \x ->
---       asExpr factor $ \n ->
---         [C.throwBlock| void {
---           $(Halide::Func* f)->unroll(*$(Halide::VarOrRVar* x), *$(Halide::Expr* n),
---                                      static_cast<Halide::TailStrategy>($(int tail)));
---         } |]
---   where
---     tail = fromIntegral (fromEnum strategy)
-
--- | Reorder variables to have the given nesting order, from innermost out.
--- reorder
---   :: forall t n a i ts
---    . ( IsTuple (Arguments ts) i
---      , All ((~) (Expr Int32)) ts
---      , Length ts ~ n
---      , KnownNat n
---      , IsHalideType a
---      )
---   => Func t n a
---   -> i
---   -> IO ()
--- reorder func args =
---   asVectorOf @((~) (Expr Int32)) asVarOrRVar (fromTuple args) $ \v -> do
---     withFunc func $ \f ->
---       [C.throwBlock| void { $(Halide::Func* f)->reorder(*$(std::vector<Halide::VarOrRVar>* v)); } |]
-
 -- | Statically declare the range over which the function will be evaluated in the general case.
 --
 -- This provides a basis for the auto scheduler to make trade-offs and scheduling decisions.
@@ -687,92 +640,6 @@ copyToDevice deviceApi func = do
 copyToHost :: KnownNat n => Func t n a -> IO (Func t n a)
 copyToHost = copyToDevice DeviceHost
 
--- | Split a dimension into inner and outer subdimensions with the given names, where the inner dimension
--- iterates from @0@ to @factor-1@.
---
--- The inner and outer subdimensions can then be dealt with using the other scheduling calls. It's okay
--- to reuse the old variable name as either the inner or outer variable. The first argument specifies
--- how the tail should be handled if the split factor does not provably divide the extent.
--- split
---   :: (KnownNat n, IsHalideType a)
---   => TailStrategy
---   -- ^ how to treat the remainder
---   -> Func t n a
---   -> Expr Int32
---   -- ^ loop variable to split
---   -> Expr Int32
---   -- ^ new outer loop variable
---   -> Expr Int32
---   -- ^ new inner loop variable
---   -> Expr Int32
---   -- ^ split factor
---   -> IO (Func t n a)
--- split tail func old outer inner factor = do
---   withFunc func $ \f ->
---     asVarOrRVar old $ \old' ->
---       asVarOrRVar outer $ \outer' ->
---         asVarOrRVar inner $ \inner' ->
---           asExpr factor $ \factor' ->
---             [C.throwBlock| void {
---               handle_halide_exceptions([=](){
---                 $(Halide::Func* f)->split(
---                   *$(const Halide::VarOrRVar* old'),
---                   *$(const Halide::VarOrRVar* outer'),
---                   *$(const Halide::VarOrRVar* inner'),
---                   *$(const Halide::Expr* factor'),
---                   static_cast<Halide::TailStrategy>($(int t)));
---               }); } |]
---   pure func
---   where
---     t = fromIntegral . fromEnum $ tail
-
--- | Join two dimensions into a single fused dimenion.
---
--- The fused dimension covers the product of the extents of the inner and outer dimensions given.
--- fuse
---   :: (KnownNat n, IsHalideType a)
---   => Func t n a
---   -> Expr Int32
---   -- ^ inner loop variable
---   -> Expr Int32
---   -- ^ outer loop variable
---   -> Expr Int32
---   -- ^ new fused loop variable
---   -> IO (Func t n a)
--- fuse func outer inner fused = do
---   withFunc func $ \f ->
---     asVarOrRVar outer $ \outer' ->
---       asVarOrRVar inner $ \inner' ->
---         asVarOrRVar fused $ \fused' ->
---           [CU.exp| void {
---                 $(Halide::Func* f)->fuse(
---                   *$(const Halide::VarOrRVar* outer'),
---                   *$(const Halide::VarOrRVar* inner'),
---                   *$(const Halide::VarOrRVar* fused')) } |]
---   pure func
-
--- withVarOrRVarMany :: [Expr Int32] -> (Int -> Ptr (CxxVector CxxVarOrRVar) -> IO a) -> IO a
--- withVarOrRVarMany xs f =
---   bracket allocate destroy $ \v -> do
---     let go !k [] = f k v
---         go !k (y : ys) = withVarOrRVarMany y $ \p -> do
---           [CU.exp| void { $(std::vector<Halide::Expr>* v)->push_back(*$(Halide::VarOrRVar* p)) } |]
---           go (k + 1) ys
---     go 0 xs
---   where
---     count = fromIntegral (length xs)
-
---   withFunc func $ \f ->
---     withVarOrRVarMany vars $ \count v -> do
---       unless natVal (Proxy @n)
---       handleHalideExceptionsM
---         [C.tryBlock| void {
---           $(Halide::Func* f)->reorder(*$(std::vector<Halide::VarOrRVar>* v));
---         } |]
---
--- class Curry (args :: [Type]) (r :: Type) (f :: Type) | args r -> f where
---   curryG :: (Arguments args -> r) -> f
-
 mkBufferParameter
   :: forall n a. (KnownNat n, IsHalideType a) => Maybe Text -> IO (ForeignPtr CxxImageParam)
 mkBufferParameter maybeName = do
@@ -815,15 +682,6 @@ withBufferParam
 withBufferParam (Param r) action =
   getBufferParameter @n @a Nothing r >>= flip withForeignPtr action
 
--- instance (KnownNat n, IsHalideType a) => Named (Func 'ParamTy n a) where
---   setName :: Func 'ParamTy n a -> Text -> IO ()
---   setName (Param r) name = do
---     readIORef r >>= \case
---       Just _ -> error "the name of this Func has already been set"
---       Nothing -> do
---         fp <- mkBufferParameter @n @a (Just name)
---         writeIORef r (Just fp)
-
 -- | Get the underlying pointer to @Halide::Func@ and invoke an 'IO' action with it.
 withFunc :: KnownNat n => Func t n a -> (Ptr CxxFunc -> IO b) -> IO b
 withFunc f action = case f of
@@ -847,17 +705,6 @@ forceFunc = \case
       wrapCxxFunc
         =<< [CU.exp| Halide::Func* {
               new Halide::Func{static_cast<Halide::Func>(*$(Halide::ImageParam* p))} } |]
-
-funcToForeignPtr :: KnownNat n => Func t n (Expr a) -> ForeignPtr CxxFunc
-funcToForeignPtr x = unsafePerformIO $! forceFunc x >>= \(Func fp) -> pure fp
-
-type family UnliftExpr d = t where
-  UnliftExpr (Expr a1, Expr a2) = (a1, a2)
-  UnliftExpr (Expr a1) = a1
-
-type family LiftExpr d = t | t -> d where
-  LiftExpr (a1, a2) = (Expr a1, Expr a2)
-  LiftExpr a1 = Expr a1
 
 class IsFuncDefinition d where
   definitionToExprList :: d -> [ForeignPtr CxxExpr]
@@ -1022,15 +869,7 @@ indexFunc func indices = withExprIndices indices $ \x ->
 -- | Apply a Halide function. Conceptually, @f ! i@ is equivalent to @f[i]@, i.e.
 -- indexing into a lazy array.
 (!) :: (HasIndexType n, IsFuncDefinition a) => Func t n a -> IndexType n -> a
-(!) func args =
-  unsafePerformIO $
-    indexFunc func args <&> exprListToDefinition
-
--- withFunc func $ \f ->
---   asVectorOf @((~) (Expr Int32)) asExpr (fromTuple args) $ \x ->
---     cxxConstructExpr $ \ptr ->
---       [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
---         $(Halide::Func* f)->operator()(*$(std::vector<Halide::Expr>* x))} } |]
+(!) func args = unsafePerformIO $ indexFunc func args <&> exprListToDefinition
 
 -- | Get a particular dimension of a pipeline parameter.
 dim
@@ -1053,16 +892,6 @@ dim k func@(Param _)
           <> "; Func is "
           <> show (natVal (Proxy @n))
           <> "-dimensional"
-
--- | Write out the loop nests specified by the schedule for this function.
---
--- Helpful for understanding what a schedule is doing.
---
--- For more info, see
--- [@Halide::Func::print_loop_nest@](https://halide-lang.org/docs/class_halide_1_1_func.html#a03f839d9e13cae4b87a540aa618589ae)
--- printLoopNest :: (KnownNat n, IsHalideType r) => Func n r -> IO ()
--- printLoopNest func = withFunc func $ \f ->
---   [C.exp| void { $(Halide::Func* f)->print_loop_nest() } |]
 
 -- | Get the loop nests specified by the schedule for this function.
 --
@@ -1121,26 +950,6 @@ realizeOnTarget target func shape action =
           });
         } |]
         action buf
-
--- \| Evaluate this function over a one-dimensional domain and return the
--- resulting buffer or buffers.
--- realize1D
---   :: forall a t
---    . IsHalideType a
---   => Int
---   -- ^ @size@ of the domain. The function will be evaluated on @[0, ..., size -1]@
---   -> Func t 1 a
---   -- ^ Function to evaluate
---   -> IO (Vector a)
--- realize1D size func = do
---   buf <- SM.new size
---   withHalideBuffer @1 @a buf $ \x -> do
---     let b = castPtr x
---     withFunc func $ \f ->
---       [CU.exp| void {
---         $(Halide::Func* f)->realize(
---           Halide::Pipeline::RealizationArg{$(halide_buffer_t* b)}) } |]
---   S.unsafeFreeze buf
 
 -- | A view pattern to specify the name of a buffer argument.
 --
