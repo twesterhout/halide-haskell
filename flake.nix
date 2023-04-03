@@ -195,8 +195,6 @@
                   ] ++ lib.optional pkgs.stdenv.isLinux halide-arrayfire;
                   withHoogle = true;
                   nativeBuildInputs = with pkgs; with ps; [
-                    pkgs.arrayfire
-                    ps.arrayfire
                     # Building and testing
                     cabal-install
                     doctest
