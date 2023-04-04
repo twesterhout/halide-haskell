@@ -250,6 +250,13 @@ class KnownNat n => Schedulable f (n :: Nat) (a :: Type) where
   -- | Mark the dimension to be traversed in parallel
   parallel :: VarOrRVar -> f n a -> IO (f n a)
 
+  -- | Issue atomic updates for this Func.
+  atomic
+    :: Bool
+    -- ^ whether to override the associativity test
+    -> f n a
+    -> IO (f n a)
+
   specialize :: Expr Bool -> f n a -> IO (Stage n a)
   specializeFail :: Text -> f n a -> IO ()
   gpuBlocks :: (KnownNat k, 1 <= k, k <= 3) => DeviceAPI -> IndexType k -> f n a -> IO (f n a)
@@ -346,6 +353,15 @@ instance KnownNat n => Schedulable Stage n a where
           });
         } |]
     pure stage
+  atomic (fromIntegral . fromEnum -> override) stage = do
+    withCxxStage stage $ \stage' ->
+      [C.throwBlock| void {
+        handle_halide_exceptions([=](){
+          $(Halide::Stage* stage')->atomic($(bool override));
+        });
+      } |]
+    pure stage
+
   specialize cond stage = do
     withCxxStage stage $ \stage' ->
       asExpr cond $ \cond' ->
@@ -490,6 +506,7 @@ instance KnownNat n => Schedulable (Func t) n a where
   fuse = viaStage2 fuse
   serial = viaStage1 serial
   parallel = viaStage1 parallel
+  atomic = viaStage1 atomic
   specialize cond func = getStage func >>= specialize cond
   specializeFail msg func = getStage func >>= specializeFail msg
   gpuBlocks = viaStage2 gpuBlocks
