@@ -80,6 +80,7 @@ import Data.Kind (Type)
 import Data.Proxy
 import Data.Text (Text)
 import Data.Text.Encoding qualified as T
+import Data.Tuple
 import Foreign.ForeignPtr
 import Foreign.Marshal (toBool, with)
 import Foreign.Ptr (Ptr, castPtr)
@@ -251,8 +252,8 @@ class KnownNat n => Schedulable f (n :: Nat) (a :: Type) where
 
   specialize :: Expr Bool -> f n a -> IO (Stage n a)
   specializeFail :: Text -> f n a -> IO ()
-  gpuBlocks :: (KnownNat k, k <= 3) => DeviceAPI -> IndexType k -> f n a -> IO (f n a)
-  gpuThreads :: (KnownNat k, k <= 3) => DeviceAPI -> IndexType k -> f n a -> IO (f n a)
+  gpuBlocks :: (KnownNat k, 1 <= k, k <= 3) => DeviceAPI -> IndexType k -> f n a -> IO (f n a)
+  gpuThreads :: (KnownNat k, 1 <= k, k <= 3) => DeviceAPI -> IndexType k -> f n a -> IO (f n a)
   gpuLanes :: DeviceAPI -> VarOrRVar -> f n a -> IO (f n a)
 
   -- | Schedule the iteration over this stage to be fused with another stage from outermost loop to a
@@ -363,10 +364,10 @@ instance KnownNat n => Schedulable Stage n a where
             std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)});
         });
       } |]
-  gpuBlocks :: forall k. (KnownNat k, k <= 3) => DeviceAPI -> IndexType k -> Stage n a -> IO (Stage n a)
+  gpuBlocks :: forall k. (KnownNat k, 1 <= k, k <= 3) => DeviceAPI -> IndexType k -> Stage n a -> IO (Stage n a)
   gpuBlocks (fromIntegral . fromEnum -> api :: C.CInt) vars stage =
     case proveTransitivityOfLessThanEqual @k @3 @10 of
-      Dict -> case indexTypeProperties @k of
+      Dict -> case proveIndexTypeProperties @k of
         Sub Dict ->
           withCxxStage stage $ \stage' ->
             asVectorOf @((~) (Expr Int32)) asVarOrRVar (fromTuple vars) $ \vars' -> do
@@ -387,10 +388,10 @@ instance KnownNat n => Schedulable Stage n a where
                 });
               } |]
               pure stage
-  gpuThreads :: forall k. (KnownNat k, k <= 3) => DeviceAPI -> IndexType k -> Stage n a -> IO (Stage n a)
+  gpuThreads :: forall k. (KnownNat k, 1 <= k, k <= 3) => DeviceAPI -> IndexType k -> Stage n a -> IO (Stage n a)
   gpuThreads (fromIntegral . fromEnum -> api :: C.CInt) vars stage =
     case proveTransitivityOfLessThanEqual @k @3 @10 of
-      Dict -> case indexTypeProperties @k of
+      Dict -> case proveIndexTypeProperties @k of
         Sub Dict -> do
           withCxxStage stage $ \stage' ->
             asVectorOf @((~) (Expr Int32)) asVarOrRVar (fromTuple vars) $ \vars' -> do
@@ -750,7 +751,7 @@ define
   -> d
   -> IO (Func 'FuncTy n d)
 define name args definition =
-  case indexTypeProperties @n of
+  case proveIndexTypeProperties @n of
     Sub Dict -> asVectorOf @((~) (Expr Int32)) asVar (fromTuple args) $ \x -> do
       let s = T.encodeUtf8 name
       withMany withForeignPtr (definitionToExprList definition) $ \v ->
@@ -780,7 +781,7 @@ update
   -> IO ()
 update func args definition =
   withFunc func $ \f ->
-    case indexTypeProperties @n of
+    case proveIndexTypeProperties @n of
       Sub Dict -> asVectorOf @((~) (Expr Int32)) asExpr (fromTuple args) $ \index ->
         withMany withForeignPtr (definitionToExprList definition) $ \value ->
           [C.throwBlock| void {
@@ -799,46 +800,9 @@ update func args definition =
 
 infix 9 !
 
-type family IndexType (n :: Nat) = (t :: Type) | t -> n where
-  IndexType 0 = ()
-  IndexType 1 = Expr Int32
-  IndexType 2 = (Expr Int32, Expr Int32)
-  IndexType 3 = (Expr Int32, Expr Int32, Expr Int32)
-  IndexType 4 = (Expr Int32, Expr Int32, Expr Int32, Expr Int32)
-  IndexType 5 = (Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32)
-  IndexType 6 = (Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32)
-  IndexType 7 = (Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32)
-  IndexType 8 = (Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32)
-  IndexType 9 = (Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32)
-  IndexType 10 = (Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32, Expr Int32)
-
-type IndexTypeProperties n =
-  ( IsTuple (FromTuple (IndexType n)) (IndexType n)
-  , All ((~) (Expr Int32)) (FromTuple (IndexType n))
-  )
-
-indexTypeProperties :: forall n. (KnownNat n, n <= 10) :- IndexTypeProperties n
-indexTypeProperties = Sub $
-  case fromIntegral (natVal (Proxy @n)) :: Int of
-    0 -> unsafeCoerce $ Dict @(IndexTypeProperties 0)
-    1 -> unsafeCoerce $ Dict @(IndexTypeProperties 1)
-    2 -> unsafeCoerce $ Dict @(IndexTypeProperties 2)
-    3 -> unsafeCoerce $ Dict @(IndexTypeProperties 3)
-    4 -> unsafeCoerce $ Dict @(IndexTypeProperties 4)
-    5 -> unsafeCoerce $ Dict @(IndexTypeProperties 5)
-    6 -> unsafeCoerce $ Dict @(IndexTypeProperties 6)
-    7 -> unsafeCoerce $ Dict @(IndexTypeProperties 7)
-    8 -> unsafeCoerce $ Dict @(IndexTypeProperties 8)
-    9 -> unsafeCoerce $ Dict @(IndexTypeProperties 9)
-    10 -> unsafeCoerce $ Dict @(IndexTypeProperties 10)
-    _ -> error "cannot happen"
-{-# NOINLINE indexTypeProperties #-}
-
-type HasIndexType n = (KnownNat n, n <= 10)
-
 withExprIndices :: forall n a. HasIndexType n => IndexType n -> (Ptr (CxxVector CxxExpr) -> IO a) -> IO a
 withExprIndices indices action =
-  case indexTypeProperties @n of
+  case proveIndexTypeProperties @n of
     Sub Dict -> asVectorOf @((~) (Expr Int32)) asExpr (fromTuple indices) $ \x ->
       action x
 

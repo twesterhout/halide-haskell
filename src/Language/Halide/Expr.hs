@@ -19,10 +19,13 @@ module Language.Halide.Expr
   , Var
   , RVar
   , VarOrRVar
+  , ReductionDomain (..)
   , Int32
   , mkExpr
   , mkVar
   , mkRVar
+  , mkRDom
+  , toRVars
   , cast
   , eq
   , neq
@@ -67,14 +70,23 @@ module Language.Halide.Expr
   , unaryOp
   , checkType
   , testWriteToStderr
+  , Solo (..)
   , IsTuple (..)
   , FromTuple
   , ToTuple
+  , UniformTuple
+  , UniformTupleProperties
+  , proveUniformTupleProperties
+  , IndexType
+  , IndexTypeProperties
+  , proveIndexTypeProperties
+  , HasIndexType
   )
 where
 
 import Control.Exception (bracket)
 import Control.Monad (unless)
+import Data.Constraint
 import Data.IORef
 import Data.Int (Int32)
 import Data.Kind
@@ -82,12 +94,14 @@ import Data.Proxy
 import Data.Ratio (denominator, numerator)
 import Data.Text (Text, pack, unpack)
 import Data.Text.Encoding qualified as T
+import Data.Tuple
 import Data.Vector.Storable.Mutable qualified as SM
 import Foreign.ForeignPtr
 import Foreign.Marshal (alloca, allocaArray, peekArray, toBool, with)
-import Foreign.Ptr (Ptr, castPtr, nullPtr)
-import Foreign.Storable (peek)
+import Foreign.Ptr (Ptr, castPtr, nullPtr, plusPtr)
+import Foreign.Storable
 import GHC.Stack (HasCallStack)
+import GHC.TypeLits
 import Language.C.Inline qualified as C
 import Language.C.Inline.Cpp.Exception qualified as C
 import Language.C.Inline.Unsafe qualified as CU
@@ -97,7 +111,37 @@ import Language.Halide.RedundantConstraints
 import Language.Halide.Type
 import Language.Halide.Utils
 import System.IO.Unsafe (unsafePerformIO)
+import Type.Reflection
+import Unsafe.Coerce
 import Prelude hiding (and, div, max, min, mod, or)
+
+-- | A scalar expression in Halide.
+--
+-- To have a nice experience writing arithmetic expressions in terms of @Expr@s, we want to derive 'Num',
+-- 'Floating' etc. instances for @Expr@. Unfortunately, that means that we encode v'Expr', v'Var', v'RVar',
+-- and v'ScalarParam' by the same type, and passing an @Expr@ to a function that expects a @Var@ will produce
+-- a runtime error.
+data Expr a
+  = -- | Scalar expression.
+    Expr (ForeignPtr CxxExpr)
+  | -- | Index variable.
+    Var (ForeignPtr CxxVar)
+  | -- | Reduction variable.
+    RVar (ForeignPtr CxxRVar)
+  | -- | Scalar parameter.
+    --
+    -- The 'IORef' is initialized with 'Nothing' and filled in on the first
+    -- call to 'asExpr'.
+    ScalarParam (IORef (Maybe (ForeignPtr CxxParameter)))
+
+-- | A single-dimensional span.
+data Range = Range {rangeMin :: !(Expr Int32), rangeExtent :: !(Expr Int32)}
+
+-- | Haskell counterpart of @Halide::Range@.
+data CxxRange
+
+-- | Haskell counterpart of @Halide::RDom@.
+data CxxRDom
 
 importHalide
 
@@ -105,6 +149,8 @@ instanceCxxConstructible "Halide::Expr"
 instanceCxxConstructible "Halide::Var"
 instanceCxxConstructible "Halide::RVar"
 instanceCxxConstructible "Halide::VarOrRVar"
+instanceCxxConstructible "Halide::Range"
+instanceCxxConstructible "Halide::RDom"
 
 defineIsHalideTypeInstances
 
@@ -112,6 +158,7 @@ instanceHasCxxVector "Halide::Expr"
 instanceHasCxxVector "Halide::Var"
 instanceHasCxxVector "Halide::RVar"
 instanceHasCxxVector "Halide::VarOrRVar"
+instanceHasCxxVector "Halide::Range"
 
 -- instanceCxxConstructible "Halide::Var"
 -- instanceCxxConstructible "Halide::RVar"
@@ -158,6 +205,168 @@ type family FromTuple t = s | s -> t where
 class (ToTuple a ~ t, FromTuple t ~ a) => IsTuple a t | a -> t, t -> a where
   toTuple :: Arguments a -> t
   fromTuple :: t -> Arguments a
+
+-- | Generates a tuple of @n@ elements of type @t@.
+type family UniformTuple (n :: Nat) (t :: Type) = (tuple :: Type) | tuple -> n where
+  UniformTuple 0 t = ()
+  UniformTuple 1 t = Expr t
+  UniformTuple 2 t = (Expr t, Expr t)
+  UniformTuple 3 t = (Expr t, Expr t, Expr t)
+  UniformTuple 4 t = (Expr t, Expr t, Expr t, Expr t)
+  UniformTuple 5 t = (Expr t, Expr t, Expr t, Expr t, Expr t)
+  UniformTuple 6 t = (Expr t, Expr t, Expr t, Expr t, Expr t, Expr t)
+  UniformTuple 7 t = (Expr t, Expr t, Expr t, Expr t, Expr t, Expr t, Expr t)
+  UniformTuple 8 t = (Expr t, Expr t, Expr t, Expr t, Expr t, Expr t, Expr t, Expr t)
+  UniformTuple 9 t = (Expr t, Expr t, Expr t, Expr t, Expr t, Expr t, Expr t, Expr t, Expr t)
+  UniformTuple 10 t = (Expr t, Expr t, Expr t, Expr t, Expr t, Expr t, Expr t, Expr t, Expr t, Expr t)
+
+type UniformTupleProperties n a =
+  ( IsTuple (FromTuple (UniformTuple n a)) (UniformTuple n a)
+  , All ((~) (Expr a)) (FromTuple (UniformTuple n a))
+  )
+
+type HasIndexType n = (KnownNat n, n <= 10)
+
+proveUniformTupleProperties :: forall n a. (KnownNat n, n <= 10) :- UniformTupleProperties n a
+proveUniformTupleProperties = Sub $
+  case fromIntegral (natVal (Proxy @n)) :: Int of
+    0 -> unsafeCoerce $ Dict @(UniformTupleProperties 0 a)
+    1 -> unsafeCoerce $ Dict @(UniformTupleProperties 1 a)
+    2 -> unsafeCoerce $ Dict @(UniformTupleProperties 2 a)
+    3 -> unsafeCoerce $ Dict @(UniformTupleProperties 3 a)
+    4 -> unsafeCoerce $ Dict @(UniformTupleProperties 4 a)
+    5 -> unsafeCoerce $ Dict @(UniformTupleProperties 5 a)
+    6 -> unsafeCoerce $ Dict @(UniformTupleProperties 6 a)
+    7 -> unsafeCoerce $ Dict @(UniformTupleProperties 7 a)
+    8 -> unsafeCoerce $ Dict @(UniformTupleProperties 8 a)
+    9 -> unsafeCoerce $ Dict @(UniformTupleProperties 9 a)
+    10 -> unsafeCoerce $ Dict @(UniformTupleProperties 10 a)
+    _ -> error "cannot happen"
+{-# NOINLINE proveUniformTupleProperties #-}
+
+class CanPeekUniformTuple n where
+  peekUniformTupleImpl :: CxxConstructible b => (Ptr b -> IO (Expr a)) -> Ptr b -> IO (UniformTuple n a)
+
+instance CanPeekUniformTuple 0 where
+  peekUniformTupleImpl _ _ = pure ()
+
+instance CanPeekUniformTuple 1 where
+  peekUniformTupleImpl f = f
+
+instance CanPeekUniformTuple 2 where
+  peekUniformTupleImpl f (p :: Ptr b) = (,) <$> f p <*> f (p `plusPtr` cxxSizeOf @b)
+
+instance CanPeekUniformTuple 3 where
+  peekUniformTupleImpl f (p :: Ptr b) =
+    (,,) <$> f p <*> f (p `plusPtr` cxxSizeOf @b) <*> f (p `plusPtr` (2 * cxxSizeOf @b))
+
+instance CanPeekUniformTuple 4 where
+  peekUniformTupleImpl f (p :: Ptr b) =
+    (,,,)
+      <$> f (p `plusPtr` (0 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (1 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (2 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (3 * cxxSizeOf @b))
+
+instance CanPeekUniformTuple 5 where
+  peekUniformTupleImpl f (p :: Ptr b) =
+    (,,,,)
+      <$> f (p `plusPtr` (0 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (1 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (2 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (3 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (4 * cxxSizeOf @b))
+
+instance CanPeekUniformTuple 6 where
+  peekUniformTupleImpl f (p :: Ptr b) =
+    (,,,,,)
+      <$> f (p `plusPtr` (0 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (1 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (2 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (3 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (4 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (5 * cxxSizeOf @b))
+
+instance CanPeekUniformTuple 7 where
+  peekUniformTupleImpl f (p :: Ptr b) =
+    (,,,,,,)
+      <$> f (p `plusPtr` (0 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (1 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (2 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (3 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (4 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (5 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (6 * cxxSizeOf @b))
+
+instance CanPeekUniformTuple 8 where
+  peekUniformTupleImpl f (p :: Ptr b) =
+    (,,,,,,,)
+      <$> f (p `plusPtr` (0 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (1 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (2 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (3 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (4 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (5 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (6 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (7 * cxxSizeOf @b))
+
+instance CanPeekUniformTuple 9 where
+  peekUniformTupleImpl f (p :: Ptr b) =
+    (,,,,,,,,)
+      <$> f (p `plusPtr` (0 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (1 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (2 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (3 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (4 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (5 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (6 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (7 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (8 * cxxSizeOf @b))
+
+instance CanPeekUniformTuple 10 where
+  peekUniformTupleImpl f (p :: Ptr b) =
+    (,,,,,,,,,)
+      <$> f (p `plusPtr` (0 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (1 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (2 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (3 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (4 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (5 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (6 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (7 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (8 * cxxSizeOf @b))
+      <*> f (p `plusPtr` (9 * cxxSizeOf @b))
+
+peekUniformTuple
+  :: forall n b a
+   . (KnownNat n, n <= 10, CxxConstructible b)
+  => (Ptr b -> IO (Expr a))
+  -> Ptr b
+  -> IO (UniformTuple n a)
+peekUniformTuple f p
+  | Just Refl <- sameNat (Proxy @0) (Proxy @n) = peekUniformTupleImpl @0 f p
+  | Just Refl <- sameNat (Proxy @1) (Proxy @n) = peekUniformTupleImpl @1 f p
+  | Just Refl <- sameNat (Proxy @2) (Proxy @n) = peekUniformTupleImpl @2 f p
+  | Just Refl <- sameNat (Proxy @3) (Proxy @n) = peekUniformTupleImpl @3 f p
+  | Just Refl <- sameNat (Proxy @4) (Proxy @n) = peekUniformTupleImpl @4 f p
+  | Just Refl <- sameNat (Proxy @5) (Proxy @n) = peekUniformTupleImpl @5 f p
+  | Just Refl <- sameNat (Proxy @6) (Proxy @n) = peekUniformTupleImpl @6 f p
+  | Just Refl <- sameNat (Proxy @7) (Proxy @n) = peekUniformTupleImpl @7 f p
+  | Just Refl <- sameNat (Proxy @8) (Proxy @n) = peekUniformTupleImpl @8 f p
+  | Just Refl <- sameNat (Proxy @9) (Proxy @n) = peekUniformTupleImpl @9 f p
+  | Just Refl <- sameNat (Proxy @10) (Proxy @n) = peekUniformTupleImpl @10 f p
+
+type IndexType n = UniformTuple n Int32
+
+type IndexTypeProperties n =
+  ( IsTuple (FromTuple (IndexType n)) (IndexType n)
+  , All ((~) (Expr Int32)) (FromTuple (IndexType n))
+  )
+
+proveIndexTypeProperties :: forall n. (KnownNat n, n <= 10) :- IndexTypeProperties n
+proveIndexTypeProperties = Sub $
+  case proveUniformTupleProperties @n @Int32 of
+    Sub Dict -> Dict
 
 instance IsTuple '[] () where
   toTuple Nil = ()
@@ -227,25 +436,6 @@ instance IsTuple '[a1, a2, a3, a4, a5, a6, a7, a8, a9, a10] (a1, a2, a3, a4, a5,
 --   toTuple (x ::: Nil) = x
 --   fromTuple () = Nil
 
--- | A scalar expression in Halide.
---
--- To have a nice experience writing arithmetic expressions in terms of @Expr@s, we want to derive 'Num',
--- 'Floating' etc. instances for @Expr@. Unfortunately, that means that we encode v'Expr', v'Var', v'RVar',
--- and v'ScalarParam' by the same type, and passing an @Expr@ to a function that expects a @Var@ will produce
--- a runtime error.
-data Expr a
-  = -- | Scalar expression.
-    Expr (ForeignPtr CxxExpr)
-  | -- | Index variable.
-    Var (ForeignPtr CxxVar)
-  | -- | Reduction variable.
-    RVar (ForeignPtr CxxRVar)
-  | -- | Scalar parameter.
-    --
-    -- The 'IORef' is initialized with 'Nothing' and filled in on the first
-    -- call to 'asExpr'.
-    ScalarParam (IORef (Maybe (ForeignPtr CxxParameter)))
-
 -- | A v'Var'.
 type Var = Expr Int32
 
@@ -254,6 +444,12 @@ type RVar = Expr Int32
 
 -- | Either v'Var' or v'RVar'.
 type VarOrRVar = Expr Int32
+
+-- | A multi-dimensional box -- cartesian product of the 'Range's.
+newtype Region = Region [Range]
+  deriving stock (Show)
+
+newtype ReductionDomain (n :: Nat) = ReductionDomain (ForeignPtr CxxRDom)
 
 -- | Create a scalar expression from a Haskell value.
 mkExpr :: IsHalideType a => a -> Expr a
@@ -264,6 +460,96 @@ mkVar :: Text -> IO (Expr Int32)
 mkVar (T.encodeUtf8 -> s) = fmap Var . cxxConstruct $ \ptr ->
   [CU.exp| void {
     new ($(Halide::Var* ptr)) Halide::Var{std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}} } |]
+
+withRange :: Range -> (Ptr CxxRange -> IO a) -> IO a
+withRange r action =
+  asExpr r.rangeMin $ \minPtr ->
+    asExpr r.rangeExtent $ \extentPtr -> do
+      fp <-
+        cxxConstruct $ \destPtr ->
+          [CU.exp| void { new ($(Halide::Range* destPtr)) Halide::Range{
+            *$(const Halide::Expr* minPtr), *$(const Halide::Expr* extentPtr)} } |]
+      withForeignPtr fp action
+
+mkRDom
+  :: forall n
+   . HasIndexType n
+  => Text
+  -- ^ name
+  -> IndexType n
+  -- ^ mins
+  -> IndexType n
+  -- ^ extents
+  -> IO (ReductionDomain n)
+  -- ^ reduction variables
+mkRDom (T.encodeUtf8 -> name) mins extents = fmap ReductionDomain $
+  case proveIndexTypeProperties @n of
+    Sub Dict ->
+      asVectorOf @((~) (Expr Int32)) asExpr (fromTuple mins) $ \mins' ->
+        asVectorOf @((~) (Expr Int32)) asExpr (fromTuple extents) $ \extents' ->
+          cxxConstruct $ \destPtr ->
+            [CU.block| void {
+              auto const& mins = *$(const std::vector<Halide::Expr>* mins');
+              auto const& extents = *$(const std::vector<Halide::Expr>* extents');
+              std::vector<Halide::Range> region;
+              for (auto i = size_t{0}; i < mins.size(); ++i) {
+                region.emplace_back(mins.at(i), extents.at(i));
+              }
+              new ($(Halide::RDom* destPtr)) Halide::RDom{
+                region, std::string{$bs-ptr:name, static_cast<size_t>($bs-len:name)}};
+            } |]
+
+withCxxRDom :: ReductionDomain n -> (Ptr CxxRDom -> IO a) -> IO a
+withCxxRDom (ReductionDomain fp) = withForeignPtr fp
+
+toRVars :: forall n. HasIndexType n => ReductionDomain n -> IO (IndexType n)
+toRVars rdom = do
+  let allocate =
+        withCxxRDom rdom $ \rdom' ->
+          [CU.block| std::vector<Halide::RVar>* {
+            auto const& rdom = *$(const Halide::RDom* rdom');
+            std::vector<Halide::RVar> rvars;
+            rvars.reserve(rdom.dimensions());
+            for (auto i = 0; i < rdom.dimensions(); ++i) {
+              rvars.push_back(rdom[i]);
+            }
+            return new std::vector<Halide::RVar>{std::move(rvars)};
+          } |]
+  bracket allocate deleteCxxVector $ \v -> do
+    n <- cxxVectorSize v
+    unless (n == fromIntegral (natVal (Proxy @n))) $ error "wrong vector length"
+    ptr <- cxxVectorData v
+    peekUniformTuple @n peekRVar ptr
+
+--   withMany withRange ranges $ \regionPtr -> do
+--     forM [0 .. n - 1] $ \i ->
+--       cxxConstructExpr $ \destPtr ->
+--         let srcPtr = ptr ``
+-- cxxVectorToList
+--   :: (CxxConstructible a, HasCxxVector a)
+--   => (Ptr a -> Ptr a -> IO ())
+--   -- ^ Copy constructor: dest src
+--   -> Ptr (CxxVector a)
+--   -> IO [a]
+-- cxxVectorToList construct v = do
+--   n <- cxxVectorSize v
+--   ptr <- cxxVectorData v
+--   forM [0 .. n - 1] $ \i ->
+--     cxxConstruct $
+--       construct undefined
+
+--     forM [0 .. k] $ \i ->
+--       pure ()
+--     wrapCxxRVar
+--       =<< [CU.exp| Halide::RVar* {
+--             new Halide::RVar{static_cast<Halide::RVar>(Halide::RDom{
+--               *$(const Halide::Expr* min'),
+--               *$(const Halide::Expr* extent'),
+--               std::string{$bs-ptr:name, static_cast<size_t>($bs-len:name)}
+--               })}
+--           } |]
+--
+--   undefined
 
 -- | Create a named reduction variable.
 --
@@ -276,19 +562,22 @@ mkRVar
   -> Expr Int32
   -- ^ extent
   -> IO (Expr Int32)
-mkRVar name start extent =
-  asExpr start $ \min' ->
-    asExpr extent $ \extent' ->
-      wrapCxxRVar
-        =<< [CU.exp| Halide::RVar* {
-              new Halide::RVar{static_cast<Halide::RVar>(Halide::RDom{
-                *$(const Halide::Expr* min'),
-                *$(const Halide::Expr* extent'),
-                std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}
-                })}
-            } |]
-  where
-    s = T.encodeUtf8 name
+mkRVar name start extent = do
+  rdom <- mkRDom name start extent
+  toRVars rdom
+
+-- asExpr start $ \min' ->
+--   asExpr extent $ \extent' ->
+--     wrapCxxRVar
+--       =<< [CU.exp| Halide::RVar* {
+--             new Halide::RVar{static_cast<Halide::RVar>(Halide::RDom{
+--               *$(const Halide::Expr* min'),
+--               *$(const Halide::Expr* extent'),
+--               std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}
+--               })}
+--           } |]
+-- where
+--   s = T.encodeUtf8 name
 
 -- | Return an undef value of the given type.
 --
@@ -621,6 +910,8 @@ instance (IsHalideType a, Floating a) => Floating (Expr a) where
   atanh :: Expr a -> Expr a
   atanh = unaryOp $ \a ptr -> [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{Halide::atanh(*$(Halide::Expr* a))} } |]
 
+deriving stock instance Show Range
+
 -- | Wrap a raw @Halide::Expr@ pointer in a Haskell value.
 --
 -- __Note:__ This function checks the runtime type of the expression.
@@ -822,6 +1113,11 @@ withMany asPtr args action =
   where
     go [] v = action v
     go (x : xs) v = asPtr x $ \p -> cxxVectorPushBack v p >> go xs v
+
+peekRVar :: Ptr CxxRVar -> IO RVar
+peekRVar p =
+  wrapCxxRVar
+    =<< [CU.exp| Halide::RVar* { new Halide::RVar{*$(const Halide::RVar* p)} } |]
 
 -- | Use the underlying @Halide::Var@ in an 'IO' action.
 asVar :: HasCallStack => Expr Int32 -> (Ptr CxxVar -> IO b) -> IO b

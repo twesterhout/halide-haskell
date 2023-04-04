@@ -243,6 +243,14 @@ spec = do
         f <- define "sum" i (mkExpr 0)
         update f (0 :: Expr Int32) $ f ! 0 + src ! r
         realize f [1] peekToList `shouldReturn` ([15] :: [Int32])
+    it "computes multi-dimensional reductions" $ do
+      asBufferParam @2 @Int32 ([[1, 2, 3], [4, 5, 6]] :: [[Int32]]) $ \src -> do
+        d0 <- (.extent) <$> dim 0 src
+        d1 <- (.extent) <$> dim 1 src
+        r <- toRVars =<< mkRDom "r" (0, 0) (d0, d1)
+        f <- define "sum" () (mkExpr 0)
+        update f () $ f ! () + src ! r
+        realize f [] peekScalar `shouldReturn` (21 :: Int32)
 
   describe "undef" $ do
     it "allows to skip stores" $ do

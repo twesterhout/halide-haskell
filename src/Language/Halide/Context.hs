@@ -92,20 +92,22 @@ halideTypePairs = do
         ]
     other =
       optionals
-        [ ("Halide::Internal::StageSchedule", "CxxStageSchedule")
-        , ("Halide::Internal::Dim", "Language.Halide.Schedule.Dim")
-        , ("Halide::Internal::Split", "Language.Halide.Schedule.Split")
+        [ ("Halide::Internal::Dim", "Dim")
+        , ("Halide::Internal::Dimension", "CxxDimension")
+        , ("Halide::Internal::FusedPair", "FusedPair")
+        , ("Halide::Internal::PrefetchDirective", "PrefetchDirective")
+        , ("Halide::Internal::ReductionVariable", "ReductionVariable")
+        , ("Halide::Internal::Split", "Split")
+        , ("Halide::Internal::StageSchedule", "CxxStageSchedule")
         , ("Halide::Argument", "CxxArgument")
+        , ("Halide::Buffer", "CxxBuffer")
+        , ("Halide::LoopLevel", "CxxLoopLevel")
+        , ("Halide::Stage", "CxxStage")
+        , ("Halide::Range", "CxxRange")
+        , ("Halide::RDom", "CxxRDom")
         , ("halide_buffer_t", "Language.Halide.Buffer.RawHalideBuffer")
         , ("halide_device_interface_t", "HalideDeviceInterface")
         , ("halide_dimension_t", "HalideDimension")
-        , ("Halide::Internal::Dimension", "CxxDimension")
-        , ("Halide::LoopLevel", "CxxLoopLevel")
-        , ("Halide::Stage", "CxxStage")
-        , ("Halide::Buffer", "CxxBuffer")
-        , ("Halide::Internal::FusedPair", "FusedPair")
-        , ("Halide::Internal::ReductionVariable", "ReductionVariable")
-        , ("Halide::Internal::PrefetchDirective", "PrefetchDirective")
         , ("halide_trace_event_t", "TraceEvent")
         ]
     optional :: (CIdentifier, String) -> Q [(CIdentifier, TypeQ)]

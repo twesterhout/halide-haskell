@@ -15,11 +15,14 @@ module Language.Halide
   , RVar
   , VarOrRVar
   , IsHalideType
+  , ReductionDomain
 
     -- ** Creating
   , mkExpr
   , mkVar
   , mkRVar
+  , mkRDom
+  , toRVars
   , undef
   , cast
   , bool
