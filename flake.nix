@@ -46,7 +46,7 @@
           (self: super: {
             halide = self.callPackage ./nix/halide.nix { };
             forge = self.callPackage ./nix/forge.nix { };
-            arrayfire = self.callPackage ./nix/arrayfire.nix { };
+            # arrayfire = self.callPackage ./nix/arrayfire.nix { };
           })
         ];
       };
@@ -123,17 +123,17 @@
             overrides = self: super: rec {
               inline-c-cpp =
                 (self.callCabal2nix "inline-c-cpp" "${inputs.inline-c.outPath}/inline-c-cpp" { });
-              arrayfire =
-                (self.callCabal2nix "arrayfire" inputs.arrayfire-haskell.outPath {
-                  af = pkgs.arrayfire;
-                }).overrideAttrs (attrs: {
-                  configureFlags = (attrs.configureFlags or [ ]) ++ [ "-fdisable-default-paths" ];
-                });
+              # arrayfire =
+              #   (self.callCabal2nix "arrayfire" inputs.arrayfire-haskell.outPath {
+              #     af = pkgs.arrayfire;
+              #   }).overrideAttrs (attrs: {
+              #     configureFlags = (attrs.configureFlags or [ ]) ++ [ "-fdisable-default-paths" ];
+              #   });
               halide-haskell = (halide-haskell-for self).override args;
               halide-JuicyPixels =
                 (self.callCabal2nix "halide-JuicyPixels" ./halide-JuicyPixels { });
-              halide-arrayfire =
-                (self.callCabal2nix "halide-arrayfire" ./halide-arrayfire { });
+              # halide-arrayfire =
+              #   (self.callCabal2nix "halide-arrayfire" ./halide-arrayfire { });
               halide-readme = with-markdown-unlit self
                 (self.callCabal2nix "halide-readme" ./test-readme { });
               halide-tutorial01 = with-markdown-unlit self
@@ -192,7 +192,7 @@
                     halide-tutorial03
                     halide-tutorial04
                     halide-tutorial05
-                  ] ++ lib.optional pkgs.stdenv.isLinux halide-arrayfire;
+                  ]; #  ++ lib.optional pkgs.stdenv.isLinux halide-arrayfire;
                   withHoogle = true;
                   nativeBuildInputs = with pkgs; with ps; [
                     # Building and testing

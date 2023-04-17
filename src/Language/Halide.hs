@@ -56,6 +56,8 @@ module Language.Halide
 
     -- * Functions
   , Func (..)
+  , Function
+  , Parameter
   , FuncTy (..)
   , Stage (..)
 
