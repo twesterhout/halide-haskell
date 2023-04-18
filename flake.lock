@@ -3,11 +3,11 @@
     "arrayfire-haskell": {
       "flake": false,
       "locked": {
-        "lastModified": 1679865402,
-        "narHash": "sha256-408XU17APEsEEJSFkTfp8qRtfhPSfiz78DJfwHotKrg=",
+        "lastModified": 1681735867,
+        "narHash": "sha256-2qrtGr7A1mhN7lkXsqQ+J0Z4ybs1x3pVlOCW7NZNHYg=",
         "owner": "twesterhout",
         "repo": "arrayfire-haskell",
-        "rev": "18a9d2bdf000e1f4e99b9e8b0a2b516e66ba9db6",
+        "rev": "262d05034df3b1ddab82114bd58ad788e898ca9f",
         "type": "github"
       },
       "original": {

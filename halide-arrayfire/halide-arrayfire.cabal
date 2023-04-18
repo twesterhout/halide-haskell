@@ -37,12 +37,12 @@ library
 test-suite halide-arrayfire-test
   import:           warnings
   default-language: GHC2021
-
-  -- other-modules:
-  -- other-extensions:
   type:             exitcode-stdio-1.0
   hs-source-dirs:   test
   main-is:          Spec.hs
   build-depends:
+    , arrayfire
     , base
     , halide-arrayfire
+    , halide-haskell
+    , hspec
