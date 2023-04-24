@@ -50,6 +50,7 @@ module Language.Halide.Expr
   , printed
   , printedWhen
   , toIntImm
+  , setScalarEstimate
 
     -- * Internal
   , exprToForeignPtr
@@ -355,6 +356,7 @@ peekUniformTuple f p
   | Just Refl <- sameNat (Proxy @8) (Proxy @n) = peekUniformTupleImpl @8 f p
   | Just Refl <- sameNat (Proxy @9) (Proxy @n) = peekUniformTupleImpl @9 f p
   | Just Refl <- sameNat (Proxy @10) (Proxy @n) = peekUniformTupleImpl @10 f p
+  | otherwise = error "cannot happen"
 
 type IndexType n = UniformTuple n Int32
 
@@ -520,6 +522,20 @@ toRVars rdom = do
     unless (n == fromIntegral (natVal (Proxy @n))) $ error "wrong vector length"
     ptr <- cxxVectorData v
     peekUniformTuple @n peekRVar ptr
+
+setScalarEstimate
+  :: IsHalideType a
+  => a
+  -- ^ Estimate
+  -> Expr a
+  -- ^ Parameter
+  -> IO ()
+setScalarEstimate estimate param =
+  asScalarParam param $ \param' ->
+    asExpr (mkExpr estimate) $ \estimate' ->
+      [CU.exp| void {
+        $(Halide::Internal::Parameter* param')->set_estimate(*$(const Halide::Expr* estimate'))
+      } |]
 
 --   withMany withRange ranges $ \regionPtr -> do
 --     forM [0 .. n - 1] $ \i ->

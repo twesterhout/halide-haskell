@@ -128,6 +128,7 @@ module Language.Halide
   , setExtent
   , setStride
   , setEstimate
+  , setScalarEstimate
 
     -- ** Targets
   , Target (..)

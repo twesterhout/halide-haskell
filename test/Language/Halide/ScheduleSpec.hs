@@ -3,7 +3,7 @@
 module Language.Halide.ScheduleSpec (spec) where
 
 import Control.Monad (forM_)
-import qualified Data.Text.IO as T
+import Data.Text.IO qualified as T
 import GHC.TypeLits
 import Language.Halide
 import Test.Hspec
@@ -146,6 +146,19 @@ spec = do
         checkScheduleRoundTrip prepare (schedule hostTarget (Just Adams2019))
         checkScheduleRoundTrip prepare (schedule hostTarget (Just Li2018))
         checkScheduleRoundTrip prepare (schedule hostTarget (Just Mullapudi2016))
+
+    it "supports scalar estimates" $ do
+      let f scheduler (scalar @Float "c" -> c) = do
+            [x, y] <- mapM mkVar ["x", "y"]
+            f <- define "f" (x, y) c
+            estimate x 0 100 f
+            estimate y 0 100 f
+            setScalarEstimate 5.0 c
+            loadAutoScheduler scheduler
+            void $ applyAutoScheduler scheduler hostTarget f
+            pure f
+      _ <- compile $ f Adams2019
+      pure ()
 
 -- (x, y, z, xInner, f1) <- prepare
 -- split TailAuto x (x, xInner) 2 f1

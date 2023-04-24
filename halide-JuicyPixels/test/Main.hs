@@ -15,7 +15,7 @@ import Prelude hiding (min)
 brighten :: Expr Float -> Parameter 3 Word8 -> IO (Function 3 Word8)
 brighten factor input = do
   [x, y, c] <- mapM mkVar ["x", "y", "c"]
-  let value = cast @Word8 . min 255 . (factor *) . cast @Float $ input ! (c, x, y)
+  let value = cast . min 255 . (factor *) . cast $ input ! (c, x, y)
   define "brighter" (c, x, y) value
 
 main :: IO ()
