@@ -1,5 +1,5 @@
 <h1 align="center">
-halide-JuicyPixels
+halide-arrayfire
 </h1>
 
 <div align="center">
@@ -8,12 +8,15 @@ halide-JuicyPixels
 [![license](https://img.shields.io/github/license/twesterhout/halide-haskell.svg?style=flat-square)](LICENSE)
 
 [![build](https://img.shields.io/github/actions/workflow/status/twesterhout/halide-haskell/ci.yml?style=flat-square)](https://github.com/twesterhout/halide-haskell/actions/workflows/ci.yml)
-[![Hackage](https://img.shields.io/hackage/v/halide-JuicyPixels?style=flat-square)](https://hackage.haskell.org/package/halide-JuicyPixels)
+[![Hackage](https://img.shields.io/hackage/v/halide-arrayfire?style=flat-square)](https://hackage.haskell.org/package/halide-arrayfire)
 
 </div>
 
 This package integrates
 [halide-haskell](https://github.com/twesterhout/halide-haskell/) with
-[JuicyPixels](https://github.com/Twinside/Juicy.Pixels) by implementing
-instances of `IsHalideBuffer` for `Image` and `MutableImage` types. See [this
-test](test/Main.hs) for an example usage.
+[arrayfire](https://github.com/arrayfire/arrayfire-haskell) by implementing
+an instance of `IsHalideBuffer` for the `Array` data type.
+
+  - [X] CPU
+  - [ ] CUDA (know how to do it, just need a bit of time)
+  - [ ] OpenCL (no idea how, contributions are welcome!)
