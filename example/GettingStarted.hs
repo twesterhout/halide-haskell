@@ -2,7 +2,6 @@ module Main (main) where
 
 import Data.Vector.Storable qualified as S
 import Data.Vector.Storable.Mutable qualified as SM
-import GHC.Exts
 import Language.Halide
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -23,37 +22,6 @@ mkVectorPlus = do
         withHalideBuffer @1 @a out $ \out' ->
           kernel a b out'
     S.unsafeFreeze out
-
-data E = E
-
-data Ty = A | B
-
-data D (a :: Ty) where
-  DA :: D 'A
-  DB :: D 'B
-
-foo :: D t -> IO ()
-foo DA = putStrLn "DA"
-foo DB = putStrLn "DB"
-
-bar :: E -> IO ()
-bar _ = putStrLn "E"
-
-class Call f where
-  call :: f -> IO ()
-
-instance Call r => Call (E -> r) where call f = call (f E)
-
-instance (t ~ 'B, Call r) => Call (D t -> r) where call f = call (f DB)
-
-instance Call (IO ()) where call f = f
-
-default (Int, Float)
-
-run :: IO ()
-run = call $ \a b -> do
-  bar a
-  foo b
 
 main :: IO ()
 main = do
