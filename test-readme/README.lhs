@@ -3,10 +3,16 @@ halide-haskell
 </h1>
 
 <div align="center">
+
+<img src="assets/construction_1f6a7.png" width="32">This project is still under heavy development and might not be production-ready<img src="assets/construction_1f6a7.png" width="32"><br>
+We encourage experimenting with it and reporting any issues you run into via
+[Github issues](https://github.com/twesterhout/halide-haskell/issues).
+
 <br />
 
-[![license](https://img.shields.io/github/license/twesterhout/halide-haskell.svg?style=flat-square)](LICENSE)
+[**Tutorials**](https://github.com/twesterhout/halide-haskell/tree/master/tutorials) | [**Documentation**](https://hackage.haskell.org/package/halide-haskell-0.0.1.0) | [**Showcases**](https://github.com/twesterhout/halide-haskell-examples)
 
+[![license](https://img.shields.io/github/license/twesterhout/halide-haskell.svg?style=flat-square)](LICENSE)
 [![build](https://img.shields.io/github/actions/workflow/status/twesterhout/halide-haskell/ci.yml?style=flat-square)](https://github.com/twesterhout/halide-haskell/actions/workflows/ci.yml)
 [![Hackage](https://img.shields.io/hackage/v/halide-haskell?style=flat-square)](https://hackage.haskell.org/package/halide-haskell)
 
@@ -33,10 +39,13 @@ This package provides Haskell bindings that allow to write Halide embedded in
 Haskell without C++ 😋.
 </h4>
 
-  - [Tutorials](https://github.com/twesterhout/halide-haskell/tree/master/tutorials)
-  - [Reference documentation](https://hackage.haskell.org/package/halide-haskell-0.0.1.0)
+  - [Example usage](#-example-usage)
+  - [Installing](#-installing)
+  - [Motivation](#-motivation)
+  - [Contributing](#-contributing)
 
-## 🚀 Getting started
+
+## 🚀 Example usage
 
 As a simple example, here's how you could implement array addition with halide-haskell:
 
@@ -75,7 +84,37 @@ main = do
         print =<< peekToList out'
 ```
 
-For more examples, have a look a the [tutorials](https://github.com/twesterhout/halide-haskell/tree/master/tutorials).
+For more examples, have a look at the [tutorials](https://github.com/twesterhout/halide-haskell/tree/master/tutorials).
+
+## 💻 Installing
+
+Currently, the easiest way to install the library is using
+[Nix](https://nixos.org/). It is not a fundamental limitation, because the
+library itself is just a normal Cabal-based Haskell project, but installing &
+patching (not all our bug fixes have been upstreamed yet) the system
+dependencies is just too much work without Nix.
+
+So, once you have Nix installed, you can add halide-haskell to your flake
+inputs like [this project
+demonstrates](https://github.com/twesterhout/halide-haskell-examples/blob/main/flake.nix#L27)
+and then include it in your `build-depends` section in the Cabal file.
+
+If you just want to try building the library, type
+
+```sh
+nix build
+```
+
+and to run an example, try
+
+```sh
+nix run
+nix run .#ghc927-intel-ocl.halide-haskell # for Intel OpenCL support
+nix run .#ghc927-cuda.halide-haskell      # for CUDA support
+nix run .#ghc944.halide-haskell           # to build with GHC 9.4.4 instead
+```
+
+(for OpenCL and CUDA, you may need to set `NIXPKGS_ALLOW_UNFREE=1`)
 
 ## 🤩 Motivation
 
@@ -143,7 +182,8 @@ Currently, the best way to get started is to use Nix:
 nix develop
 ```
 
-This will drop you into a shell with all the necessary tools to build the code such that you can do
+This will drop you into a shell with all the necessary tools to build the code
+such that you can do
 
 ```sh
 cabal build
