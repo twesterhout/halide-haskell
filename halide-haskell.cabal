@@ -30,7 +30,7 @@ category:        Language
 copyright:       2022-2023 Tom Westerhout
 build-type:      Simple
 extra-doc-files:
-  assets/construction_1f6a7.png
+  construction.png
   README.md
 
 tested-with:     GHC ==9.2.7 || ==9.4.4 || ==9.4.5

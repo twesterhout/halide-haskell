@@ -66,6 +66,7 @@
           "src"
           "example"
           "test"
+          "construction.png"
           "halide-haskell.cabal"
           "README.md"
           "test-readme/README.lhs"
@@ -137,6 +138,13 @@
                   configureFlags = (attrs.configureFlags or [ ]) ++ [ "-fdisable-default-paths" ];
                 });
               halide-haskell = (halide-haskell-for self).override args;
+              # JuicyPixels = self.callHackageDirect
+              #   {
+              #     pkg = "JuicyPixels";
+              #     ver = "3.3.8";
+              #     sha256 = "sha256-O2NER+92JOlAK0q2DSmJNAG2u0gZDQqEhwVL9f7A8/c=";
+              #   }
+              #   { };
               halide-JuicyPixels =
                 (self.callCabal2nix "halide-JuicyPixels" ./halide-JuicyPixels { });
               halide-arrayfire =
