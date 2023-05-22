@@ -25,7 +25,7 @@ module Language.Halide
   , toRVars
   , undef
   , cast
-  , bool
+  , ifThenElse
 
     -- ** Inspecting
   , toIntImm

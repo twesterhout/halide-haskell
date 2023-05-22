@@ -29,8 +29,11 @@ maintainer:
 category:        Language
 copyright:       2022-2023 Tom Westerhout
 build-type:      Simple
-extra-doc-files: README.md
-tested-with:     GHC ==9.2.7 || ==9.4.4
+extra-doc-files:
+  assets/construction_1f6a7.png
+  README.md
+
+tested-with:     GHC ==9.2.7 || ==9.4.4 || ==9.4.5
 
 source-repository head
   type:     git
@@ -68,7 +71,6 @@ library
     Language.Halide.Func
     Language.Halide.Kernel
     Language.Halide.LoopLevel
-    Language.Halide.Prelude
     Language.Halide.RedundantConstraints
     Language.Halide.Schedule
     Language.Halide.Target
@@ -76,6 +78,7 @@ library
     Language.Halide.Type
     Language.Halide.Utils
 
+  -- Language.Halide.Prelude
   build-depends:
     , bytestring        >=0.11.1.0 && <0.12
     , constraints       >=0.13.4   && <0.14

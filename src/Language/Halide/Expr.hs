@@ -39,7 +39,7 @@ module Language.Halide.Expr
   , max
   , div
   , mod
-  , bool
+  , ifThenElse
   , undef
     -- | For debugging, it's often useful to observe the value of an expression when it's evaluated. If you
     -- have a complex expression that does not depend on any buffers or indices, you can 'evaluate' it.
@@ -451,6 +451,7 @@ type VarOrRVar = Expr Int32
 newtype Region = Region [Range]
   deriving stock (Show)
 
+-- | An @n@-dimensional reduction domain.
 newtype ReductionDomain (n :: Nat) = ReductionDomain (ForeignPtr CxxRDom)
 
 -- | Create a scalar expression from a Haskell value.
@@ -473,6 +474,9 @@ withRange r action =
             *$(const Halide::Expr* minPtr), *$(const Halide::Expr* extentPtr)} } |]
       withForeignPtr fp action
 
+-- | Create a reduction domain. Use 'asRVar' to cast it into an index.
+--
+-- For more information about reduction variables, see [@Halide::RDom@](https://halide-lang.org/docs/class_halide_1_1_r_dom.html).
 mkRDom
   :: forall n
    . HasIndexType n
@@ -504,6 +508,8 @@ mkRDom (T.encodeUtf8 -> name) mins extents = fmap ReductionDomain $
 withCxxRDom :: ReductionDomain n -> (Ptr CxxRDom -> IO a) -> IO a
 withCxxRDom (ReductionDomain fp) = withForeignPtr fp
 
+-- | Cast a reduction domain into a multi-dimensional index that can be used to
+-- perform multi-dimensional reductions.
 toRVars :: forall n. HasIndexType n => ReductionDomain n -> IO (IndexType n)
 toRVars rdom = do
   let allocate =
@@ -754,10 +760,12 @@ mod = binaryOp $ \a b ptr ->
   where
     _ = keepRedundantConstraint (Proxy @(Integral a))
 
--- | Similar to the standard 'Prelude.bool' function from Prelude except that it's
+-- | 'ifThenElse cond a b' is the analogue of @if cond then a else b@, but
 -- lifted to work with 'Expr' types.
-bool :: IsHalideType a => Expr Bool -> Expr a -> Expr a -> Expr a
-bool condExpr trueExpr falseExpr = unsafePerformIO $
+--
+-- See also the [RebindableSyntax](https://ghc.gitlab.haskell.org/ghc/doc/users_guide/exts/rebindable_syntax.html#extension-RebindableSyntax) extension.
+ifThenElse :: IsHalideType a => Expr Bool -> Expr a -> Expr a -> Expr a
+ifThenElse condExpr trueExpr falseExpr = unsafePerformIO $
   asExpr condExpr $ \p ->
     asExpr trueExpr $ \t ->
       asExpr falseExpr $ \f ->

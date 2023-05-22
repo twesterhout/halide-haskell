@@ -1,6 +1,6 @@
 cabal-version:   3.0
 name:            halide-arrayfire
-version:         0.0.1.0
+version:         0.0.2.0
 synopsis:        Integration between Halide and ArrayFire
 description:
   This package provides instances of ['Language.Halide.IsHalideBuffer'](https://hackage.haskell.org/package/halide-haskell/docs/Language-Halide.html#t:IsHalideBuffer)
@@ -17,7 +17,7 @@ category:        Language
 copyright:       2022-2023 Tom Westerhout
 build-type:      Simple
 extra-doc-files: README.md
-tested-with:     GHC ==9.2.7 || ==9.4.4
+tested-with:     GHC ==9.2.7 || ==9.4.4 || ==9.4.5
 
 common warnings
   ghc-options:      -Wall
@@ -31,6 +31,7 @@ library
     , base            >=4.16.0.0 && <5
     , halide-haskell  >=0.0.2.0  && <0.1
 
+  ghc-options:     -Wno-orphans
   hs-source-dirs:  src
 
 test-suite halide-arrayfire-test

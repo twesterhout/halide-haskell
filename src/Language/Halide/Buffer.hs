@@ -497,7 +497,19 @@ checkNumberOfDimensions raw = do
         <> " != "
         <> show raw.halideBufferDimensions
 
-withCropped :: Ptr (HalideBuffer n a) -> Int -> Int -> Int -> (Ptr (HalideBuffer n a) -> IO b) -> IO b
+-- | Perform an action on a cropped buffer.
+withCropped
+  :: Ptr (HalideBuffer n a)
+  -- ^ buffer
+  -> Int
+  -- ^ dimension
+  -> Int
+  -- ^ min
+  -> Int
+  -- ^ extent
+  -> (Ptr (HalideBuffer n a) -> IO b)
+  -- ^ what to do
+  -> IO b
 withCropped
   (castPtr -> src)
   (fromIntegral -> d)
@@ -643,6 +655,8 @@ instance
           forM [0 .. extent3 - 1] $ \i3 ->
             peekElemOff ptr3 (fromIntegral (min3 + stride3 * i3))
 
+-- | @withCopiedToHost buf action@ performs the action @action@ ensuring that @buf@ has been
+-- copied to the host beforehand. If @buf@ is already on the host, no copying is performed.
 withCopiedToHost :: Ptr (HalideBuffer n a) -> IO b -> IO b
 withCopiedToHost (castPtr @_ @RawHalideBuffer -> buf) action = do
   raw <- peek buf

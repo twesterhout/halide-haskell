@@ -21,6 +21,11 @@
     #   url = "github:halide/Halide";
     #   flake = false;
     # };
+    arrayfire-nix = {
+      url = "github:twesterhout/arrayfire-nix";
+      inputs.flake-utils.follows = "flake-utils";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     inline-c = {
       url = "github:twesterhout/inline-c";
       flake = false;
@@ -45,8 +50,10 @@
         overlays = [
           (self: super: {
             halide = self.callPackage ./nix/halide.nix { };
-            forge = self.callPackage ./nix/forge.nix { };
-            arrayfire = self.callPackage ./nix/arrayfire.nix { };
+            arrayfire = inputs.arrayfire-nix.packages.${system}.arrayfire.default;
+            forge = inputs.arrayfire-nix.packages.${system}.forge;
+            # forge = self.callPackage ./nix/forge.nix { };
+            # arrayfire = self.callPackage ./nix/arrayfire.nix { };
           })
         ];
       };

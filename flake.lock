@@ -17,6 +17,30 @@
         "type": "github"
       }
     },
+    "arrayfire-nix": {
+      "inputs": {
+        "flake-utils": [
+          "flake-utils"
+        ],
+        "nixgl": "nixgl",
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1684755228,
+        "narHash": "sha256-vmNcxWic4OacqQdBGuJuUt0Fa57jM8M5Emgdhxk7BL8=",
+        "owner": "twesterhout",
+        "repo": "arrayfire-nix",
+        "rev": "705980fdc25615bb0d429a5a47bcbf7e4e29ba53",
+        "type": "github"
+      },
+      "original": {
+        "owner": "twesterhout",
+        "repo": "arrayfire-nix",
+        "type": "github"
+      }
+    },
     "flake-compat": {
       "flake": false,
       "locked": {
@@ -105,13 +129,38 @@
         "type": "github"
       }
     },
+    "nixgl": {
+      "inputs": {
+        "flake-utils": [
+          "arrayfire-nix",
+          "flake-utils"
+        ],
+        "nixpkgs": [
+          "arrayfire-nix",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1676383589,
+        "narHash": "sha256-KCkWZXCjH+C4Kn7fUGSrEl5btk+sERHhZueSsvVbPWc=",
+        "owner": "guibou",
+        "repo": "nixGL",
+        "rev": "c917918ab9ebeee27b0dd657263d3f57ba6bb8ad",
+        "type": "github"
+      },
+      "original": {
+        "owner": "guibou",
+        "repo": "nixGL",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1681737997,
-        "narHash": "sha256-pHhjgsIkRMu80LmVe8QoKIZB6VZGRRxFmIvsC5S89k4=",
+        "lastModified": 1684662198,
+        "narHash": "sha256-lmGDGuFONWSoGBKDDhU/6fOhhmFoZQ8rPf+kS7/e/Gs=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "f00994e78cd39e6fc966f0c4103f908e63284780",
+        "rev": "50a183182d7ae39133555414d48d5d609a28a57d",
         "type": "github"
       },
       "original": {
@@ -124,6 +173,7 @@
     "root": {
       "inputs": {
         "arrayfire-haskell": "arrayfire-haskell",
+        "arrayfire-nix": "arrayfire-nix",
         "flake-compat": "flake-compat",
         "flake-utils": "flake-utils",
         "inline-c": "inline-c",

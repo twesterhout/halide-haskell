@@ -1,9 +1,9 @@
 cabal-version:   3.0
 name:            halide-JuicyPixels
-version:         0.0.2.0
+version:         0.0.2.1
 synopsis:        Integration between Halide and JuicyPixels
 description:
-  This package provides instances of ['Language.Halide.IsHalideBuffer'](https://hackage.haskell.org/package/halide-haskell/docs/Language-Halide.html#t:IsHalideBuffer)
+  This package provides instances of [@Language.Halide.IsHalideBuffer@](https://hackage.haskell.org/package/halide-haskell/docs/Language-Halide.html#t:IsHalideBuffer)
   for image types from the [JuicyPixels](https://hackage.haskell.org/package/JuicyPixels) library.
 
 homepage:        https://github.com/twesterhout/halide-haskell
@@ -18,7 +18,7 @@ category:        Language
 copyright:       2022-2023 Tom Westerhout
 build-type:      Simple
 extra-doc-files: README.md
-tested-with:     GHC ==9.2.7 || ==9.4.4
+tested-with:     GHC ==9.2.7 || ==9.4.4 || ==9.4.5
 
 common setup
   ghc-options:        -Wall
@@ -39,6 +39,7 @@ library
     , JuicyPixels     >=3.3.0    && <4
     , vector          >=0.12.3.0 && <0.13
 
+  ghc-options:     -Wno-orphans
   hs-source-dirs:  src
 
 test-suite halide-JuicyPixels-test

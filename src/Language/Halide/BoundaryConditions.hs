@@ -21,22 +21,9 @@ import Prelude hiding (min, tail)
 
 importHalide
 
--- | A sinle-dimensional span including all numbers between @min@ and @(min + extent - 1)@.
+-- | Impose a boundary condition such that the nearest edge sample is returned everywhere outside the given region.
 --
--- Haskell counterpart of [@Halide::Range@](https://halide-lang.org/docs/struct_halide_1_1_range.html).
--- data Range
---   = Range
---       !(Expr Int32)
---       -- ^ min
---       !(Expr Int32)
---       -- ^ extent
---   deriving stock (Show)
-
--- newtype Region (n :: Nat) = Region [Range]
-
--- region :: (KnownNat n, IsHalideType a) => Func 'ParamTy n a -> IO (Region n)
--- region = undefined
-
+-- For more information, see [@Halide::repeat_edge@](https://halide-lang.org/docs/namespace_halide_1_1_boundary_conditions.html#a0548f23db36e4a8a03690bc8bee1e850).
 repeatEdge :: (KnownNat n, IsHalideType a) => Func 'ParamTy n (Expr a) -> IO (Func 'FuncTy n (Expr a))
 repeatEdge source =
   withBufferParam source $ \source' ->
@@ -44,6 +31,9 @@ repeatEdge source =
       =<< [CU.exp| Halide::Func* { new Halide::Func{
             Halide::BoundaryConditions::repeat_edge(*$(const Halide::ImageParam* source'))} } |]
 
+-- | Impose a boundary condition such that a given expression is returned everywhere outside the boundary.
+--
+-- For more information, see [@Halide::constant_exterior@](https://halide-lang.org/docs/namespace_halide_1_1_boundary_conditions.html#aa4ed713b5f9a6f13e6323f2a21d41d5e).
 constantExterior :: (KnownNat n, IsHalideType a) => Expr a -> Func 'ParamTy n (Expr a) -> IO (Func 'FuncTy n (Expr a))
 constantExterior value source =
   withBufferParam source $ \source' ->

@@ -80,7 +80,6 @@ import Data.Kind (Type)
 import Data.Proxy
 import Data.Text (Text)
 import Data.Text.Encoding qualified as T
-import Data.Tuple
 import Foreign.ForeignPtr
 import Foreign.Marshal (toBool, with)
 import Foreign.Ptr (Ptr, castPtr)

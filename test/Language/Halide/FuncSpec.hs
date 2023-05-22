@@ -255,8 +255,8 @@ spec = do
   describe "undef" $ do
     it "allows to skip stores" $ do
       i <- mkVar "i"
-      f <- define "f" i $ bool (i `gt` 5) i 0
-      update f i $ bool ((f ! i) `eq` 0) (2 * i) undef
+      f <- define "f" i $ ifThenElse (i `gt` 5) i 0
+      update f i $ ifThenElse ((f ! i) `eq` 0) (2 * i) undef
       realize f [10] peekToList `shouldReturn` ([0, 2, 4, 6, 8, 10] <> [6 .. 9] :: [Int32])
 
   describe "Tuples" $ do

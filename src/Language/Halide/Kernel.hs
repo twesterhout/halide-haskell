@@ -44,6 +44,7 @@ import Language.Halide.Buffer
 import Language.Halide.Context
 import Language.Halide.Expr
 import Language.Halide.Func
+import Language.Halide.RedundantConstraints
 import Language.Halide.Target
 import Language.Halide.Type
 import System.IO.Temp (withSystemTempDirectory)
@@ -194,6 +195,8 @@ compileToCallable target builder =
                   return new Halide::Callable{func.compile_to_callable(args, target)};
                 });
               } |]
+  where
+    _ = keepRedundantConstraint @(IsHalideKernel (LoweredSignature f))
 
 callableToFunction :: forall f. IsHalideKernel f => Callable f -> IO f
 callableToFunction (Callable callable) = do

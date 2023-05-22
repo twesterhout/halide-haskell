@@ -28,10 +28,7 @@ spec = do
         i <- mkVar "i"
         j <- mkVar "j"
         define "out" (i, j) $
-          bool
-            (i `eq` j)
-            (v ! i / scale)
-            0
+          ifThenElse (i `eq` j) (v ! i / scale) 0
       let a :: [Double]
           a = [1.0, 2.0, 3.0]
       withHalideBuffer a $ \a' ->
