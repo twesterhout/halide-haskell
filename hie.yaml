@@ -1,2 +1,58 @@
 cradle:
   cabal:
+    - path: "./src"
+      component: "lib:halide-haskell"
+
+    - path: "./example/Example01.hs"
+      component: "halide-haskell:exe:halide-haskell"
+
+    - path: "./example/GettingStarted.hs"
+      component: "halide-haskell:exe:getting-started"
+
+    - path: "./example/MinimalGPU.hs"
+      component: "halide-haskell:exe:halide-minimal-gpu"
+
+    - path: "./test"
+      component: "halide-haskell:test:halide-haskell-test"
+
+    - path: "halide-JuicyPixels/src"
+      component: "lib:halide-JuicyPixels"
+
+    - path: "halide-JuicyPixels/test"
+      component: "halide-JuicyPixels:test:halide-JuicyPixels-test"
+
+    - path: "halide-arrayfire/src"
+      component: "lib:halide-arrayfire"
+
+    - path: "halide-arrayfire/test"
+      component: "halide-arrayfire:test:halide-arrayfire-test"
+
+    - path: "test-readme/./README.lhs"
+      component: "halide-readme:exe:halide-readme"
+
+    - path: "test-readme/./"
+      component: "halide-readme:test:halide-readme-test"
+
+    - path: "tutorials/01-Basics/./README.lhs"
+      component: "halide-tutorial01:exe:halide-tutorial01"
+
+    - path: "tutorials/01-Basics/./"
+      component: "halide-tutorial01:test:halide-tutorial01-test"
+
+    - path: "tutorials/03-Inspecting/./README.lhs"
+      component: "halide-tutorial03:exe:halide-tutorial03"
+
+    - path: "tutorials/03-Inspecting/./"
+      component: "halide-tutorial03:test:halide-tutorial03-test"
+
+    - path: "tutorials/04-Debugging/./README.lhs"
+      component: "halide-tutorial04:exe:halide-tutorial04"
+
+    - path: "tutorials/04-Debugging/./"
+      component: "halide-tutorial04:test:halide-tutorial04-test"
+
+    - path: "tutorials/05-Scheduling/./README.lhs"
+      component: "halide-tutorial05:exe:halide-tutorial05"
+
+    - path: "tutorials/05-Scheduling/./"
+      component: "halide-tutorial05:test:halide-tutorial05-test"
