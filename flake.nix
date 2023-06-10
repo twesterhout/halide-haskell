@@ -253,12 +253,12 @@
                 haskell =
                   let
                     f = { name, haskellPackages }: {
-                      "${name}" = haskellPackagesOverride haskellPackages { };
+                      packages."${name}" = haskellPackagesOverride haskellPackages { };
                     };
                   in
-                  foldl' (acc: conf: lib.recursiveUpdate acc (f conf)) super.haskell.packages
+                  foldl' (acc: conf: lib.recursiveUpdate acc (f conf)) super.haskell
                     (lib.mapAttrsToList (name: haskellPackages: { inherit name haskellPackages; })
-                      (lib.filterAttrs (_: ps: ps ? ghc) pkgs.haskell.packages));
+                      (lib.filterAttrs (_: ps: ps ? ghc) super.haskell.packages));
               })
             ];
           };
