@@ -246,6 +246,13 @@
               "${name}-cuda" = genericShell ps-cuda;
               "${name}-intel-ocl" = genericShell ps-intel-ocl;
             };
+          overlays = {
+            default = [
+              (self: super: {
+                halide = self.callPackage ./nix/halide.nix { };
+              })
+            ];
+          };
           # The formatter to use for .nix files (but not .hs files)
           # Allows us to run `nix fmt` to reformat nix files.
           formatter = pkgs.nixpkgs-fmt;
