@@ -39,10 +39,10 @@ stdenv.mkDerivation rec {
     llvmPackages_14.libclang
     libpng
     libjpeg
-    mesa
     eigen
     openblas
-  ];
+  ]
+  ++ lib.optional lib.isLinux mesa;
 
   nativeBuildInputs = [ cmake ];
 
