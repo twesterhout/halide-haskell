@@ -42,7 +42,7 @@ stdenv.mkDerivation rec {
     eigen
     openblas
   ]
-  ++ lib.optional lib.isLinux mesa;
+  ++ lib.optional stdenv.isLinux mesa;
 
   nativeBuildInputs = [ cmake ];
 
