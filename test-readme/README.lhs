@@ -88,18 +88,15 @@ For more examples, have a look at the [tutorials](https://github.com/twesterhout
 
 ## 💻 Installing
 
-Currently, the easiest way to install the library is using
-[Nix](https://nixos.org/). It is not a fundamental limitation, because the
-library itself is just a normal Cabal-based Haskell project, but installing &
-patching (not all our bug fixes have been upstreamed yet) the system
-dependencies is just too much work without Nix.
+The library is avaiable on Hackage, so you can just add `halide-haskell` to the
+`build-depends` field in your Cabal file. However, halide-haskell depends on Halide,
+so you need to make sure it's available.
 
-So, once you have Nix installed, you can add halide-haskell to your flake
-inputs like [this project
-demonstrates](https://github.com/twesterhout/halide-haskell-examples/blob/main/flake.nix#L27)
-and then include it in your `build-depends` section in the Cabal file.
+### ❄️ Nix
 
-If you just want to try building the library, type
+No need to do anything 😃, Nix will make Halide avaiable automatically.
+
+If you just want to hack on the library, after `git clone`ing, type
 
 ```sh
 nix build
@@ -109,12 +106,18 @@ and to run an example, try
 
 ```sh
 nix run
-nix run .#ghc927-intel-ocl.halide-haskell # for Intel OpenCL support
-nix run .#ghc927-cuda.halide-haskell      # for CUDA support
-nix run .#ghc944.halide-haskell           # to build with GHC 9.4.4 instead
+nix run .#ghc928-intel-ocl.halide-haskell # for Intel OpenCL support
+nix run .#ghc928-cuda.halide-haskell      # for CUDA support
+nix run .#ghc945.halide-haskell           # to build with GHC 9.4.5 instead
+nix run .#ghc945.halide-tutorial01        # to run the first tutorial
 ```
 
-(for OpenCL and CUDA, you may need to set `NIXPKGS_ALLOW_UNFREE=1`)
+### non-Nix
+
+This set up is not tested in CI... but
+
+- Download a pre-built Halide for your system from [their releases page](https://github.com/halide/Halide/releases/).
+- Pass `--extra-include-dirs` and `--extra-lib-dirs` options to Cabal on the command line or add them to your `cabal.project.local` file.
 
 ## 🤩 Motivation
 
