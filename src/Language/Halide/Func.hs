@@ -910,8 +910,8 @@ indexFunc func x =
   unsafePerformIO $
     withExprIndices args (indexFunc func) <&> exprListToDefinition
 
-(!!) :: (HasIndexType n, IsFuncDefinition a) => Func t n a -> [Expr Int32] -> a
-(!!) func args =
+(!!) :: IsFuncDefinition a => SomeFunc t a -> [Expr Int32] -> a
+(!!) (SomeFunc func) args =
   unsafePerformIO $
     withMany asExpr args (indexFunc func) <&> exprListToDefinition
 
