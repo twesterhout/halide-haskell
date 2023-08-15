@@ -60,11 +60,17 @@ module Language.Halide
   , Parameter
   , FuncTy (..)
   , Stage (..)
+  , SomeFunc (..)
+  , withSomeFunc
+  , foldSomeFunc
 
     -- ** Creating
   , define
+  , defineSomeFunc
   , update
+  , updateSomeFunc
   , (!)
+  , (!!)
   , repeatEdge
   , constantExterior
 
