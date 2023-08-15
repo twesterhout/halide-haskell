@@ -10,37 +10,23 @@
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     nix-filter.url = "github:numtide/nix-filter";
-    flake-compat = {
-      url = "github:edolstra/flake-compat";
-      # don't look for a flake.nix file in this repository
-      # this tells Nix to retrieve this input as just source code
-      flake = false;
-    };
-    # halide = {
-    #   url = "github:halide/Halide";
-    #   flake = false;
-    # };
     arrayfire-nix = {
       url = "github:twesterhout/arrayfire-nix";
       inputs.flake-utils.follows = "flake-utils";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    # inline-c = {
-    #   url = "github:twesterhout/inline-c";
-    #   flake = false;
-    # };
     arrayfire-haskell = {
       url = "github:twesterhout/arrayfire-haskell/main";
       flake = false;
     };
-    nixGL = {
-      url = "github:guibou/nixGL";
-      inputs.flake-utils.follows = "flake-utils";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    # nixGL = {
+    #   url = "github:guibou/nixGL";
+    #   inputs.flake-utils.follows = "flake-utils";
+    #   inputs.nixpkgs.follows = "nixpkgs";
+    # };
   };
 
-  outputs = { nixpkgs, flake-utils, nix-filter, nixGL, ... }:
+  outputs = { nixpkgs, flake-utils, nix-filter, ... }:
     let
       inherit (nixpkgs) lib;
       src = nix-filter.lib {
@@ -59,44 +45,39 @@
       halide-haskell-for = pkgs: haskellPackages:
         let
           builder =
-            { withIntelOpenCL
-            , withCuda
-            }:
             (haskellPackages.callCabal2nix "halide-haskell" src {
               Halide = pkgs.halide;
-            }).overrideAttrs (attrs: rec {
-              pname = attrs.pname
-                + lib.optionalString withIntelOpenCL "-intel-ocl"
-                + lib.optionalString withCuda "-cuda";
-              name = "${pname}-${attrs.version}";
-              nativeBuildInputs = attrs.nativeBuildInputs
-                ++ lib.optional withIntelOpenCL pkgs.makeWrapper;
-              propagatedBuildInputs = with pkgs;
-                attrs.propagatedBuildInputs
-                ++ lib.optionals withIntelOpenCL [ clinfo intel-ocl ocl-icd ]
-                ++ lib.optional withCuda nixGL.packages.${system}.nixGLDefault;
-              postInstall = (attrs.postInstall or "")
-                + lib.optionalString withIntelOpenCL ''
-                wrapProgram $out/bin/halide-haskell \
-                  --prefix LD_LIBRARY_PATH : ${pkgs.ocl-icd}/lib \
-                  --prefix OCL_ICD_VENDORS : ${pkgs.intel-ocl}/etc/OpenCL/vendors
-              ''
-                + lib.optionalString withCuda ''
-                prog="$out/bin/halide-haskell"
-                hidden="$(dirname "$prog")/.$(basename "$prog")"-wrapped
-                mv "$prog" "$hidden"
-                echo "#!${pkgs.stdenv.shell}" > "$prog"
-                echo "exec ${pkgs.nixgl.auto.nixGLDefault}/bin/nixGL $hidden \"\$@\"" >> "$prog"
-                chmod +x "$prog"
-              '';
+            }).overrideAttrs (attrs: {
+              # pname = attrs.pname
+              #   + lib.optionalString withIntelOpenCL "-intel-ocl"
+              #   + lib.optionalString withCuda "-cuda";
+              # name = "${pname}-${attrs.version}";
+              # nativeBuildInputs = attrs.nativeBuildInputs
+              #   ++ lib.optional withIntelOpenCL pkgs.makeWrapper;
+              # propagatedBuildInputs = with pkgs;
+              #   attrs.propagatedBuildInputs
+              #   ++ lib.optionals withIntelOpenCL [ clinfo intel-ocl ocl-icd ];
+              # ++ lib.optional withCuda nixGL.packages.${system}.nixGLDefault;
+              # postInstall = (attrs.postInstall or "")
+              #   + lib.optionalString withIntelOpenCL ''
+              #   wrapProgram $out/bin/halide-haskell \
+              #     --prefix LD_LIBRARY_PATH : ${pkgs.ocl-icd}/lib \
+              #     --prefix OCL_ICD_VENDORS : ${pkgs.intel-ocl}/etc/OpenCL/vendors
+              # ''
+              #   + lib.optionalString withCuda ''
+              #   prog="$out/bin/halide-haskell"
+              #   hidden="$(dirname "$prog")/.$(basename "$prog")"-wrapped
+              #   mv "$prog" "$hidden"
+              #   echo "#!${pkgs.stdenv.shell}" > "$prog"
+              #   chmod +x "$prog"
+              # '';
               # We set withIntelOpenCL and withCuda such that dev shells can determine whether
               # they need extra dependencies
-              inherit withIntelOpenCL;
-              inherit withCuda;
+              # inherit withIntelOpenCL;
+              # inherit withCuda;
             });
         in
-        lib.makeOverridable builder
-          { withIntelOpenCL = false; withCuda = false; };
+        builder;
 
       with-markdown-unlit = hp: p: p.overrideAttrs (attrs: {
         nativeBuildInputs = (attrs.nativeBuildInputs or [ ]) ++ [ hp.markdown-unlit ];
@@ -112,7 +93,7 @@
               #   }).overrideAttrs (attrs: {
               #     configureFlags = (attrs.configureFlags or [ ]) ++ [ "-fdisable-default-paths" ];
               #   });
-              halide-haskell = (halide-haskell-for self hself).override args;
+              halide-haskell = halide-haskell-for self hself;
               halide-JuicyPixels =
                 (hself.callCabal2nix "halide-JuicyPixels" ./halide-JuicyPixels { });
               halide-arrayfire =
@@ -146,8 +127,6 @@
       devShellFor = pkgs:
         let
           ps = pkgs.haskellPackages;
-          withIntelOpenCL = ps.halide-haskell.withIntelOpenCL;
-          withCuda = ps.halide-haskell.withCuda;
         in
         ps.shellFor {
           packages = ps: with ps; [
@@ -160,6 +139,7 @@
             halide-tutorial05
           ]; # ++ lib.optional pkgs.stdenv.isLinux halide-arrayfire;
           withHoogle = true;
+          buildInputs = with pkgs; [ ocl-icd ];
           nativeBuildInputs = with pkgs; with ps; [
             # Building and testing
             cabal-install
@@ -170,7 +150,6 @@
             nil
             # Formatters
             fourmolu
-            cabal-fmt
             nixpkgs-fmt
             # Previewing markdown files
             python3Packages.grip
@@ -179,23 +158,23 @@
             # gcc
             # zlib
             # gdb
-          ]
-          ++ lib.optional withIntelOpenCL clinfo
-          ++ lib.optional withCuda pkgs.nixgl.auto.nixGLDefault;
+            clinfo
+          ];
+          # ++ lib.optional withCuda pkgs.nixgl.auto.nixGLDefault;
           shellHook = ''
             export PROMPT_COMMAND=""
             export PS1='(nix) GHC ${ps.ghc.version} \w $ '
-            export LD_LIBRARY_PATH=${pkgs.zlib}/lib:${pkgs.halide}/lib:$LD_LIBRARY_PATH
-          '' + (if withIntelOpenCL then ''
-            export LD_LIBRARY_PATH=${pkgs.ocl-icd}/lib:$LD_LIBRARY_PATH
-            export OCL_ICD_VENDORS="${pkgs.intel-ocl}/etc/OpenCL/vendors"
-          '' else "");
+            export LD_LIBRARY_PATH=${pkgs.halide}/lib:${pkgs.ocl-icd}/lib:${pkgs.zlib}/lib:$LD_LIBRARY_PATH
+          '';
+          # + (if withIntelOpenCL then ''
+          #   export LD_LIBRARY_PATH=$LD_LIBRARY_PATH
+          #   export OCL_ICD_VENDORS="${pkgs.intel-ocl}/etc/OpenCL/vendors"
+          # '' else "");
         };
 
       pkgsFor = system: args: import nixpkgs {
         inherit system;
         overlays = [
-          nixGL.overlay
           (overlayFor args)
         ];
         config.allowUnfree =

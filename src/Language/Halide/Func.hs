@@ -23,10 +23,15 @@ module Language.Halide.Func
   , Stage (..)
   , Function
   , Parameter
+  , SomeFunc (..)
+  , withSomeFunc
+  , foldSomeFunc
   , buffer
   , scalar
   , define
+  , defineSomeFunc
   , (!)
+  , (!!)
   , realizeOnTarget
   , realize
 
@@ -53,6 +58,7 @@ module Language.Halide.Func
 
     -- * Update definitions
   , update
+  , updateSomeFunc
   , hasUpdateDefinitions
   , getUpdateStage
 
@@ -98,7 +104,7 @@ import Language.Halide.Type
 import Language.Halide.Utils
 import System.IO.Unsafe (unsafePerformIO)
 import Unsafe.Coerce
-import Prelude hiding (min, tail)
+import Prelude hiding (min, tail, (!!))
 
 -- | Haskell counterpart of [Halide::Stage](https://halide-lang.org/docs/class_halide_1_1_stage.html).
 data CxxStage
@@ -117,6 +123,15 @@ importHalide
 data Func (t :: FuncTy) (n :: Nat) (a :: Type) where
   Func :: {-# UNPACK #-} !(ForeignPtr CxxFunc) -> Func 'FuncTy n a
   Param :: IsHalideType a => {-# UNPACK #-} !(IORef (Maybe (ForeignPtr CxxImageParam))) -> Func 'ParamTy n (Expr a)
+
+data SomeFunc t a where
+  SomeFunc :: HasIndexType n => !(Func t n a) -> SomeFunc t a
+
+withSomeFunc :: (forall n. HasIndexType n => Func t n a -> r) -> SomeFunc t a -> r
+withSomeFunc f (SomeFunc x) = f x
+
+foldSomeFunc :: SomeFunc t a -> (forall n. HasIndexType n => Func t n a -> r) -> r
+foldSomeFunc x f = withSomeFunc f x
 
 -- | Function type. It can either be 'FuncTy' which means that we have defined the function ourselves,
 -- or 'ParamTy' which means that it's a parameter to our pipeline.
@@ -768,22 +783,42 @@ define
   -> IO (Func 'FuncTy n d)
 define name args definition =
   case proveIndexTypeProperties @n of
-    Sub Dict -> asVectorOf @((~) (Expr Int32)) asVar (fromTuple args) $ \x -> do
-      let s = T.encodeUtf8 name
-      withMany withForeignPtr (definitionToExprList definition) $ \v ->
-        wrapCxxFunc
-          =<< [CU.block| Halide::Func* {
-                Halide::Func f{std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}};
-                auto const& args = *$(const std::vector<Halide::Var>* x);
-                auto const& def = *$(const std::vector<Halide::Expr>* v);
-                if (def.size() == 1) {
-                  f(args) = def.at(0);
-                }
-                else {
-                  f(args) = Halide::Tuple{def};
-                }
-                return new Halide::Func{f};
-              } |]
+    Sub Dict -> asVectorOf @((~) (Expr Int32)) asVar (fromTuple args) $ \x ->
+      defineDynamic name x definition
+
+defineSomeFunc :: forall d. IsFuncDefinition d => Text -> [Var] -> d -> IO (SomeFunc 'FuncTy d)
+defineSomeFunc name args definition = do
+  let rank = length args
+  case someNatVal (fromIntegral rank) of
+    Just (SomeNat (Proxy :: Proxy n)) ->
+      case cmpNat (Proxy @n) (Proxy @10) of
+        LTI -> withMany asVar args $ \argsPtr -> SomeFunc <$> defineDynamic @n @d name argsPtr definition
+        EQI -> withMany asVar args $ \argsPtr -> SomeFunc <$> defineDynamic @n @d name argsPtr definition
+        GTI -> error $ "too many indices: " <> show rank <> "; at most 10-dimensional indices are supported"
+    _ -> error $ "failed to lift the value (" <> show rank <> " :: Int) to kind Nat"
+
+defineDynamic
+  :: forall n d
+   . (HasIndexType n, IsFuncDefinition d)
+  => Text
+  -> Ptr (CxxVector CxxVar)
+  -> d
+  -> IO (Func 'FuncTy n d)
+defineDynamic (T.encodeUtf8 -> s) x definition =
+  withMany withForeignPtr (definitionToExprList definition) $ \v ->
+    wrapCxxFunc
+      =<< [CU.block| Halide::Func* {
+            Halide::Func f{std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}};
+            auto const& args = *$(const std::vector<Halide::Var>* x);
+            auto const& def = *$(const std::vector<Halide::Expr>* v);
+            if (def.size() == 1) {
+              f(args) = def.at(0);
+            }
+            else {
+              f(args) = Halide::Tuple{def};
+            }
+            return new Halide::Func{f};
+          } |]
 
 -- | Create an update definition for a Halide function.
 --
@@ -796,25 +831,47 @@ update
   -> d
   -> IO ()
 update func args definition =
+  case proveIndexTypeProperties @n of
+    Sub Dict -> asVectorOf @((~) (Expr Int32)) asExpr (fromTuple args) $ \index ->
+      updateDynamic func index definition
+
+updateSomeFunc
+  :: forall d
+   . IsFuncDefinition d
+  => SomeFunc 'FuncTy d
+  -> [Expr Int32]
+  -> d
+  -> IO ()
+updateSomeFunc (SomeFunc func) args definition =
+  withMany asExpr args $ \index ->
+    updateDynamic func index definition
+
+updateDynamic
+  :: forall n d
+   . (HasIndexType n, IsFuncDefinition d)
+  => Func 'FuncTy n d
+  -> Ptr (CxxVector CxxExpr)
+  -> d
+  -> IO ()
+updateDynamic func index definition =
   withFunc func $ \f ->
-    case proveIndexTypeProperties @n of
-      Sub Dict -> asVectorOf @((~) (Expr Int32)) asExpr (fromTuple args) $ \index ->
-        withMany withForeignPtr (definitionToExprList definition) $ \value ->
-          [C.throwBlock| void {
-            handle_halide_exceptions([=](){
-              auto& f = *$(Halide::Func* f);
-              auto const& index = *$(const std::vector<Halide::Expr>* index);
-              auto const& value = *$(const std::vector<Halide::Expr>* value);
-              if (value.size() == 1) {
-                f(index) = value.at(0);
-              }
-              else {
-                f(index) = Halide::Tuple{value};
-              }
-            });
-          } |]
+    withMany withForeignPtr (definitionToExprList definition) $ \value ->
+      [C.throwBlock| void {
+        handle_halide_exceptions([=](){
+          auto& f = *$(Halide::Func* f);
+          auto const& index = *$(const std::vector<Halide::Expr>* index);
+          auto const& value = *$(const std::vector<Halide::Expr>* value);
+          if (value.size() == 1) {
+            f(index) = value.at(0);
+          }
+          else {
+            f(index) = Halide::Tuple{value};
+          }
+        });
+      } |]
 
 infix 9 !
+infix 9 !!
 
 withExprIndices :: forall n a. HasIndexType n => IndexType n -> (Ptr (CxxVector CxxExpr) -> IO a) -> IO a
 withExprIndices indices action =
@@ -822,8 +879,8 @@ withExprIndices indices action =
     Sub Dict -> asVectorOf @((~) (Expr Int32)) asExpr (fromTuple indices) $ \x ->
       action x
 
-indexFunc :: forall n a t. HasIndexType n => Func t n a -> IndexType n -> IO [ForeignPtr CxxExpr]
-indexFunc func indices = withExprIndices indices $ \x ->
+indexFunc :: forall n a t. HasIndexType n => Func t n a -> Ptr (CxxVector CxxExpr) -> IO [ForeignPtr CxxExpr]
+indexFunc func x =
   withFunc func $ \f -> do
     let allocate =
           [CU.block| std::vector<Halide::Expr>* {
@@ -849,7 +906,14 @@ indexFunc func indices = withExprIndices indices $ \x ->
 -- | Apply a Halide function. Conceptually, @f ! i@ is equivalent to @f[i]@, i.e.
 -- indexing into a lazy array.
 (!) :: (HasIndexType n, IsFuncDefinition a) => Func t n a -> IndexType n -> a
-(!) func args = unsafePerformIO $ indexFunc func args <&> exprListToDefinition
+(!) func args =
+  unsafePerformIO $
+    withExprIndices args (indexFunc func) <&> exprListToDefinition
+
+(!!) :: (HasIndexType n, IsFuncDefinition a) => Func t n a -> [Expr Int32] -> a
+(!!) func args =
+  unsafePerformIO $
+    withMany asExpr args (indexFunc func) <&> exprListToDefinition
 
 -- | Get a particular dimension of a pipeline parameter.
 dim
