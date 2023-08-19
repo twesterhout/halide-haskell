@@ -39,7 +39,7 @@ import Language.Halide.Expr
 import Language.Halide.Type
 import Language.Halide.Utils
 import System.IO.Unsafe (unsafePerformIO)
-import Prelude hiding (Eq (..), min, tail)
+import Prelude hiding (Eq (..), Ord (..), min, tail, (<), (<=), (>), (>=))
 import Prelude qualified
 
 -- | Haskell counterpart of @Halide::LoopLevel@
@@ -106,7 +106,7 @@ data LoopAlignStrategy
     LoopNoAlign
   | -- | By default, LoopAlignStrategy is set to 'LoopNoAlign'.
     LoopAlignAuto
-  deriving stock (Show, Prelude.Eq, Ord)
+  deriving stock (Show, Prelude.Eq, Prelude.Ord)
 
 instance Enum LoopAlignStrategy where
   fromEnum =

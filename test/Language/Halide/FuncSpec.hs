@@ -11,7 +11,7 @@ import Data.Vector.Storable.Mutable qualified as SM
 import Language.Halide
 import Test.Hspec hiding (parallel)
 import Utils
-import Prelude hiding (Eq(..))
+import Prelude hiding (Eq (..), (>))
 import Prelude qualified
 
 importHalide
@@ -257,7 +257,7 @@ spec = do
   describe "undef" $ do
     it "allows to skip stores" $ do
       i <- mkVar "i"
-      f <- define "f" i $ ifThenElse (i `gt` 5) i 0
+      f <- define "f" i $ ifThenElse (i > 5) i 0
       update f i $ ifThenElse (f ! i == 0) (2 * i) undef
       realize f [10] peekToList `shouldReturn` ([0, 2, 4, 6, 8, 10] <> [6 .. 9] :: [Int32])
 

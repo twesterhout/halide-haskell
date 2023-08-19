@@ -28,14 +28,14 @@ where
 import Foreign.ForeignPtr
 import Foreign.Ptr (Ptr)
 import GHC.Records (HasField (..))
-import qualified Language.C.Inline as C
-import qualified Language.C.Inline.Unsafe as CU
+import Language.C.Inline qualified as C
+import Language.C.Inline.Unsafe qualified as CU
 import Language.Halide.Buffer
 import Language.Halide.Context
 import Language.Halide.Expr
 import Language.Halide.Type
 import System.IO.Unsafe (unsafePerformIO)
-import Prelude hiding (tail)
+import Prelude hiding (tail, (>))
 
 -- | Haskell counterpart of [@Halide::Internal::Dimension@](https://halide-lang.org/docs/class_halide_1_1_internal_1_1_dimension.html).
 data CxxDimension

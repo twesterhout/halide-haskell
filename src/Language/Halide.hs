@@ -40,10 +40,7 @@ module Language.Halide
     -- various comparison operators. Note, that infix versions of the these functions have the
     -- same precedence as the normal comparison operators.
   , HalideEq (..)
-  , lt
-  , lte
-  , gt
-  , gte
+  , HalideOrd (..)
   , min
   , max
   , div

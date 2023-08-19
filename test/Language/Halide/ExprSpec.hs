@@ -16,11 +16,11 @@ import Prelude qualified
 isOverflowing :: Typeable a => (Integer -> Integer -> Integer) -> a -> a -> Bool
 isOverflowing op x y
   | Just HRefl <- eqTypeRep (typeOf x) (typeRep @Int32) =
-      op (toInteger x) (toInteger y) > toInteger (maxBound @Int32)
-        || op (toInteger x) (toInteger y) < toInteger (minBound @Int32)
+      op (toInteger x) (toInteger y) Prelude.> toInteger (maxBound @Int32)
+        || op (toInteger x) (toInteger y) Prelude.< toInteger (minBound @Int32)
   | Just HRefl <- eqTypeRep (typeOf x) (typeRep @Int64) =
-      op (toInteger x) (toInteger y) > toInteger (maxBound @Int64)
-        || op (toInteger x) (toInteger y) < toInteger (minBound @Int64)
+      op (toInteger x) (toInteger y) Prelude.> toInteger (maxBound @Int64)
+        || op (toInteger x) (toInteger y) Prelude.< toInteger (minBound @Int64)
   | otherwise = False
 
 -- infix 1 `evaluatesTo`
@@ -86,26 +86,26 @@ spec = do
     let p :: forall a. (IsHalideType a, Ord a, Floating a, HasEpsilon a, Show a) => a -> Expectation
         p x = do
           let y = mkExpr x
-          when (x > 0) $ do
+          when (x Prelude.> 0) $ do
             log y `shouldEvaluateToApprox` log x
             sqrt y `shouldEvaluateToApprox` sqrt x
-          when (x < 50) $
+          when (x Prelude.< 50) $
             exp y `shouldEvaluateToApprox` exp x
           sin y `shouldEvaluateToApprox` sin x
           cos y `shouldEvaluateToApprox` cos x
           tan y `shouldEvaluateToApprox` tan x
-          when (-1 <= x && x <= 1) $ do
+          when (-1 Prelude.<= x && x Prelude.<= 1) $ do
             asin y `shouldEvaluateToApprox` asin x
             acos y `shouldEvaluateToApprox` acos x
             atan y `shouldEvaluateToApprox` atan x
-          when (abs x < 50) $ do
+          when (abs x Prelude.< 50) $ do
             sinh y `shouldEvaluateToApprox` sinh x
             cosh y `shouldEvaluateToApprox` cosh x
           tanh y `shouldEvaluateToApprox` tanh x
           asinh y `shouldEvaluateToApprox` asinh x
-          when (x >= 1) $
+          when (x Prelude.>= 1) $
             acosh y `shouldEvaluateToApprox` acosh x
-          when (-1 <= x && x <= 1) $
+          when (-1 Prelude.<= x && x Prelude.<= 1) $
             atanh y `shouldEvaluateToApprox` atanh x
     prop "Float" $ p @Float
     prop "Double" $ p @Double

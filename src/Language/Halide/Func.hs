@@ -104,7 +104,7 @@ import Language.Halide.Type
 import Language.Halide.Utils
 import System.IO.Unsafe (unsafePerformIO)
 import Unsafe.Coerce
-import Prelude hiding (Eq (..), min, tail, (!!))
+import Prelude hiding (Eq (..), min, tail, (!!), (<), (<=))
 import Prelude qualified
 
 -- | Haskell counterpart of [Halide::Stage](https://halide-lang.org/docs/class_halide_1_1_stage.html).

@@ -75,7 +75,7 @@ instance HasEpsilon Double where
   eps = 2.220446049250313e-16
 
 approxWith :: (Ord a, Num a) => a -> a -> a -> a -> Bool
-approxWith rtol atol a b = abs (a - b) <= max atol (rtol * max (abs a) (abs b))
+approxWith rtol atol a b = abs (a - b) Prelude.<= max atol (rtol * max (abs a) (abs b))
 
 approx :: (Ord a, HasEpsilon a) => a -> a -> Bool
 approx a b = approxWith (2 * eps * max (abs a) (abs b)) (4 * eps) a b

@@ -27,12 +27,12 @@ module Language.Halide.Expr
   , mkRDom
   , toRVars
   , cast
-  , eq
-  , neq
-  , lt
-  , lte
-  , gt
-  , gte
+  -- , eq
+  -- , neq
+  -- , lt
+  -- , lte
+  -- , gt
+  -- , gte
   , and
   , or
   , min
@@ -52,6 +52,7 @@ module Language.Halide.Expr
   , toIntImm
   , setScalarEstimate
   , HalideEq (..)
+  , HalideOrd (..)
 
     -- * Internal
   , exprToForeignPtr
@@ -686,10 +687,17 @@ instance PrintedArg String where
 
 infix 4 `eq`, `neq`, `lt`, `lte`, `gt`, `gte`
 infix 4 ==, /=
+infix 4 <, >, <=, >=
 
 class HalideEq a r where
   (==) :: a -> a -> r
   (/=) :: a -> a -> r
+
+class HalideEq a r => HalideOrd a r where
+  (<) :: a -> a -> r
+  (<=) :: a -> a -> r
+  (>) :: a -> a -> r
+  (>=) :: a -> a -> r
 
 instance (Prelude.Eq a, r ~ Bool) => HalideEq a r where
   (==) = (Prelude.==)
@@ -698,6 +706,18 @@ instance (Prelude.Eq a, r ~ Bool) => HalideEq a r where
 instance {-# OVERLAPPING #-} (IsHalideType a, r ~ Expr Bool) => HalideEq (Expr a) r where
   (==) = eq
   (/=) = neq
+
+instance (Prelude.Ord a, r ~ Bool) => HalideOrd a r where
+  (<) = (Prelude.<)
+  (<=) = (Prelude.<=)
+  (>) = (Prelude.>)
+  (>=) = (Prelude.>=)
+
+instance {-# OVERLAPPING #-} (IsHalideType a, r ~ Expr Bool) => HalideOrd (Expr a) r where
+  (<) = lt
+  (<=) = lte
+  (>) = gt
+  (>=) = gte
 
 -- | '==' but lifted to return an 'Expr'.
 eq :: IsHalideType a => Expr a -> Expr a -> Expr Bool
