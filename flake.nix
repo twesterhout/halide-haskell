@@ -19,11 +19,6 @@
       url = "github:twesterhout/arrayfire-haskell/main";
       flake = false;
     };
-    # nixGL = {
-    #   url = "github:guibou/nixGL";
-    #   inputs.flake-utils.follows = "flake-utils";
-    #   inputs.nixpkgs.follows = "nixpkgs";
-    # };
   };
 
   outputs = { nixpkgs, flake-utils, nix-filter, ... }:

@@ -31,15 +31,16 @@ import Foreign.ForeignPtr
 import Foreign.Marshal (toBool)
 import Foreign.Ptr (Ptr)
 import GHC.Records (HasField (..))
-import qualified Language.C.Inline as C
-import qualified Language.C.Inline.Cpp.Exception as C
-import qualified Language.C.Inline.Unsafe as CU
+import Language.C.Inline qualified as C
+import Language.C.Inline.Cpp.Exception qualified as C
+import Language.C.Inline.Unsafe qualified as CU
 import Language.Halide.Context
 import Language.Halide.Expr
 import Language.Halide.Type
 import Language.Halide.Utils
 import System.IO.Unsafe (unsafePerformIO)
-import Prelude hiding (min, tail)
+import Prelude hiding (Eq (..), min, tail)
+import Prelude qualified
 
 -- | Haskell counterpart of @Halide::LoopLevel@
 data CxxLoopLevel
@@ -59,13 +60,13 @@ data SomeLoopLevel where
 
 deriving stock instance Show SomeLoopLevel
 
-instance Eq SomeLoopLevel where
+instance Prelude.Eq SomeLoopLevel where
   (SomeLoopLevel InlinedLoopLevel) == (SomeLoopLevel InlinedLoopLevel) = True
   (SomeLoopLevel RootLoopLevel) == (SomeLoopLevel RootLoopLevel) = True
   (SomeLoopLevel a@(LoopLevel _)) == (SomeLoopLevel b@(LoopLevel _)) = a == b
   _ == _ = False
 
-instance Eq (LoopLevel t) where
+instance Prelude.Eq (LoopLevel t) where
   level1 == level2 =
     toBool . unsafePerformIO $
       withCxxLoopLevel level1 $ \l1 ->
@@ -105,7 +106,7 @@ data LoopAlignStrategy
     LoopNoAlign
   | -- | By default, LoopAlignStrategy is set to 'LoopNoAlign'.
     LoopAlignAuto
-  deriving stock (Show, Eq, Ord)
+  deriving stock (Show, Prelude.Eq, Ord)
 
 instance Enum LoopAlignStrategy where
   fromEnum =

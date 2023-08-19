@@ -57,7 +57,8 @@ import Language.Halide.Target
 import Language.Halide.Type
 import Language.Halide.Utils
 import System.FilePath (takeDirectory)
-import Prelude hiding (tail)
+import Prelude hiding (Eq (..), tail)
+import Prelude qualified
 
 #if USE_DLOPEN
 import qualified System.Posix.DynamicLinker as DL
@@ -78,7 +79,7 @@ loadLibrary path = do
 
 -- | Type of dimension that tells which transformations are legal on it.
 data DimType = DimPureVar | DimPureRVar | DimImpureRVar
-  deriving stock (Show, Eq)
+  deriving stock (Show, Prelude.Eq)
 
 -- | Specifies how loop values are traversed.
 data ForType
@@ -90,17 +91,17 @@ data ForType
   | ForGPUBlock
   | ForGPUThread
   | ForGPULane
-  deriving stock (Show, Eq)
+  deriving stock (Show, Prelude.Eq)
 
 data Dim = Dim {var :: !Text, forType :: !ForType, deviceApi :: !DeviceAPI, dimType :: !DimType}
-  deriving stock (Show, Eq)
+  deriving stock (Show, Prelude.Eq)
 
 data FuseContents = FuseContents
   { fuseOuter :: !Text
   , fuseInner :: !Text
   , fuseNew :: !Text
   }
-  deriving stock (Show, Eq)
+  deriving stock (Show, Prelude.Eq)
 
 data SplitContents = SplitContents
   { splitOld :: !Text
@@ -135,10 +136,10 @@ data StorageDim = StorageDim
   deriving stock (Show)
 
 data FusedPair = FusedPair !Text !(Text, Int) !(Text, Int)
-  deriving stock (Show, Eq)
+  deriving stock (Show, Prelude.Eq)
 
 data FuseLoopLevel = FuseLoopLevel !SomeLoopLevel
-  deriving stock (Show, Eq)
+  deriving stock (Show, Prelude.Eq)
 
 data ReductionVariable = ReductionVariable {varName :: !Text, minExpr :: !(Expr Int32), extentExpr :: !(Expr Int32)}
   deriving stock (Show)
@@ -147,7 +148,7 @@ data PrefetchBoundStrategy
   = PrefetchClamp
   | PrefetchGuardWithIf
   | PrefetchNonFaulting
-  deriving stock (Show, Eq)
+  deriving stock (Show, Prelude.Eq)
 
 data PrefetchDirective = PrefetchDirective
   { prefetchFunc :: !Text
@@ -467,7 +468,7 @@ data AutoScheduler
   = Adams2019
   | Li2018
   | Mullapudi2016
-  deriving stock (Eq, Show)
+  deriving stock (Prelude.Eq, Show)
 
 loadAutoScheduler :: AutoScheduler -> IO ()
 loadAutoScheduler scheduler = do

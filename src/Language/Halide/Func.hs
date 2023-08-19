@@ -104,7 +104,8 @@ import Language.Halide.Type
 import Language.Halide.Utils
 import System.IO.Unsafe (unsafePerformIO)
 import Unsafe.Coerce
-import Prelude hiding (min, tail, (!!))
+import Prelude hiding (Eq (..), min, tail, (!!))
+import Prelude qualified
 
 -- | Haskell counterpart of [Halide::Stage](https://halide-lang.org/docs/class_halide_1_1_stage.html).
 data CxxStage
@@ -136,7 +137,7 @@ foldSomeFunc x f = withSomeFunc f x
 -- | Function type. It can either be 'FuncTy' which means that we have defined the function ourselves,
 -- or 'ParamTy' which means that it's a parameter to our pipeline.
 data FuncTy = FuncTy | ParamTy
-  deriving stock (Show, Eq, Ord)
+  deriving stock (Show, Prelude.Eq, Ord)
 
 -- | Synonym for the most commonly used function type.
 type Function n a = Func 'FuncTy n (Expr a)
@@ -224,7 +225,7 @@ data TailStrategy
     -- For pure vars in update definitions use 'TailRoundUp'. For RVars in update
     -- definitions use 'TailGuardWithIf'.
     TailAuto
-  deriving stock (Eq, Ord, Show)
+  deriving stock (Prelude.Eq, Ord, Show)
 
 -- | Common scheduling functions
 class KnownNat n => Schedulable f (n :: Nat) (a :: Type) where

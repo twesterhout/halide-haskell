@@ -6,6 +6,8 @@ module Language.Halide.KernelSpec (spec) where
 import Language.Halide
 import Test.Hspec
 import Utils
+import Prelude hiding (Eq (..))
+import Prelude qualified
 
 spec :: Spec
 spec = do
@@ -28,7 +30,7 @@ spec = do
         i <- mkVar "i"
         j <- mkVar "j"
         define "out" (i, j) $
-          ifThenElse (i `eq` j) (v ! i / scale) 0
+          ifThenElse (i == j) (v ! i / scale) 0
       let a :: [Double]
           a = [1.0, 2.0, 3.0]
       withHalideBuffer a $ \a' ->

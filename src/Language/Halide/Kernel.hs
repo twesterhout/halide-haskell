@@ -48,6 +48,8 @@ import Language.Halide.RedundantConstraints
 import Language.Halide.Target
 import Language.Halide.Type
 import System.IO.Temp (withSystemTempDirectory)
+import Prelude hiding (Eq (..))
+import Prelude qualified
 
 -- | Haskell counterpart of @Halide::Argument@.
 data CxxArgument
@@ -429,7 +431,7 @@ data StmtOutputFormat
     StmtText
   | -- | HTML
     StmtHTML
-  deriving stock (Show, Eq)
+  deriving stock (Show, Prelude.Eq)
 
 instance Enum StmtOutputFormat where
   fromEnum =

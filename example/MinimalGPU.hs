@@ -2,6 +2,7 @@ module Main (main) where
 
 import Control.Monad (unless, void)
 import Language.Halide
+import Prelude hiding (Eq(..))
 
 main :: IO ()
 main = do

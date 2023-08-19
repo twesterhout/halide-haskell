@@ -11,6 +11,8 @@ import Data.Vector.Storable.Mutable qualified as SM
 import Language.Halide
 import Test.Hspec hiding (parallel)
 import Utils
+import Prelude hiding (Eq(..))
+import Prelude qualified
 
 importHalide
 
@@ -19,7 +21,7 @@ data Matrix v a = Matrix
   , matrixCols :: !Int
   , matrixData :: !(v a)
   }
-  deriving stock (Show, Eq)
+  deriving stock (Show, Prelude.Eq)
 
 instance IsHalideType a => IsHalideBuffer (Matrix (SM.MVector RealWorld) a) 2 a where
   withHalideBufferImpl (Matrix n m v) f =
@@ -256,7 +258,7 @@ spec = do
     it "allows to skip stores" $ do
       i <- mkVar "i"
       f <- define "f" i $ ifThenElse (i `gt` 5) i 0
-      update f i $ ifThenElse ((f ! i) `eq` 0) (2 * i) undef
+      update f i $ ifThenElse (f ! i == 0) (2 * i) undef
       realize f [10] peekToList `shouldReturn` ([0, 2, 4, 6, 8, 10] <> [6 .. 9] :: [Int32])
 
   describe "Tuples" $ do

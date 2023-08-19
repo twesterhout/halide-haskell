@@ -39,8 +39,7 @@ module Language.Halide
     -- when the pipeline is run rather than when it's built. Hence, we define lifted version of
     -- various comparison operators. Note, that infix versions of the these functions have the
     -- same precedence as the normal comparison operators.
-  , eq
-  , neq
+  , HalideEq (..)
   , lt
   , lte
   , gt

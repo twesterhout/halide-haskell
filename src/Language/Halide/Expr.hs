@@ -51,6 +51,7 @@ module Language.Halide.Expr
   , printedWhen
   , toIntImm
   , setScalarEstimate
+  , HalideEq (..)
 
     -- * Internal
   , exprToForeignPtr
@@ -114,7 +115,8 @@ import Language.Halide.Utils
 import System.IO.Unsafe (unsafePerformIO)
 import Type.Reflection
 import Unsafe.Coerce
-import Prelude hiding (and, div, max, min, mod, or)
+import Prelude hiding (Eq (..), Ord (..), and, div, max, min, mod, or)
+import Prelude qualified
 
 -- | A scalar expression in Halide.
 --
@@ -683,6 +685,19 @@ instance PrintedArg String where
   appendToPrintArgs v (pack -> msg) = appendToPrintArgs v msg
 
 infix 4 `eq`, `neq`, `lt`, `lte`, `gt`, `gte`
+infix 4 ==, /=
+
+class HalideEq a r where
+  (==) :: a -> a -> r
+  (/=) :: a -> a -> r
+
+instance (Prelude.Eq a, r ~ Bool) => HalideEq a r where
+  (==) = (Prelude.==)
+  (/=) = (Prelude./=)
+
+instance {-# OVERLAPPING #-} (IsHalideType a, r ~ Expr Bool) => HalideEq (Expr a) r where
+  (==) = eq
+  (/=) = neq
 
 -- | '==' but lifted to return an 'Expr'.
 eq :: IsHalideType a => Expr a -> Expr a -> Expr Bool

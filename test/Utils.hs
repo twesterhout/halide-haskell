@@ -34,6 +34,8 @@ import Language.Halide hiding (and, max)
 import System.IO (stderr)
 import Test.HUnit.Lang (FailureReason (..), HUnitFailure (..))
 import Test.Hspec
+import Prelude hiding (Eq (..))
+import Prelude qualified
 
 shouldContainText :: Text -> Text -> Expectation
 a `shouldContainText` b = T.unpack a `shouldContain` T.unpack b
@@ -89,7 +91,7 @@ showInCodeLenses v = error (unpack v)
 
 class EqForTesting a where
   equalForTesting :: a -> a -> Bool
-  default equalForTesting :: Eq a => a -> a -> Bool
+  default equalForTesting :: Prelude.Eq a => a -> a -> Bool
   a `equalForTesting` b = a == b
 
 instance EqForTesting a => EqForTesting [a] where

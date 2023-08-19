@@ -10,6 +10,8 @@ import Test.Hspec.QuickCheck
 import Test.QuickCheck
 import Type.Reflection
 import Utils
+import Prelude hiding (Eq (..))
+import Prelude qualified
 
 isOverflowing :: Typeable a => (Integer -> Integer -> Integer) -> a -> a -> Bool
 isOverflowing op x y
@@ -37,7 +39,7 @@ shouldEvaluateToApprox expr expected = do
 
 infix 1 `shouldEvaluateTo`
 
-shouldEvaluateTo :: (Eq a, IsHalideType a, Show a) => Expr a -> a -> Expectation
+shouldEvaluateTo :: (Prelude.Eq a, IsHalideType a, Show a) => Expr a -> a -> Expectation
 shouldEvaluateTo expr expected = evaluate expr `shouldReturn` expected
 
 spec :: Spec
@@ -50,7 +52,7 @@ spec = do
     let whenNotOverflowing op x y check
           | isOverflowing op x y = pure ()
           | otherwise = check
-        p :: forall a. (IsHalideType a, Eq a, Num a, Typeable a, Show a) => a -> a -> Expectation
+        p :: forall a. (IsHalideType a, Prelude.Eq a, Num a, Typeable a, Show a) => a -> a -> Expectation
         p x y = do
           whenNotOverflowing (+) x y $
             mkExpr x + mkExpr y `shouldEvaluateTo` x + y
@@ -58,7 +60,7 @@ spec = do
             mkExpr x - mkExpr y `shouldEvaluateTo` x - y
           whenNotOverflowing (*) x y $
             mkExpr x * mkExpr y `shouldEvaluateTo` x * y
-          unless (x == -128) $
+          unless (x Prelude.== -128) $
             abs (mkExpr x) `shouldEvaluateTo` abs x
           negate (mkExpr x) `shouldEvaluateTo` negate x
     prop "Int8" $ p @Int8
@@ -73,9 +75,9 @@ spec = do
     prop "Double" $ p @Double
 
   describe "Fractional Expr" $ modifyMaxSuccess (const 10) $ do
-    let p :: forall a. (IsHalideType a, Eq a, Fractional a, Show a) => a -> a -> Expectation
+    let p :: forall a. (IsHalideType a, Prelude.Eq a, Fractional a, Show a) => a -> a -> Expectation
         p x y = do
-          unless (x == 0 && y == 0) $
+          unless (x Prelude.== 0 && y Prelude.== 0) $
             mkExpr x / mkExpr y `shouldEvaluateTo` x / y
     prop "Float" $ property (p @Float)
     prop "Double" $ property (p @Double)
