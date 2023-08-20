@@ -852,26 +852,7 @@ instance IsHalideType a => Show (Expr a) where
     unpack . unsafePerformIO $! do
       withForeignPtr expr $ \x ->
         peekAndDeleteCxxString
-          =<< [CU.block| std::string* {
-
-              // std::cerr << "Calling to_string_via_iostream on "
-              //           << static_cast<void const *>($(const Halide::Expr* x))
-              //           << ": '"
-              //           << Halide::Expr{123}
-              //           << "'"
-              //           << std::endl;
-              std::cerr << "Calling IRPrinter::test() ...\n";
-              Halide::Internal::IRPrinter::test();
-              std::cerr << "1)\n";
-              auto x = *$(const Halide::Expr* x);
-              std::cerr << "2)\n";
-              std::cerr << x.defined() << " " << x.type() << "'" << x << "'" << std::endl;
-              std::cerr << "3)\n";
-
-              auto expr = Halide::Expr{123};
-              std::cerr << "Returning new std::string: '" << expr << "' ...\n";
-              return to_string_via_iostream(expr);
-            } |]
+          =<< [CU.exp| std::string* { to_string_via_iostream(*$(const Halide::Expr* x)) } |]
   show (Var var) = unpack . unsafePerformIO $ do
     withForeignPtr var $ \x ->
       peekAndDeleteCxxString
