@@ -23,7 +23,7 @@
 
   outputs = { nixpkgs, flake-utils, nix-filter, ... }:
     let
-      inherit (nixpkgs) lib;
+      # inherit (nixpkgs) lib;
       src = nix-filter.lib {
         root = ./.;
         include = [

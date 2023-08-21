@@ -37,7 +37,7 @@ library
     , base            >=4.16.0.0 && <5
     , halide-haskell  >=0.0.2.0  && <0.1.0.0
     , JuicyPixels     >=3.3.0    && <4
-    , vector          >=0.12.3.0 && <0.13
+    , vector          >=0.12.3.0 && <0.14
 
   ghc-options:     -Wno-orphans
   hs-source-dirs:  src
