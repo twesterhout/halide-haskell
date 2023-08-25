@@ -16,14 +16,17 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     arrayfire-haskell = {
-      url = "github:twesterhout/arrayfire-haskell/main";
-      flake = false;
+      url = "github:twesterhout/arrayfire-haskell/withDevicePtr";
+      inputs.flake-utils.follows = "flake-utils";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.arrayfire-nix.follows = "arrayfire-nix";
+      inputs.nix-filter.follows = "nix-filter";
     };
   };
 
-  outputs = { nixpkgs, flake-utils, nix-filter, ... }:
+  outputs = inputs@{ nixpkgs, flake-utils, nix-filter, ... }:
     let
-      # inherit (nixpkgs) lib;
+      inherit (nixpkgs) lib;
       src = nix-filter.lib {
         root = ./.;
         include = [
@@ -113,7 +116,7 @@
                   halide-tutorial03
                   halide-tutorial04
                   halide-tutorial05
-                ]; # ++ lib.optional self.stdenv.isLinux halide-arrayfire;
+                ] ++ lib.optional self.stdenv.isLinux halide-arrayfire;
               };
             });
         };
@@ -132,7 +135,7 @@
             halide-tutorial03
             halide-tutorial04
             halide-tutorial05
-          ]; # ++ lib.optional pkgs.stdenv.isLinux halide-arrayfire;
+          ] ++ lib.optional pkgs.stdenv.isLinux halide-arrayfire;
           withHoogle = true;
           buildInputs = with pkgs; [ ocl-icd ];
           nativeBuildInputs = with pkgs; with ps; [
@@ -170,6 +173,8 @@
       pkgsFor = system: args: import nixpkgs {
         inherit system;
         overlays = [
+          inputs.arrayfire-nix.overlays.default
+          inputs.arrayfire-haskell.overlays.default
           (overlayFor args)
         ];
         config.allowUnfree =

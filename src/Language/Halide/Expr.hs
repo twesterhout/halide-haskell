@@ -756,6 +756,9 @@ gte = binaryOp $ \a b ptr ->
   [CU.exp| void { new ($(Halide::Expr* ptr)) Halide::Expr{
     (*$(Halide::Expr* a)) >= (*$(Halide::Expr* b))} } |]
 
+infixr 3 `and`
+infixr 2 `or`
+
 -- | '&&' but lifted to return an 'Expr'.
 and :: Expr Bool -> Expr Bool -> Expr Bool
 and = binaryOp $ \a b ptr ->

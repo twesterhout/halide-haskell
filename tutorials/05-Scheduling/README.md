@@ -13,6 +13,7 @@ import Data.Text (Text, pack)
 import Data.Text.IO (hPutStrLn)
 import System.IO (stderr)
 import Test.Hspec hiding (parallel)
+import Prelude hiding ((==))
 
 import Language.Halide
 ```

@@ -11,7 +11,7 @@ import Data.Text (Text)
 import Test.Hspec hiding (parallel)
 
 import Language.Halide hiding (evaluate, mod, div)
-import Prelude hiding (and)
+import Prelude hiding (and, (<), (==))
 ```
 
 ### Printing out the value of Funcs as they are computed.
@@ -334,7 +334,7 @@ just returns the second argument and does not print.
   it "Conditionally prints Exprs" $ do
     x <- mkVar "x"
     y <- mkVar "y"
-    let e = printedWhen (eq x 37 `and` eq y 42) (cos (cast @Float y)) ("<- this is cos(y) at x, y == (37, 42)" :: Text)
+    let e = printedWhen (x == 37 `and` y == 42) (cos (cast @Float y)) ("<- this is cos(y) at x, y == (37, 42)" :: Text)
     f <- define "f" (x, y) $ sin (cast @Float x) + e
     putStrLn $ "Evaluating sin(x) + cos(y), and printing cos(y) at a single pixel..."
     realize f [640, 480] . const $ pure ()
@@ -353,7 +353,7 @@ just returns the second argument and does not print.
 
 ```haskell
     let e = cos (cast @Float y)
-        e' = printedWhen (e `lt` 0) e ("cos(y) < 0 at y ==" :: Text) y
+        e' = printedWhen (e < 0) e ("cos(y) < 0 at y ==" :: Text) y
     g <- define "g" (x, y) $ sin (cast @Float x) + e'
     putStrLn $ "Evaluating sin(x) + cos(y), and printing whenever cos(y) < 0..."
     realize g [4, 4] . const $ pure ()
