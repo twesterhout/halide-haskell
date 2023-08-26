@@ -26,6 +26,7 @@ module Language.Halide
   , undef
   , cast
   , ifThenElse
+  , select
 
     -- ** Inspecting
   , toIntImm
