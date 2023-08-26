@@ -13,7 +13,7 @@ import Utils
 import Prelude hiding (Eq (..))
 import Prelude qualified
 
-isOverflowing :: Typeable a => (Integer -> Integer -> Integer) -> a -> a -> Bool
+isOverflowing :: (Typeable a) => (Integer -> Integer -> Integer) -> a -> a -> Bool
 isOverflowing op x y
   | Just HRefl <- eqTypeRep (typeOf x) (typeRep @Int32) =
       op (toInteger x) (toInteger y) Prelude.> toInteger (maxBound @Int32)
@@ -105,7 +105,7 @@ spec = do
           asinh y `shouldEvaluateToApprox` asinh x
           when (x Prelude.>= 1) $
             acosh y `shouldEvaluateToApprox` acosh x
-          when (-1 Prelude.<= x && x Prelude.<= 1) $
+          when (-1 Prelude.< x && x Prelude.< 1) $
             atanh y `shouldEvaluateToApprox` atanh x
     prop "Float" $ p @Float
     prop "Double" $ p @Double

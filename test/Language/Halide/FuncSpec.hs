@@ -23,7 +23,7 @@ data Matrix v a = Matrix
   }
   deriving stock (Show, Prelude.Eq)
 
-instance IsHalideType a => IsHalideBuffer (Matrix (SM.MVector RealWorld) a) 2 a where
+instance (IsHalideType a) => IsHalideBuffer (Matrix (SM.MVector RealWorld) a) 2 a where
   withHalideBufferImpl (Matrix n m v) f =
     SM.unsafeWith v $ \dataPtr ->
       bufferFromPtrShapeStrides dataPtr [n, m] [1, n] f
@@ -35,6 +35,8 @@ spec = do
       let x = mkExpr (5 :: Double)
       f <- define "f" () $ x * x - 2 * x + 5 + 3 / x
       g <- define "g" () $ f ! ()
+      f.name `shouldBe` "f"
+      g.name `shouldBe` "g"
       realize g [] peekScalar `shouldReturn` 20.6
 
   describe "vectorize" $ do
