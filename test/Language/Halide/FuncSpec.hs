@@ -35,8 +35,9 @@ spec = do
       let x = mkExpr (5 :: Double)
       f <- define "f" () $ x * x - 2 * x + 5 + 3 / x
       g <- define "g" () $ f ! ()
-      f.name `shouldBe` "f"
-      g.name `shouldBe` "g"
+      -- Halide can potentially name our f as f$2 or f$3 if there already exists a function with this name
+      f.name `shouldContainText` "f"
+      g.name `shouldContainText` "g"
       realize g [] peekScalar `shouldReturn` 20.6
 
   describe "vectorize" $ do
