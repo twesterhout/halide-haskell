@@ -89,6 +89,7 @@ import Data.Text.Encoding qualified as T
 import Foreign.ForeignPtr
 import Foreign.Marshal (toBool, with)
 import Foreign.Ptr (Ptr, castPtr)
+import GHC.Records (HasField (getField))
 import GHC.Stack (HasCallStack)
 import GHC.TypeLits
 import Language.C.Inline qualified as C
@@ -106,7 +107,6 @@ import System.IO.Unsafe (unsafePerformIO)
 import Unsafe.Coerce
 import Prelude hiding (Eq (..), min, tail, (!!), (<), (<=))
 import Prelude qualified
-import GHC.Records (HasField (getField))
 
 -- | Haskell counterpart of [Halide::Stage](https://halide-lang.org/docs/class_halide_1_1_stage.html).
 data CxxStage
@@ -124,15 +124,15 @@ importHalide
 -- C++ type.
 data Func (t :: FuncTy) (n :: Nat) (a :: Type) where
   Func :: {-# UNPACK #-} !(ForeignPtr CxxFunc) -> Func 'FuncTy n a
-  Param :: IsHalideType a => {-# UNPACK #-} !(IORef (Maybe (ForeignPtr CxxImageParam))) -> Func 'ParamTy n (Expr a)
+  Param :: (IsHalideType a) => {-# UNPACK #-} !(IORef (Maybe (ForeignPtr CxxImageParam))) -> Func 'ParamTy n (Expr a)
 
 data SomeFunc t a where
-  SomeFunc :: HasIndexType n => !(Func t n a) -> SomeFunc t a
+  SomeFunc :: (HasIndexType n) => !(Func t n a) -> SomeFunc t a
 
-withSomeFunc :: (forall n. HasIndexType n => Func t n a -> r) -> SomeFunc t a -> r
+withSomeFunc :: (forall n. (HasIndexType n) => Func t n a -> r) -> SomeFunc t a -> r
 withSomeFunc f (SomeFunc x) = f x
 
-foldSomeFunc :: SomeFunc t a -> (forall n. HasIndexType n => Func t n a -> r) -> r
+foldSomeFunc :: SomeFunc t a -> (forall n. (HasIndexType n) => Func t n a -> r) -> r
 foldSomeFunc x f = withSomeFunc f x
 
 -- | Function type. It can either be 'FuncTy' which means that we have defined the function ourselves,
@@ -229,7 +229,7 @@ data TailStrategy
   deriving stock (Prelude.Eq, Ord, Show)
 
 -- | Common scheduling functions
-class KnownNat n => Schedulable f (n :: Nat) (a :: Type) where
+class (KnownNat n) => Schedulable f (n :: Nat) (a :: Type) where
   -- | Vectorize the dimension.
   vectorize :: VarOrRVar -> f n a -> IO (f n a)
 
@@ -289,7 +289,7 @@ class KnownNat n => Schedulable f (n :: Nat) (a :: Type) where
 proveTransitivityOfLessThanEqual :: (KnownNat k, KnownNat l, KnownNat m, k <= l, l <= m) => Dict (k <= m)
 proveTransitivityOfLessThanEqual = unsafeCoerce $ Dict @(1 <= 2)
 
-instance KnownNat n => Schedulable Stage n a where
+instance (KnownNat n) => Schedulable Stage n a where
   vectorize var stage = do
     withCxxStage stage $ \stage' ->
       asVarOrRVar var $ \var' ->
@@ -467,7 +467,7 @@ instance KnownNat n => Schedulable Stage n a where
         } |]
 
 viaStage1
-  :: KnownNat n
+  :: (KnownNat n)
   => (a -> Stage n b -> IO (Stage n b))
   -> a
   -> Func t n b
@@ -514,7 +514,7 @@ viaStage4 f a1 a2 a3 a4 func = do
   _ <- f a1 a2 a3 a4 =<< getStage func
   pure func
 
-instance KnownNat n => Schedulable (Func t) n a where
+instance (KnownNat n) => Schedulable (Func t) n a where
   vectorize = viaStage1 vectorize
   unroll = viaStage1 unroll
   reorder = viaStage1 reorder
@@ -556,7 +556,7 @@ instance Enum TailStrategy where
 -- The auto generated schedules might break when the sizes of the dimensions are very different from the
 -- estimates specified. These estimates are used only by the auto scheduler if the function is a pipeline output.
 estimate
-  :: KnownNat n
+  :: (KnownNat n)
   => Expr Int32
   -- ^ index variable
   -> Expr Int32
@@ -581,7 +581,7 @@ estimate var start extent func =
 -- If bounds inference decides that it requires more of this function than the bounds you have stated,
 -- a runtime error will occur when you try to run your pipeline.
 bound
-  :: KnownNat n
+  :: (KnownNat n)
   => Expr Int32
   -- ^ index variable
   -> Expr Int32
@@ -602,7 +602,7 @@ bound var start extent func =
 -- | Get the index arguments of the function.
 --
 -- The returned list contains exactly @n@ elements.
-getArgs :: KnownNat n => Func t n a -> IO [Var]
+getArgs :: (KnownNat n) => Func t n a -> IO [Var]
 getArgs func =
   withFunc func $ \func' -> do
     let allocate =
@@ -619,7 +619,7 @@ getArgs func =
 -- | Compute all of this function once ahead of time.
 --
 -- See [Halide::Func::compute_root](https://halide-lang.org/docs/class_halide_1_1_func.html#a29df45a4a16a63eb81407261a9783060) for more info.
-computeRoot :: KnownNat n => Func t n a -> IO (Func t n a)
+computeRoot :: (KnownNat n) => Func t n a -> IO (Func t n a)
 computeRoot func = do
   withFunc func $ \f ->
     [C.throwBlock| void { handle_halide_exceptions([=](){ $(Halide::Func* f)->compute_root(); }); } |]
@@ -646,7 +646,7 @@ asUsedBy g f =
 --
 -- If a global wrapper already exists, returns it. The global identity wrapper is only used by callers
 -- for which no custom wrapper has been specified.
-asUsed :: KnownNat n => Func t n a -> IO (Func 'FuncTy n a)
+asUsed :: (KnownNat n) => Func t n a -> IO (Func 'FuncTy n a)
 asUsed f =
   withFunc f $ \fPtr ->
     wrapCxxFunc
@@ -658,7 +658,7 @@ asUsed f =
 -- Asserts that the @Func@ has a pure definition which is a simple call to a single input, and no update
 -- definitions. The wrapper @Func@s returned by 'asUsed' are suitable candidates. Consumes all pure variables,
 -- and rewrites the @Func@ to have an extern definition that calls @halide_buffer_copy@.
-copyToDevice :: KnownNat n => DeviceAPI -> Func t n a -> IO (Func t n a)
+copyToDevice :: (KnownNat n) => DeviceAPI -> Func t n a -> IO (Func t n a)
 copyToDevice deviceApi func = do
   withFunc func $ \f ->
     [C.throwBlock| void {
@@ -671,7 +671,7 @@ copyToDevice deviceApi func = do
     api = fromIntegral . fromEnum $ deviceApi
 
 -- | Same as @'copyToDevice' 'DeviceHost'@
-copyToHost :: KnownNat n => Func t n a -> IO (Func t n a)
+copyToHost :: (KnownNat n) => Func t n a -> IO (Func t n a)
 copyToHost = copyToDevice DeviceHost
 
 mkBufferParameter
@@ -717,12 +717,12 @@ withBufferParam (Param r) action =
   getBufferParameter @n @a Nothing r >>= flip withForeignPtr action
 
 -- | Get the underlying pointer to @Halide::Func@ and invoke an 'IO' action with it.
-withFunc :: KnownNat n => Func t n a -> (Ptr CxxFunc -> IO b) -> IO b
+withFunc :: (KnownNat n) => Func t n a -> (Ptr CxxFunc -> IO b) -> IO b
 withFunc f action = case f of
   Func fp -> withForeignPtr fp action
   p@(Param _) -> forceFunc p >>= \(Func fp) -> withForeignPtr fp action
 
-withCxxFunc :: KnownNat n => Func 'FuncTy n a -> (Ptr CxxFunc -> IO b) -> IO b
+withCxxFunc :: (KnownNat n) => Func 'FuncTy n a -> (Ptr CxxFunc -> IO b) -> IO b
 withCxxFunc (Func fp) = withForeignPtr fp
 
 wrapCxxFunc :: Ptr CxxFunc -> IO (Func 'FuncTy n a)
@@ -730,7 +730,7 @@ wrapCxxFunc = fmap Func . newForeignPtr deleter
   where
     deleter = [C.funPtr| void deleteFunc(Halide::Func *x) { delete x; } |]
 
-forceFunc :: forall t n a. KnownNat n => Func t n (Expr a) -> IO (Func 'FuncTy n (Expr a))
+forceFunc :: forall t n a. (KnownNat n) => Func t n (Expr a) -> IO (Func 'FuncTy n (Expr a))
 forceFunc = \case
   x@(Func _) -> pure x
   (Param r) -> do
@@ -744,7 +744,7 @@ class IsFuncDefinition d where
   definitionToExprList :: d -> [ForeignPtr CxxExpr]
   exprListToDefinition :: [ForeignPtr CxxExpr] -> d
 
-instance IsHalideType a => IsFuncDefinition (Expr a) where
+instance (IsHalideType a) => IsFuncDefinition (Expr a) where
   definitionToExprList = pure . exprToForeignPtr
   exprListToDefinition [x1] = unsafePerformIO $ withForeignPtr x1 (checkType @a) >> pure (Expr x1)
   exprListToDefinition _ = error "should never happen"
@@ -788,7 +788,7 @@ define name args definition =
     Sub Dict -> asVectorOf @((~) (Expr Int32)) asVar (fromTuple args) $ \x ->
       defineDynamic name x definition
 
-defineSomeFunc :: forall d. IsFuncDefinition d => Text -> [Var] -> d -> IO (SomeFunc 'FuncTy d)
+defineSomeFunc :: forall d. (IsFuncDefinition d) => Text -> [Var] -> d -> IO (SomeFunc 'FuncTy d)
 defineSomeFunc name args definition = do
   let rank = length args
   case someNatVal (fromIntegral rank) of
@@ -839,7 +839,7 @@ update func args definition =
 
 updateSomeFunc
   :: forall d
-   . IsFuncDefinition d
+   . (IsFuncDefinition d)
   => SomeFunc 'FuncTy d
   -> [Expr Int32]
   -> d
@@ -875,13 +875,13 @@ updateDynamic func index definition =
 infix 9 !
 infix 9 !!
 
-withExprIndices :: forall n a. HasIndexType n => IndexType n -> (Ptr (CxxVector CxxExpr) -> IO a) -> IO a
+withExprIndices :: forall n a. (HasIndexType n) => IndexType n -> (Ptr (CxxVector CxxExpr) -> IO a) -> IO a
 withExprIndices indices action =
   case proveIndexTypeProperties @n of
     Sub Dict -> asVectorOf @((~) (Expr Int32)) asExpr (fromTuple indices) $ \x ->
       action x
 
-indexFunc :: forall n a t. HasIndexType n => Func t n a -> Ptr (CxxVector CxxExpr) -> IO [ForeignPtr CxxExpr]
+indexFunc :: forall n a t. (HasIndexType n) => Func t n a -> Ptr (CxxVector CxxExpr) -> IO [ForeignPtr CxxExpr]
 indexFunc func x =
   withFunc func $ \f -> do
     let allocate =
@@ -912,25 +912,31 @@ indexFunc func x =
   unsafePerformIO $
     withExprIndices args (indexFunc func) <&> exprListToDefinition
 
-(!!) :: IsFuncDefinition a => SomeFunc t a -> [Expr Int32] -> a
+(!!) :: (IsFuncDefinition a) => SomeFunc t a -> [Expr Int32] -> a
 (!!) (SomeFunc func) args =
   unsafePerformIO $
     withMany asExpr args (indexFunc func) <&> exprListToDefinition
 
 -- | Get a particular dimension of a pipeline parameter.
 dim
-  :: forall n a
+  :: forall n a t
    . (HasCallStack, KnownNat n)
   => Int
-  -> Func 'ParamTy n (Expr a)
+  -> Func t n (Expr a)
   -> IO Dimension
-dim k func@(Param _)
+dim k func
   | 0 <= k && k < fromIntegral (natVal (Proxy @n)) =
-      let n = fromIntegral k
-       in withBufferParam func $ \f ->
-            wrapCxxDimension
-              =<< [CU.exp| Halide::Internal::Dimension* {
-                    new Halide::Internal::Dimension{$(Halide::ImageParam* f)->dim($(int n))} } |]
+      let n :: C.CInt
+          n = fromIntegral k
+       in case func of
+            Param _ -> withBufferParam func $ \f ->
+              wrapCxxDimension
+                =<< [CU.exp| Halide::Internal::Dimension* {
+                      new Halide::Internal::Dimension{$(Halide::ImageParam const* f)->dim($(int n))} } |]
+            Func _ -> withFunc func $ \f ->
+              wrapCxxDimension
+                =<< [CU.exp| Halide::Internal::Dimension* {
+                      new Halide::Internal::Dimension{$(Halide::Func const* f)->output_buffer().dim($(int n))} } |]
   | otherwise =
       error $
         "invalid dimension index: "
@@ -945,7 +951,7 @@ dim k func@(Param _)
 --
 -- For more info, see
 -- [@Halide::Func::print_loop_nest@](https://halide-lang.org/docs/class_halide_1_1_func.html#a03f839d9e13cae4b87a540aa618589ae)
-prettyLoopNest :: KnownNat n => Func t n r -> IO Text
+prettyLoopNest :: (KnownNat n) => Func t n r -> IO Text
 prettyLoopNest func = withFunc func $ \f ->
   peekAndDeleteCxxString
     =<< [C.throwBlock| std::string* {
@@ -1028,7 +1034,7 @@ buffer name p@(Param r) = unsafePerformIO $ do
 --   i <- mkVar "i"
 --   define "dest" i $ a
 -- :}
-scalar :: forall a. IsHalideType a => Text -> Expr a -> Expr a
+scalar :: forall a. (IsHalideType a) => Text -> Expr a -> Expr a
 scalar name (ScalarParam r) = unsafePerformIO $ do
   readIORef r >>= \case
     Just _ -> error "the name of this Expr has already been set"
@@ -1047,20 +1053,20 @@ withCxxStage :: Stage n a -> (Ptr CxxStage -> IO b) -> IO b
 withCxxStage (Stage fp) = withForeignPtr fp
 
 -- | Get the pure stage of a 'Func' for the purposes of scheduling it.
-getStage :: KnownNat n => Func t n a -> IO (Stage n a)
+getStage :: (KnownNat n) => Func t n a -> IO (Stage n a)
 getStage func =
   withFunc func $ \func' ->
     [CU.exp| Halide::Stage* { new Halide::Stage{static_cast<Halide::Stage>(*$(Halide::Func* func'))} } |]
       >>= wrapCxxStage
 
 -- | Return 'True' when the function has update definitions, 'False' otherwise.
-hasUpdateDefinitions :: KnownNat n => Func t n a -> IO Bool
+hasUpdateDefinitions :: (KnownNat n) => Func t n a -> IO Bool
 hasUpdateDefinitions func =
   withFunc func $ \func' ->
     toBool <$> [CU.exp| bool { $(const Halide::Func* func')->has_update_definition() } |]
 
 -- | Get a handle to an update step for the purposes of scheduling it.
-getUpdateStage :: KnownNat n => Int -> Func 'FuncTy n a -> IO (Stage n a)
+getUpdateStage :: (KnownNat n) => Int -> Func 'FuncTy n a -> IO (Stage n a)
 getUpdateStage k func =
   withFunc func $ \func' ->
     let k' = fromIntegral k
@@ -1069,7 +1075,7 @@ getUpdateStage k func =
 
 -- | Identify the loop nest corresponding to some dimension of some function.
 getLoopLevelAtStage
-  :: KnownNat n
+  :: (KnownNat n)
   => Func t n a
   -> Expr Int32
   -> Int
@@ -1093,7 +1099,7 @@ getLoopLevelAtStage func var stageIndex =
     k = fromIntegral stageIndex
 
 -- | Same as 'getLoopLevelAtStage' except that the stage is @-1@.
-getLoopLevel :: KnownNat n => Func t n a -> Expr Int32 -> IO (LoopLevel 'LockedTy)
+getLoopLevel :: (KnownNat n) => Func t n a -> Expr Int32 -> IO (LoopLevel 'LockedTy)
 getLoopLevel f i = getLoopLevelAtStage f i (-1)
 
 -- | Allocate storage for this function within a particular loop level.
@@ -1102,7 +1108,7 @@ getLoopLevel f i = getLoopLevelAtStage f i (-1)
 -- from the loop level at which computation occurs to trade off between locality and redundant work.
 --
 -- For more info, see [Halide::Func::store_at](https://halide-lang.org/docs/class_halide_1_1_func.html#a417c08f8aa3a5cdf9146fba948b65193).
-storeAt :: KnownNat n => Func 'FuncTy n a -> LoopLevel t -> IO (Func 'FuncTy n a)
+storeAt :: (KnownNat n) => Func 'FuncTy n a -> LoopLevel t -> IO (Func 'FuncTy n a)
 storeAt func level = do
   withFunc func $ \f ->
     withCxxLoopLevel level $ \l ->
@@ -1112,7 +1118,7 @@ storeAt func level = do
 -- | Schedule a function to be computed within the iteration over a given loop level.
 --
 -- For more info, see [Halide::Func::compute_at](https://halide-lang.org/docs/class_halide_1_1_func.html#a800cbcc3ca5e3d3fa1707f6e1990ec83).
-computeAt :: KnownNat n => Func 'FuncTy n a -> LoopLevel t -> IO (Func 'FuncTy n a)
+computeAt :: (KnownNat n) => Func 'FuncTy n a -> LoopLevel t -> IO (Func 'FuncTy n a)
 computeAt func level = do
   withFunc func $ \f ->
     withCxxLoopLevel level $ \l ->
@@ -1132,7 +1138,7 @@ computeAt func level = do
 -- >       print =<< peekToList f
 asBufferParam
   :: forall n a t b
-   . IsHalideBuffer t n a
+   . (IsHalideBuffer t n a)
   => t
   -- ^ Object to treat as a buffer
   -> (Func 'ParamTy n (Expr a) -> IO b)
@@ -1148,7 +1154,7 @@ asBufferParam arr action =
           } |]
     action . Param =<< newIORef (Just param)
 
-instance KnownNat n => HasField "name" (Func t n a) Text where
+instance (KnownNat n) => HasField "name" (Func t n a) Text where
   getField func = unsafePerformIO $
     withFunc func $ \f ->
       peekAndDeleteCxxString

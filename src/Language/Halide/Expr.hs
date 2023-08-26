@@ -361,6 +361,8 @@ peekUniformTuple f p
   | Just Refl <- sameNat (Proxy @9) (Proxy @n) = peekUniformTupleImpl @9 f p
   | Just Refl <- sameNat (Proxy @10) (Proxy @n) = peekUniformTupleImpl @10 f p
   | otherwise = error "cannot happen"
+  where
+    _ = keepRedundantConstraint @(n <= 10)
 
 type IndexType n = UniformTuple n Int32
 
