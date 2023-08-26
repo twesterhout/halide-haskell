@@ -106,6 +106,7 @@ import System.IO.Unsafe (unsafePerformIO)
 import Unsafe.Coerce
 import Prelude hiding (Eq (..), min, tail, (!!), (<), (<=))
 import Prelude qualified
+import GHC.Records (HasField (getField))
 
 -- | Haskell counterpart of [Halide::Stage](https://halide-lang.org/docs/class_halide_1_1_stage.html).
 data CxxStage
@@ -1146,3 +1147,9 @@ asBufferParam arr action =
             $(Halide::ImageParam* param')->set(Halide::Buffer<>{*$(const halide_buffer_t* buf)});
           } |]
     action . Param =<< newIORef (Just param)
+
+instance KnownNat n => HasField "name" (Func t n a) Text where
+  getField func = unsafePerformIO $
+    withFunc func $ \f ->
+      peekAndDeleteCxxString
+        =<< [CU.exp| std::string* { new std::string{$(Halide::Func const* f)->name()} } |]
