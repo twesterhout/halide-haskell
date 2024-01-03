@@ -119,6 +119,11 @@ spec = do
           f i = select [(i == mkExpr k, mkExpr k) | k <- [0 .. 9]] (-1)
       mapM (evaluate . f . mkExpr) [0 .. 11] `shouldReturn` ([0 .. 9] <> [-1, -1])
 
+  describe "div & mod" $
+    it "works with negative numbers" $ do
+      Language.Halide.mod (mkExpr @Int32 (-3)) 2 `shouldEvaluateTo` (-1)
+      Language.Halide.div (mkExpr @Int32 (-3)) 2 `shouldEvaluateTo` (-1)
+
   describe "printed" $
     it "prints expressions when evaluated" $ do
       printed (1 :: Expr Int32) `shouldEvaluateTo` 1

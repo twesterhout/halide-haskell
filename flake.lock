@@ -2,9 +2,6 @@
   "nodes": {
     "arrayfire-haskell": {
       "inputs": {
-        "arrayfire-nix": [
-          "arrayfire-nix"
-        ],
         "flake-utils": [
           "flake-utils"
         ],
@@ -16,11 +13,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1692967116,
-        "narHash": "sha256-AGemJMVMIy44A0DV/FvWk94ned7/AYuTgxal9oA2pxk=",
+        "lastModified": 1704284732,
+        "narHash": "sha256-editEH1WQNsOqmGL1Vxbn6I62ZFjPpRcGTNTwdTLKvk=",
         "owner": "twesterhout",
         "repo": "arrayfire-haskell",
-        "rev": "60444b2814c26693f881135cbad9bb15110e3260",
+        "rev": "79b2519486f409dc14e60b44dc360b430756d9c5",
         "type": "github"
       },
       "original": {
@@ -30,39 +27,16 @@
         "type": "github"
       }
     },
-    "arrayfire-nix": {
-      "inputs": {
-        "flake-utils": [
-          "flake-utils"
-        ],
-        "nixpkgs": [
-          "nixpkgs"
-        ]
-      },
-      "locked": {
-        "lastModified": 1692793973,
-        "narHash": "sha256-6dG41ile3T+6dfRazlcPBdKBarGesswsBpb40Lcf35U=",
-        "owner": "twesterhout",
-        "repo": "arrayfire-nix",
-        "rev": "4236770612b80a3f29adbd8d670f6cea2bc098ba",
-        "type": "github"
-      },
-      "original": {
-        "owner": "twesterhout",
-        "repo": "arrayfire-nix",
-        "type": "github"
-      }
-    },
     "flake-utils": {
       "inputs": {
         "systems": "systems"
       },
       "locked": {
-        "lastModified": 1692799911,
-        "narHash": "sha256-3eihraek4qL744EvQXsK1Ha6C3CR7nnT8X2qWap4RNk=",
+        "lastModified": 1701680307,
+        "narHash": "sha256-kAuep2h5ajznlPMD9rnQyffWG8EM/C73lejGofXvdM8=",
         "owner": "numtide",
         "repo": "flake-utils",
-        "rev": "f9e7cf818399d17d347f847525c5a5a8032e4e44",
+        "rev": "4022d587cbbfd70fe950c1e2083a02621806a725",
         "type": "github"
       },
       "original": {
@@ -73,11 +47,11 @@
     },
     "nix-filter": {
       "locked": {
-        "lastModified": 1687178632,
-        "narHash": "sha256-HS7YR5erss0JCaUijPeyg2XrisEb959FIct3n2TMGbE=",
+        "lastModified": 1701697642,
+        "narHash": "sha256-L217WytWZHSY8GW9Gx1A64OnNctbuDbfslaTEofXXRw=",
         "owner": "numtide",
         "repo": "nix-filter",
-        "rev": "d90c75e8319d0dd9be67d933d8eb9d0894ec9174",
+        "rev": "c843418ecfd0344ecb85844b082ff5675e02c443",
         "type": "github"
       },
       "original": {
@@ -88,11 +62,11 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1692734709,
-        "narHash": "sha256-SCFnyHCyYjwEmgUsHDDuU0TsbVMKeU1vwkR+r7uS2Rg=",
+        "lastModified": 1703961334,
+        "narHash": "sha256-M1mV/Cq+pgjk0rt6VxoyyD+O8cOUiai8t9Q6Yyq4noY=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "b85ed9dcbf187b909ef7964774f8847d554fab3b",
+        "rev": "b0d36bd0a420ecee3bc916c91886caca87c894e9",
         "type": "github"
       },
       "original": {
@@ -105,7 +79,6 @@
     "root": {
       "inputs": {
         "arrayfire-haskell": "arrayfire-haskell",
-        "arrayfire-nix": "arrayfire-nix",
         "flake-utils": "flake-utils",
         "nix-filter": "nix-filter",
         "nixpkgs": "nixpkgs"

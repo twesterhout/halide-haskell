@@ -39,6 +39,7 @@ module Language.Halide.Expr
   , max
   , div
   , mod
+  , clamp
   , ifThenElse
   , select
   , undef
@@ -800,6 +801,18 @@ mod = binaryOp $ \a b ptr ->
     Halide::mod_round_to_zero(*$(Halide::Expr* a), *$(Halide::Expr* b))} } |]
   where
     _ = keepRedundantConstraint (Proxy @(Integral a))
+
+-- | Clamps an expression to lie within the given bounds.
+clamp :: (IsHalideType a) => Expr a -> Expr a -> Expr a -> Expr a
+clamp lower upper expr = unsafePerformIO $
+  asExpr lower $ \l ->
+    asExpr upper $ \u ->
+      asExpr expr $ \x ->
+        cxxConstructExpr $ \ptr ->
+          [CU.exp| void {
+            new ($(Halide::Expr* ptr)) Halide::Expr{
+              Halide::clamp(*$(Halide::Expr const* x),
+                *$(Halide::Expr const* l), *$(Halide::Expr const* u))} } |]
 
 -- | 'ifThenElse cond a b' is the analogue of @if cond then a else b@, but
 -- lifted to work with 'Expr' types.

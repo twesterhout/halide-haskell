@@ -10,16 +10,10 @@
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     nix-filter.url = "github:numtide/nix-filter";
-    arrayfire-nix = {
-      url = "github:twesterhout/arrayfire-nix";
-      inputs.flake-utils.follows = "flake-utils";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
     arrayfire-haskell = {
       url = "github:twesterhout/arrayfire-haskell/withDevicePtr";
       inputs.flake-utils.follows = "flake-utils";
       inputs.nixpkgs.follows = "nixpkgs";
-      inputs.arrayfire-nix.follows = "arrayfire-nix";
       inputs.nix-filter.follows = "nix-filter";
     };
   };
@@ -173,7 +167,6 @@
       pkgsFor = system: args: import nixpkgs {
         inherit system;
         overlays = [
-          inputs.arrayfire-nix.overlays.default
           inputs.arrayfire-haskell.overlays.default
           (overlayFor args)
         ];
