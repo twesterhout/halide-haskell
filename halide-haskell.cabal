@@ -69,6 +69,7 @@ library
         Language.Halide.Dimension
         Language.Halide.Expr
         Language.Halide.Func
+        Language.Halide.FunPtr
         Language.Halide.Kernel
         Language.Halide.LoopLevel
         Language.Halide.RedundantConstraints
@@ -99,7 +100,7 @@ library
         cpp-options:   -DUSE_DLOPEN=1
         build-depends: unix >=2.7.2.2 && <3.0
 
-    extra-libraries: Halide
+    extra-libraries: Halide, ffcall
 
     -- if os(linux)
     --   extra-libraries: stdc++

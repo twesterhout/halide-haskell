@@ -471,15 +471,15 @@ mkVar (T.encodeUtf8 -> s) = fmap Var . cxxConstruct $ \ptr ->
   [CU.exp| void {
     new ($(Halide::Var* ptr)) Halide::Var{std::string{$bs-ptr:s, static_cast<size_t>($bs-len:s)}} } |]
 
-withRange :: Range -> (Ptr CxxRange -> IO a) -> IO a
-withRange r action =
-  asExpr r.rangeMin $ \minPtr ->
-    asExpr r.rangeExtent $ \extentPtr -> do
-      fp <-
-        cxxConstruct $ \destPtr ->
-          [CU.exp| void { new ($(Halide::Range* destPtr)) Halide::Range{
-            *$(const Halide::Expr* minPtr), *$(const Halide::Expr* extentPtr)} } |]
-      withForeignPtr fp action
+-- withRange :: Range -> (Ptr CxxRange -> IO a) -> IO a
+-- withRange r action =
+--   asExpr r.rangeMin $ \minPtr ->
+--     asExpr r.rangeExtent $ \extentPtr -> do
+--       fp <-
+--         cxxConstruct $ \destPtr ->
+--           [CU.exp| void { new ($(Halide::Range* destPtr)) Halide::Range{
+--             *$(const Halide::Expr* minPtr), *$(const Halide::Expr* extentPtr)} } |]
+--       withForeignPtr fp action
 
 -- | Create a reduction domain. Use 'asRVar' to cast it into an index.
 --

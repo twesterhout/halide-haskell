@@ -4,6 +4,7 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 -- |
 -- Module      : Language.Halide.Buffer
@@ -38,6 +39,12 @@ module Language.Halide.Buffer
   , bufferFromPtrShapeStrides
   , bufferFromPtrShape
 
+    -- * Managed buffers
+  , ManagedHalideBuffer
+  , managedFromCpuPtrShapeStrides
+  , managedHalideBufferToHalideBuffer
+  , freeManagedHalideBuffer
+
     -- * Internals
   , RawHalideBuffer (..)
   , HalideDimension (..)
@@ -63,17 +70,19 @@ import Data.Proxy
 import Data.Vector.Storable qualified as S
 import Data.Vector.Storable.Mutable qualified as SM
 import Data.Word
-import Foreign.Marshal.Alloc (alloca, free, mallocBytes)
+import Foreign.Marshal.Alloc (alloca, callocBytes, free, mallocBytes)
 import Foreign.Marshal.Array
 import Foreign.Marshal.Utils
 import Foreign.Ptr
 import Foreign.Storable
+import GHC.Stable (StablePtr, freeStablePtr, newStablePtr)
 import GHC.Stack (HasCallStack)
 import GHC.TypeNats
 import Language.C.Inline qualified as C
 import Language.C.Inline.Cpp.Exception qualified as C
 import Language.C.Inline.Unsafe qualified as CU
 import Language.Halide.Context
+import Language.Halide.FunPtr
 import Language.Halide.Target
 import Language.Halide.Type
 import Prelude hiding (min)
@@ -120,7 +129,7 @@ simpleDimension extent stride = HalideDimension 0 (fromIntegral extent) (fromInt
 
 -- | Get strides corresponding to row-major ordering
 rowMajorStrides
-  :: Integral a
+  :: (Integral a)
   => [a]
   -- ^ Extents
   -> [a]
@@ -128,7 +137,7 @@ rowMajorStrides = drop 1 . scanr (*) 1
 
 -- | Get strides corresponding to column-major ordering.
 colMajorStrides
-  :: Integral a
+  :: (Integral a)
   => [a]
   -- ^ Extents
   -> [a]
@@ -159,7 +168,26 @@ data RawHalideBuffer = RawHalideBuffer
 newtype HalideBuffer (n :: Nat) (a :: Type) = HalideBuffer {unHalideBuffer :: RawHalideBuffer}
   deriving stock (Show, Eq)
 
+newtype ManagedHalideBuffer (n :: Nat) (a :: Type) = ManagedHalideBuffer {unManagedHalideBuffer :: RawHalideBuffer}
+  deriving stock (Show, Eq)
+
 importHalide
+
+instance
+  (CoercibleCallable f g)
+  => CoercibleCallable (Ptr RawHalideBuffer -> f) (Ptr RawHalideBuffer -> g)
+
+instance
+  (CoercibleCallable f g, KnownNat n, IsHalideType a)
+  => CoercibleCallable (Ptr (HalideBuffer n a) -> f) (Ptr (HalideBuffer n a) -> g)
+
+instance
+  (CoercibleCallable f g, KnownNat n, IsHalideType a)
+  => CoercibleCallable (Ptr RawHalideBuffer -> f) (Ptr (HalideBuffer n a) -> g)
+
+instance
+  (CoercibleCallable f g, KnownNat n, IsHalideType a)
+  => CoercibleCallable (Ptr (HalideBuffer n a) -> f) (Ptr RawHalideBuffer -> g)
 
 instance Storable RawHalideBuffer where
   sizeOf _ = 56
@@ -184,6 +212,75 @@ instance Storable RawHalideBuffer where
     pokeByteOff p 40 (halideBufferDim x)
     pokeByteOff p 48 (halideBufferPadding x)
 
+managedFromCpuPtrShapeStrides
+  :: forall n a resource
+   . (HasCallStack, KnownNat n, IsHalideType a)
+  => resource
+  -- ^ Resource to keep alive, i.e., the owner of the data
+  -> Ptr a
+  -- ^ CPU pointer to the data
+  -> [Int]
+  -- ^ Extents (in number of elements, __not__ in bytes)
+  -> [Int]
+  -- ^ Strides (in number of elements, __not__ in bytes)
+  -> IO (Ptr (ManagedHalideBuffer n a))
+managedFromCpuPtrShapeStrides resource cpuPtr shape strides = do
+  let dim = zipWith simpleDimension shape strides
+      rank = length dim
+  -- Check the number of dimensions
+  unless (rank == fromIntegral (natVal (Proxy @n)))
+    . error
+    $ "specified wrong number of dimensions: "
+    <> show rank
+    <> "; expected "
+    <> show (natVal (Proxy @n))
+    <> " from the type declaration"
+  -- Allocate storage for the ManagedHalideBuffer
+  let bufferSize = sizeOf (undefined :: RawHalideBuffer)
+      ptrSize = sizeOf (undefined :: Ptr ())
+      dimSize = sizeOf (undefined :: HalideDimension)
+      paddingSize = bufferSize `mod` ptrSize
+      -- We need space for
+      -- 1) RawHalideBuffer
+      -- 2) StablePtr to the resource
+      -- 3) array of HalideDimension of size rank
+      memorySize = (bufferSize + paddingSize) + ptrSize + rank * dimSize
+  memory <- callocBytes memorySize
+  let bufferPtr :: Ptr RawHalideBuffer
+      bufferPtr = castPtr memory
+      resourcePtr :: Ptr (StablePtr resource)
+      resourcePtr = bufferPtr `plusPtr` (bufferSize + paddingSize)
+      dimPtr :: Ptr HalideDimension
+      dimPtr = resourcePtr `plusPtr` ptrSize
+  -- Store the dimensions
+  pokeArray dimPtr dim
+  -- Store the buffer
+  poke bufferPtr
+    $ RawHalideBuffer
+      { halideBufferDevice = 0
+      , halideBufferDeviceInterface = nullPtr
+      , halideBufferHost = castPtr cpuPtr
+      , halideBufferFlags = 0
+      , halideBufferType = halideTypeFor (Proxy :: Proxy a)
+      , halideBufferDimensions = fromIntegral rank
+      , halideBufferDim = dimPtr
+      , halideBufferPadding = nullPtr
+      }
+  -- Store the resource
+  poke resourcePtr =<< newStablePtr resource
+  pure memory
+
+managedHalideBufferToHalideBuffer :: Ptr (ManagedHalideBuffer n a) -> Ptr (HalideBuffer n a)
+managedHalideBufferToHalideBuffer = castPtr
+
+freeManagedHalideBuffer :: Ptr (ManagedHalideBuffer n a) -> IO ()
+freeManagedHalideBuffer memory = do
+  let bufferSize = sizeOf (undefined :: RawHalideBuffer)
+      paddingSize = bufferSize `mod` sizeOf (undefined :: Ptr ())
+      resourcePtr = memory `plusPtr` (bufferSize + paddingSize)
+  freeStablePtr =<< peek resourcePtr
+  free memory
+
 -- | Construct a 'HalideBuffer' from a pointer to the data, a list of extents,
 -- and a list of strides, and use it in an 'IO' action.
 --
@@ -203,13 +300,13 @@ bufferFromPtrShapeStrides
   -> IO b
 bufferFromPtrShapeStrides p shape stride action =
   withArrayLen (zipWith simpleDimension shape stride) $ \n dim -> do
-    unless (n == fromIntegral (natVal (Proxy @n))) $
-      error $
-        "specified wrong number of dimensions: "
-          <> show n
-          <> "; expected "
-          <> show (natVal (Proxy @n))
-          <> " from the type declaration"
+    unless (n == fromIntegral (natVal (Proxy @n)))
+      $ error
+      $ "specified wrong number of dimensions: "
+      <> show n
+      <> "; expected "
+      <> show (natVal (Proxy @n))
+      <> " from the type declaration"
     let !buffer =
           RawHalideBuffer
             { halideBufferDevice = 0
@@ -224,10 +321,11 @@ bufferFromPtrShapeStrides p shape stride action =
     with buffer $ \bufferPtr -> do
       r <- action (castPtr bufferPtr)
       hasDataOnDevice <-
-        toEnum . fromIntegral
+        toEnum
+          . fromIntegral
           <$> [CU.exp| bool { $(halide_buffer_t* bufferPtr)->device } |]
-      when hasDataOnDevice $
-        error "the Buffer still references data on the device; did you forget to call copyToHost?"
+      when hasDataOnDevice
+        $ error "the Buffer still references data on the device; did you forget to call copyToHost?"
       pure r
 
 -- | Similar to 'bufferFromPtrShapeStrides', but assumes column-major ordering of data.
@@ -250,39 +348,39 @@ class (KnownNat n, IsHalideType a) => IsHalideBuffer t n a where
 -- This function is a simple wrapper around 'withHalideBufferImpl', except that the order of type parameters
 -- is reversed. If you have @TypeApplications@ extension enabled, this allows you to write
 -- @withHalideBuffer @3 @Float yourBuffer@ to specify that you want a 3-dimensional buffer of @Float@.
-withHalideBuffer :: forall n a t b. IsHalideBuffer t n a => t -> (Ptr (HalideBuffer n a) -> IO b) -> IO b
+withHalideBuffer :: forall n a t b. (IsHalideBuffer t n a) => t -> (Ptr (HalideBuffer n a) -> IO b) -> IO b
 withHalideBuffer = withHalideBufferImpl @t @n @a
 
 -- | Storable vectors are one-dimensional buffers. This involves no copying.
-instance IsHalideType a => IsHalideBuffer (S.Vector a) 1 a where
+instance (IsHalideType a) => IsHalideBuffer (S.Vector a) 1 a where
   withHalideBufferImpl v f =
     S.unsafeWith v $ \dataPtr ->
       bufferFromPtrShape dataPtr [S.length v] f
 
 -- | Storable vectors are one-dimensional buffers. This involves no copying.
-instance IsHalideType a => IsHalideBuffer (S.MVector RealWorld a) 1 a where
+instance (IsHalideType a) => IsHalideBuffer (S.MVector RealWorld a) 1 a where
   withHalideBufferImpl v f =
     SM.unsafeWith v $ \dataPtr ->
       bufferFromPtrShape dataPtr [SM.length v] f
 
 -- | Lists can also act as Halide buffers. __Use for testing only.__
-instance IsHalideType a => IsHalideBuffer [a] 1 a where
+instance (IsHalideType a) => IsHalideBuffer [a] 1 a where
   withHalideBufferImpl v = withHalideBuffer (S.fromList v)
 
 -- | Lists can also act as Halide buffers. __Use for testing only.__
-instance IsHalideType a => IsHalideBuffer [[a]] 2 a where
+instance (IsHalideType a) => IsHalideBuffer [[a]] 2 a where
   withHalideBufferImpl xs f = do
     let d0 = length xs
         d1 = if d0 == 0 then 0 else length (head xs)
         -- we want column-major ordering, so transpose first
         v = S.fromList (List.concat (List.transpose xs))
-    when (S.length v /= d0 * d1) $
-      error "list doesn't have a regular shape (i.e. rows have varying number of elements)"
+    when (S.length v /= d0 * d1)
+      $ error "list doesn't have a regular shape (i.e. rows have varying number of elements)"
     S.unsafeWith v $ \cpuPtr ->
       bufferFromPtrShape cpuPtr [d0, d1] f
 
 -- | Lists can also act as Halide buffers. __Use for testing only.__
-instance IsHalideType a => IsHalideBuffer [[[a]]] 3 a where
+instance (IsHalideType a) => IsHalideBuffer [[[a]]] 3 a where
   withHalideBufferImpl xs f = do
     let d0 = length xs
         d1 = if d0 == 0 then 0 else length (head xs)
@@ -295,13 +393,13 @@ instance IsHalideType a => IsHalideBuffer [[[a]]] 3 a where
             . List.transpose
             . fmap List.transpose
             $ xs
-    when (S.length v /= d0 * d1 * d2) $
-      error "list doesn't have a regular shape (i.e. rows have varying number of elements)"
+    when (S.length v /= d0 * d1 * d2)
+      $ error "list doesn't have a regular shape (i.e. rows have varying number of elements)"
     S.unsafeWith v $ \cpuPtr ->
       bufferFromPtrShape cpuPtr [d0, d1, d2] f
 
 -- | Lists can also act as Halide buffers. __Use for testing only.__
-instance IsHalideType a => IsHalideBuffer [[[[a]]]] 4 a where
+instance (IsHalideType a) => IsHalideBuffer [[[[a]]]] 4 a where
   withHalideBufferImpl xs f = do
     let d0 = length xs
         d1 = if d0 == 0 then 0 else length (head xs)
@@ -316,12 +414,12 @@ instance IsHalideType a => IsHalideBuffer [[[[a]]]] 4 a where
             . List.transpose
             . fmap (List.transpose . fmap List.transpose)
             $ xs
-    when (S.length v /= d0 * d1 * d2 * d3) $
-      error "list doesn't have a regular shape (i.e. rows have varying number of elements)"
+    when (S.length v /= d0 * d1 * d2 * d3)
+      $ error "list doesn't have a regular shape (i.e. rows have varying number of elements)"
     S.unsafeWith v $ \cpuPtr ->
       bufferFromPtrShape cpuPtr [d0, d1, d2, d3] f
 
-whenM :: Monad m => m Bool -> m () -> m ()
+whenM :: (Monad m) => m Bool -> m () -> m ()
 whenM cond f =
   cond >>= \case
     True -> f
@@ -377,12 +475,12 @@ allocateDeviceMemory interface buf = do
     interface->device_malloc(nullptr, $(halide_buffer_t* buf), interface);
   } |]
 
-freeDeviceMemory :: HasCallStack => Ptr RawHalideBuffer -> IO ()
+freeDeviceMemory :: (HasCallStack) => Ptr RawHalideBuffer -> IO ()
 freeDeviceMemory buf = do
   deviceInterface <-
     [CU.exp| const halide_device_interface_t* { $(const halide_buffer_t* buf)->device_interface } |]
-  when (deviceInterface == nullPtr) $
-    error "cannot free device memory: device_interface is NULL"
+  when (deviceInterface == nullPtr)
+    $ error "cannot free device memory: device_interface is NULL"
   [CU.block| void {
     $(halide_buffer_t* buf)->device_interface->device_free(nullptr, $(halide_buffer_t* buf));
     $(halide_buffer_t* buf)->device = 0;
@@ -399,13 +497,13 @@ allocaBuffer target shape action = do
   deviceInterface <- getDeviceInterface target
   let onHost = deviceInterface == nullPtr
   withArrayLen (zipWith simpleDimension shape (colMajorStrides shape)) $ \n dim -> do
-    unless (n == fromIntegral (natVal (Proxy @n))) $
-      error $
-        "specified wrong number of dimensions: "
-          <> show n
-          <> "; expected "
-          <> show (natVal (Proxy @n))
-          <> " from the type declaration"
+    unless (n == fromIntegral (natVal (Proxy @n)))
+      $ error
+      $ "specified wrong number of dimensions: "
+      <> show n
+      <> "; expected "
+      <> show (natVal (Proxy @n))
+      <> " from the type declaration"
     let rawBuffer =
           RawHalideBuffer
             { halideBufferDevice = 0
@@ -428,12 +526,14 @@ allocaBuffer target shape action = do
         r <- action (castPtr buf)
         isHostNull <- toBool <$> [CU.exp| bool { $(halide_buffer_t* buf)->host == nullptr } |]
         isDeviceNull <- toBool <$> [CU.exp| bool { $(halide_buffer_t* buf)->device == 0 } |]
-        when (onHost && not isDeviceNull) . error $
-          "buffer was allocated on host, but its device pointer is not NULL"
-            <> "; did you forget a copyToHost in your pipeline?"
-        when (not onHost && not isHostNull) . error $
-          "buffer was allocated on device, but its host pointer is not NULL"
-            <> "; did you add an extra copyToHost?"
+        when (onHost && not isDeviceNull)
+          . error
+          $ "buffer was allocated on host, but its device pointer is not NULL"
+          <> "; did you forget a copyToHost in your pipeline?"
+        when (not onHost && not isHostNull)
+          . error
+          $ "buffer was allocated on device, but its host pointer is not NULL"
+          <> "; did you add an extra copyToHost?"
         pure r
 
 getDeviceInterface :: Target -> IO (Ptr HalideDeviceInterface)
@@ -469,33 +569,36 @@ isHostDirty p =
   toBool <$> [CU.exp| bool { $(const halide_buffer_t* p)->host_dirty() } |]
 
 -- | Set the @host_dirty@ flag to the given value.
-setHostDirty :: Bool -> Ptr RawHalideBuffer -> IO ()
-setHostDirty (fromIntegral . fromEnum -> b) p =
-  [CU.exp| void { $(halide_buffer_t* p)->set_host_dirty($(bool b)) } |]
+-- setHostDirty :: Bool -> Ptr RawHalideBuffer -> IO ()
+-- setHostDirty (fromIntegral . fromEnum -> b) p =
+--   [CU.exp| void { $(halide_buffer_t* p)->set_host_dirty($(bool b)) } |]
 
 -- | Copy the underlying memory from device to host.
-bufferCopyToHost :: HasCallStack => Ptr RawHalideBuffer -> IO ()
+bufferCopyToHost :: (HasCallStack) => Ptr RawHalideBuffer -> IO ()
 bufferCopyToHost p = whenM (isDeviceDirty p) $ do
   raw <- peek p
-  when (raw.halideBufferDeviceInterface == nullPtr) . error $
-    "device_dirty is set, but device_interface is NULL"
-  when (raw.halideBufferHost == nullPtr) . error $
-    "host is NULL, did you forget to allocate memory?"
+  when (raw.halideBufferDeviceInterface == nullPtr)
+    . error
+    $ "device_dirty is set, but device_interface is NULL"
+  when (raw.halideBufferHost == nullPtr)
+    . error
+    $ "host is NULL, did you forget to allocate memory?"
   [CU.block| void {
     auto& buf = *$(halide_buffer_t* p);
     buf.device_interface->copy_to_host(nullptr, &buf);
   } |]
-  whenM (isDeviceDirty p) . error $
-    "device_dirty is set right after a copy_to_host; something went wrong..."
+  whenM (isDeviceDirty p)
+    . error
+    $ "device_dirty is set right after a copy_to_host; something went wrong..."
 
 checkNumberOfDimensions :: forall n. (HasCallStack, KnownNat n) => RawHalideBuffer -> IO ()
 checkNumberOfDimensions raw = do
-  unless (fromIntegral (natVal (Proxy @n)) == raw.halideBufferDimensions) $
-    error $
-      "type-level and runtime number of dimensions do not match: "
-        <> show (natVal (Proxy @n))
-        <> " != "
-        <> show raw.halideBufferDimensions
+  unless (fromIntegral (natVal (Proxy @n)) == raw.halideBufferDimensions)
+    $ error
+    $ "type-level and runtime number of dimensions do not match: "
+    <> show (natVal (Proxy @n))
+    <> " != "
+    <> show raw.halideBufferDimensions
 
 -- | Perform an action on a cropped buffer.
 withCropped
@@ -541,7 +644,7 @@ withCropped
         } |]
         action (castPtr dst)
 
-getBufferExtent :: forall n a. KnownNat n => Ptr (HalideBuffer n a) -> Int -> IO Int
+getBufferExtent :: forall n a. (KnownNat n) => Ptr (HalideBuffer n a) -> Int -> IO Int
 getBufferExtent (castPtr -> buf) (fromIntegral -> d)
   | d < fromIntegral (natVal (Proxy @n)) =
       fromIntegral <$> [CU.exp| int { $(const halide_buffer_t* buf)->dim[$(int d)].extent } |]
@@ -587,7 +690,7 @@ class
     , n b -> a
     , a b -> n
   where
-  peekToList :: HasCallStack => Ptr (HalideBuffer n a) -> IO b
+  peekToList :: (HasCallStack) => Ptr (HalideBuffer n a) -> IO b
 
 instance
   (IsHalideType a, NestedListLevel [a] ~ 1, NestedListType [a] ~ a)
@@ -667,69 +770,3 @@ withCopiedToHost (castPtr @_ @RawHalideBuffer -> buf) action = do
       setDeviceDirty True buf
       bufferCopyToHost buf
     action
-
--- instance IsHalideType a => IsListPeek (HalideBuffer 0 a) where
---   type ListPeekElem (HalideBuffer 0 a) = a
---   peekToList p = withCopiedToHost p $ do
---     raw <- peek (castPtr @_ @RawHalideBuffer p)
---     checkNumberOfDimensions @0 raw
---     when (raw.halideBufferHost == nullPtr) . error $ "host is NULL"
---     fmap pure . peek $ castPtr @_ @a raw.halideBufferHost
-
--- instance IsHalideType a => IsListPeek (HalideBuffer 1 a) where
---   type ListPeekElem (HalideBuffer 1 a) = a
---   peekToList p = withCopiedToHost p $ do
---     raw <- peek (castPtr @_ @RawHalideBuffer p)
---     (HalideDimension min0 extent0 stride0 _) <- peekElemOff (halideBufferDim raw) 0
---     let ptr0 = castPtr @_ @a (halideBufferHost raw)
---     when (ptr0 == nullPtr) . error $ "host is NULL"
---     forM [0 .. extent0 - 1] $ \i0 ->
---       peekElemOff ptr0 (fromIntegral (min0 + stride0 * i0))
-
--- instance IsHalideType a => IsListPeek (HalideBuffer 2 a) where
---   type ListPeekElem (HalideBuffer 2 a) = [a]
---   peekToList p = withCopiedToHost p $ do
---     raw <- peek (castPtr @_ @RawHalideBuffer p)
---     (HalideDimension min0 extent0 stride0 _) <- peekElemOff (halideBufferDim raw) 0
---     (HalideDimension min1 extent1 stride1 _) <- peekElemOff (halideBufferDim raw) 1
---     let ptr0 = castPtr @_ @a (halideBufferHost raw)
---     when (ptr0 == nullPtr) . error $ "host is NULL"
---     forM [0 .. extent0 - 1] $ \i0 -> do
---       let ptr1 = ptr0 `advancePtr` fromIntegral (min0 + stride0 * i0)
---       forM [0 .. extent1 - 1] $ \i1 ->
---         peekElemOff ptr1 (fromIntegral (min1 + stride1 * i1))
-
--- instance IsHalideType a => IsListPeek (HalideBuffer 3 a) where
---   type ListPeekElem (HalideBuffer 3 a) = [[a]]
---   peekToList p = withCopiedToHost p $ do
---     raw <- peek (castPtr @_ @RawHalideBuffer p)
---     (HalideDimension min0 extent0 stride0 _) <- peekElemOff (halideBufferDim raw) 0
---     (HalideDimension min1 extent1 stride1 _) <- peekElemOff (halideBufferDim raw) 1
---     (HalideDimension min2 extent2 stride2 _) <- peekElemOff (halideBufferDim raw) 2
---     let ptr0 = castPtr @_ @a (halideBufferHost raw)
---     when (ptr0 == nullPtr) . error $ "host is NULL"
---     forM [0 .. extent0 - 1] $ \i0 -> do
---       let ptr1 = ptr0 `advancePtr` fromIntegral (min0 + stride0 * i0)
---       forM [0 .. extent1 - 1] $ \i1 -> do
---         let ptr2 = ptr1 `advancePtr` fromIntegral (min1 + stride1 * i1)
---         forM [0 .. extent2 - 1] $ \i2 ->
---           peekElemOff ptr2 (fromIntegral (min2 + stride2 * i2))
-
--- instance IsHalideType a => IsListPeek (HalideBuffer 4 a) where
---   type ListPeekElem (HalideBuffer 4 a) = [[[a]]]
---   peekToList p = withCopiedToHost p $ do
---     raw <- peek (castPtr @_ @RawHalideBuffer p)
---     (HalideDimension min0 extent0 stride0 _) <- peekElemOff (halideBufferDim raw) 0
---     (HalideDimension min1 extent1 stride1 _) <- peekElemOff (halideBufferDim raw) 1
---     (HalideDimension min2 extent2 stride2 _) <- peekElemOff (halideBufferDim raw) 2
---     (HalideDimension min3 extent3 stride3 _) <- peekElemOff (halideBufferDim raw) 3
---     let ptr0 = castPtr @_ @a (halideBufferHost raw)
---     when (ptr0 == nullPtr) . error $ "host is NULL"
---     forM [0 .. extent0 - 1] $ \i0 -> do
---       let ptr1 = ptr0 `advancePtr` fromIntegral (min0 + stride0 * i0)
---       forM [0 .. extent1 - 1] $ \i1 -> do
---         let ptr2 = ptr1 `advancePtr` fromIntegral (min1 + stride1 * i1)
---         forM [0 .. extent2 - 1] $ \i2 -> do
---           let ptr3 = ptr2 `advancePtr` fromIntegral (min2 + stride2 * i2)
---           forM [0 .. extent3 - 1] $ \i3 ->
---             peekElemOff ptr3 (fromIntegral (min3 + stride3 * i3))

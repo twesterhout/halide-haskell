@@ -99,6 +99,12 @@ module Language.Halide
   , bufferFromPtrShapeStrides
   , bufferFromPtrShape
 
+    -- ** Managed buffers
+  , ManagedHalideBuffer
+  , managedFromCpuPtrShapeStrides
+  , managedHalideBufferToHalideBuffer
+  , freeManagedHalideBuffer
+
     -- * Running the pipelines
 
     -- | There are a few ways how one can run a Halide pipeline.
@@ -189,7 +195,11 @@ module Language.Halide
   , All
 
     -- * Internal
+  , Callable (..)
   , compileToCallable
+  , callableToFunPtrQ
+  , freeFunPtrClosure
+  , funPtrClosureDeleter
   , testCUDA
   , testOpenCL
   , SomeLoopLevel (..)
@@ -209,12 +219,14 @@ module Language.Halide
   , FunctionReturn
   , Curry (..)
   , UnCurry (..)
+  , Arguments (..)
   , LoweredSignature
 
     -- ** inline-c helpers
   , importHalide
   , testWriteToStderr
   , CxxExpr
+  , CxxCallable
   , CxxVar
   , CxxRVar
   , CxxParameter
@@ -228,17 +240,26 @@ module Language.Halide
     -- * Convenience re-exports
   , Int32
   , Ptr
+  , StablePtr (..)
   , KnownNat
+  , castPtrToStablePtr
+  , coerce
+  , nullPtr
+  , withForeignPtr
   )
 where
 
-import Foreign.Ptr (Ptr)
+import Data.Coerce (coerce)
+import Foreign.ForeignPtr (withForeignPtr)
+import Foreign.Ptr (Ptr, nullPtr)
+import GHC.Stable (StablePtr (..), castPtrToStablePtr)
 import GHC.TypeLits (KnownNat)
 import Language.Halide.BoundaryConditions
 import Language.Halide.Buffer
 import Language.Halide.Context
 import Language.Halide.Dimension
 import Language.Halide.Expr
+import Language.Halide.FunPtr
 import Language.Halide.Func
 import Language.Halide.Kernel
 import Language.Halide.LoopLevel

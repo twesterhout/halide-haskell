@@ -1,4 +1,5 @@
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE ViewPatterns #-}
 
 module Language.Halide.KernelSpec (spec) where
@@ -7,11 +8,30 @@ import Language.Halide
 import Test.Hspec
 import Utils
 import Prelude hiding (Eq (..))
-import Prelude qualified
+
+importHalide
 
 spec :: Spec
 spec = do
   describe "compile" $ do
+    it "compiles a kernel to a FunPtr" $ do
+      vectorPlus <- compileToCallable hostTarget $ \a b -> do
+        i <- mkVar "i"
+        define "out" i $ (a ! i :: Expr Float) + b ! i
+      (funPtr, fun) <-
+        $(callableToFunPtrQ [t|Ptr RawHalideBuffer -> Ptr RawHalideBuffer -> Ptr RawHalideBuffer -> IO ()|])
+        Nothing
+        vectorPlus
+      let n = 10
+          a = replicate 10 (1 :: Float)
+          b = replicate 10 (2 :: Float)
+      withHalideBuffer @1 @Float a $ \a' ->
+        withHalideBuffer @_ @Float b $ \b' ->
+          allocaCpuBuffer @_ @Float [n] $ \out' -> do
+            fun a' b' out'
+            peekToList out' `shouldReturn` zipWith (+) a b
+      freeFunPtrClosure funPtr
+
     it "compiles a kernel that adds two vectors together" $ do
       vectorPlus <- compile $ \a b -> do
         i <- mkVar "i"
@@ -29,8 +49,8 @@ spec = do
       scaledDiagonal <- compile $ \(scale :: Expr Double) v -> do
         i <- mkVar "i"
         j <- mkVar "j"
-        define "out" (i, j) $
-          ifThenElse (i == j) (v ! i / scale) 0
+        define "out" (i, j)
+          $ ifThenElse (i == j) (v ! i / scale) 0
       let a :: [Double]
           a = [1.0, 2.0, 3.0]
       withHalideBuffer a $ \a' ->
@@ -58,8 +78,9 @@ spec = do
             i <- mkVar "i"
             define "dest1234" i $ c * src ! i
           target =
-            setFeature FeatureNoAsserts . setFeature FeatureNoBoundsQuery $
-              hostTarget
+            setFeature FeatureNoAsserts
+              . setFeature FeatureNoBoundsQuery
+              $ hostTarget
       s <- compileToLoweredStmt StmtText target builder
       s `shouldContainText` "func dest1234 (src, c, dest1234) {"
       s `shouldContainText` "produce dest1234 {"

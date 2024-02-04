@@ -39,6 +39,10 @@
           builder =
             (haskellPackages.callCabal2nix "halide-haskell" src {
               Halide = pkgs.halide;
+              ffcall = with pkgs; symlinkJoin {
+                inherit (libffcall) name;
+                paths = [ libffcall.out libffcall.dev ];
+              };
             }).overrideAttrs (attrs: {
               # pname = attrs.pname
               #   + lib.optionalString withIntelOpenCL "-intel-ocl"
@@ -131,7 +135,7 @@
             halide-tutorial05
           ] ++ lib.optional pkgs.stdenv.isLinux halide-arrayfire;
           withHoogle = true;
-          buildInputs = with pkgs; [ ocl-icd ];
+          buildInputs = with pkgs; [ libffcall ocl-icd ];
           nativeBuildInputs = with pkgs; with ps; [
             # Building and testing
             cabal-install
@@ -156,7 +160,7 @@
           shellHook = ''
             export PROMPT_COMMAND=""
             export PS1='(nix) GHC ${ps.ghc.version} \w $ '
-            export LD_LIBRARY_PATH=${pkgs.halide}/lib:${pkgs.ocl-icd}/lib:${pkgs.zlib}/lib:$LD_LIBRARY_PATH
+            export LD_LIBRARY_PATH=${pkgs.libffcall.out}/lib:${pkgs.halide}/lib:${pkgs.ocl-icd}/lib:${pkgs.zlib}/lib:$LD_LIBRARY_PATH
           '';
           # + (if withIntelOpenCL then ''
           #   export LD_LIBRARY_PATH=$LD_LIBRARY_PATH

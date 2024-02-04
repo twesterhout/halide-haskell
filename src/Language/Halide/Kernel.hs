@@ -67,7 +67,7 @@ newArgvStorage :: Int -> IO (ArgvStorage RealWorld)
 newArgvStorage n = ArgvStorage <$> P.newPinnedPrimArray n <*> P.newPinnedPrimArray n
 
 setArgvStorage
-  :: All ValidArgument args
+  :: (All ValidArgument args)
   => ArgvStorage RealWorld
   -> Ptr CxxUserContext
   -> Arguments args
@@ -75,7 +75,7 @@ setArgvStorage
 setArgvStorage (ArgvStorage argv scalarStorage) context inputs = do
   let argvPtr = P.mutablePrimArrayContents argv
       scalarStoragePtr = P.mutablePrimArrayContents scalarStorage
-      go :: All ValidArgument args' => Int -> Arguments args' -> IO ()
+      go :: (All ValidArgument args') => Int -> Arguments args' -> IO ()
       go !_ Nil = pure ()
       go !i (x ::: xs) = do
         fillSlot
@@ -91,7 +91,7 @@ setArgvStorage (ArgvStorage argv scalarStorage) context inputs = do
 class ValidArgument (t :: Type) where
   fillSlot :: Ptr () -> Ptr () -> t -> IO ()
 
-instance IsHalideType t => ValidArgument t where
+instance (IsHalideType t) => ValidArgument t where
   fillSlot :: Ptr () -> Ptr () -> t -> IO ()
   fillSlot argv scalarStorage x = do
     poke (castPtr scalarStorage :: Ptr t) x
@@ -136,7 +136,7 @@ instance {-# OVERLAPPING #-} ValidArgument (Ptr (HalideBuffer n a)) where
 --         *$(Halide::ImageParam const* p)) } |]
 --   prepareParameter = Param <$> newIORef Nothing
 
-class KnownNat n => FuncBuilder f (n :: Nat) (a :: Type) | f -> n a where
+class (KnownNat n) => FuncBuilder f (n :: Nat) (a :: Type) | f -> n a where
   buildFunc :: Ptr (CxxVector CxxArgument) -> f -> IO (Func 'FuncTy n a)
 
 instance (k ~ 'ParamTy, KnownNat m, IsHalideType t, FuncBuilder r n a) => FuncBuilder (Func k m (Expr t) -> r) n a where
@@ -174,8 +174,6 @@ type family LoweredSignature f where
 
 type IsHalideKernel f = (KnownNat (Length (FunctionArguments f)), All ValidArgument (FunctionArguments f), Curry (FunctionArguments f) (IO ()) f)
 
-newtype Callable (signature :: Type) = Callable (ForeignPtr CxxCallable)
-
 compileToCallable
   :: forall n a f
    . (FuncBuilder f n a, IsHalideKernel (LoweredSignature f))
@@ -200,7 +198,7 @@ compileToCallable target builder =
   where
     _ = keepRedundantConstraint @(IsHalideKernel (LoweredSignature f))
 
-callableToFunction :: forall f. IsHalideKernel f => Callable f -> IO f
+callableToFunction :: forall f. (IsHalideKernel f) => Callable f -> IO f
 callableToFunction (Callable callable) = do
   context <- newEmptyCxxUserContext
   -- +1 comes from CxxUserContext

@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskellQuotes #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 -- |
 -- Module      : Language.Halide.Context
@@ -38,6 +38,7 @@
 -- 'Language.Halide.Utils.peekAndDeleteCxxString' functions.
 module Language.Halide.Context
   ( importHalide
+  , defineClosureDeleter
   )
 where
 
@@ -62,6 +63,8 @@ importHalide =
         -- , C.include "<HalideRuntimeCuda.h>"
         C.include "<cxxabi.h>"
       , C.include "<dlfcn.h>"
+      , C.include "<callback.h>"
+      , C.include "<HsFFI.h>"
       , defineExceptionHandler
       ]
 
@@ -121,29 +124,62 @@ defineExceptionHandler :: DecsQ
 defineExceptionHandler =
   C.verbatim
     "\
-    \template <class Func>                               \n\
-    \auto handle_halide_exceptions(Func&& func) {        \n\
-    \  try {                                             \n\
-    \    return func();                                  \n\
-    \  } catch(Halide::RuntimeError& e) {                \n\
-    \    throw std::runtime_error{e.what()};             \n\
-    \  } catch(Halide::CompileError& e) {                \n\
-    \    throw std::runtime_error{e.what()};             \n\
-    \  } catch(Halide::InternalError& e) {               \n\
-    \    throw std::runtime_error{e.what()};             \n\
-    \  } catch(Halide::Error& e) {                       \n\
-    \    throw std::runtime_error{e.what()};             \n\
-    \  }                                                 \n\
-    \}                                                   \n\
-    \                                                    \n\
-    \template <class T>                                               \n\
-    \auto to_string_via_iostream(T const& x) -> std::string* {        \n\
-    \  std::ostringstream stream;                                     \n\
-    \  stream << x;                                                   \n\
-    \  return new std::string{stream.str()};                          \n\
-    \}                                                                \n\
-    \\n\
-    \namespace Halide { namespace Internal {\n\
-    \  std::string print_loop_nest(const std::vector<Function> &);\n\
-    \} }\n\
+    \template <class Func>                                                                \n\
+    \auto handle_halide_exceptions(Func&& func) {                                         \n\
+    \  try {                                                                              \n\
+    \    return func();                                                                   \n\
+    \  } catch(Halide::RuntimeError& e) {                                                 \n\
+    \    throw std::runtime_error{e.what()};                                              \n\
+    \  } catch(Halide::CompileError& e) {                                                 \n\
+    \    throw std::runtime_error{e.what()};                                              \n\
+    \  } catch(Halide::InternalError& e) {                                                \n\
+    \    throw std::runtime_error{e.what()};                                              \n\
+    \  } catch(Halide::Error& e) {                                                        \n\
+    \    throw std::runtime_error{e.what()};                                              \n\
+    \  }                                                                                  \n\
+    \}                                                                                    \n\
+    \                                                                                     \n\
+    \template <class T>                                                                   \n\
+    \auto to_string_via_iostream(T const& x) -> std::string* {                            \n\
+    \  std::ostringstream stream;                                                         \n\
+    \  stream << x;                                                                       \n\
+    \  return new std::string{stream.str()};                                              \n\
+    \}                                                                                    \n\
+    \                                                                                     \n\
+    \namespace Halide { namespace Internal {                                              \n\
+    \  std::string print_loop_nest(const std::vector<Function> &);                        \n\
+    \} }                                                                                  \n\
     \"
+
+defineClosureDeleter :: TH.DecsQ
+defineClosureDeleter =
+  C.verbatim
+    "\
+    \extern \"C\" void destroy_closure_and_callable(callback_t closure) {                 \n\
+    \  if (closure == NULL) {                                                             \n\
+    \    return;                                                                          \n\
+    \  }                                                                                  \n\
+    \  if (!is_callback(reinterpret_cast<void *>(closure))) {                             \n\
+    \    fprintf(stderr, \"[halide-haskell] destroy_closure_and_callable(): trying \"     \n\
+    \                    \"to destroy a normal function pointer. This should never \"     \n\
+    \                    \"happen. Please, submit a bug report.\\n\"                      \n\
+    \                    \"Aborting...\\n\");                                             \n\
+    \    abort();                                                                         \n\
+    \  }                                                                                  \n\
+    \                                                                                     \n\
+    \  using data_type = std::tuple<Halide::Callable, void *>;                            \n\
+    \  auto *ctx = static_cast<data_type *>(callback_data(closure));                      \n\
+    \  if (ctx == nullptr) {\n\
+    \    fprintf(stderr, \"[halide-haskell] destroy_closure_and_callable(): \"\n\
+    \                    \"callback_data is NULL. This should never happen. Please, \"\n\
+    \                    \"submit a bug report.\\n\"\n\
+    \                    \"Aborting...\\n\");\n\
+    \    abort();\n\
+    \  }\n\
+    \  auto *stable_ptr = std::get<1>(*ctx);\n\
+    \                                                                                     \n\
+    \  free_callback(closure);\n\
+    \  if (stable_ptr != nullptr)\n\
+    \    hs_free_stable_ptr(stable_ptr);\n\
+    \  delete ctx;\n\
+    \}"

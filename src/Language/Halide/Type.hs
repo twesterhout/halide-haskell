@@ -18,6 +18,7 @@ module Language.Halide.Type
   ( HalideTypeCode (..)
   , HalideType (..)
   , IsHalideType (..)
+  , Callable (..)
   , CxxExpr
   , CxxVar
   , CxxRVar
@@ -46,6 +47,7 @@ module Language.Halide.Type
   , HasCxxVector (..)
   , instanceCxxConstructible
   , CxxConstructible (..)
+  , halideTypes
   -- defineCastableInstances,
   -- defineCurriedTypeFamily,
   -- defineUnCurriedTypeFamily,
@@ -126,6 +128,8 @@ cxxConstructWithDeleter size deleter constructor = do
 -- data Split =
 --   SplitVar !Text !Text !Text !(Expr Int32) !
 
+newtype Callable (signature :: Type) = Callable (ForeignPtr CxxCallable)
+
 -- | Haskell counterpart of @halide_type_code_t@.
 data HalideTypeCode
   = HalideTypeInt
@@ -178,7 +182,7 @@ instance Storable HalideType where
     pokeByteOff p 2 lanes
 
 -- | Specifies that a type is supported by Halide.
-class Storable a => IsHalideType a where
+class (Storable a) => IsHalideType a where
   halideTypeFor :: proxy a -> HalideType
   toCxxExpr :: a -> IO (ForeignPtr CxxExpr)
 
@@ -239,7 +243,7 @@ class HasCxxVector a where
   cxxVectorSize :: Ptr (CxxVector a) -> IO Int
   cxxVectorPushBack :: Ptr (CxxVector a) -> Ptr a -> IO ()
   cxxVectorData :: Ptr (CxxVector a) -> IO (Ptr a)
-  peekCxxVector :: Storable a => Ptr (CxxVector a) -> IO [a]
+  peekCxxVector :: (Storable a) => Ptr (CxxVector a) -> IO [a]
 
 -- | Template Haskell splice that defines an instance of 'HasCxxVector' for a given C type name.
 instanceHasCxxVector :: String -> TH.DecsQ
@@ -362,5 +366,6 @@ instance Curry '[] r r where
   curryG f = f Nil
   {-# INLINE curryG #-}
 
-instance Curry args r f => Curry (a ': args) r (a -> f) where
+instance (Curry args r f) => Curry (a ': args) r (a -> f) where
   curryG f a = curryG (\args -> f (a ::: args))
+  {-# INLINE curryG #-}
