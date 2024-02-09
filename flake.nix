@@ -9,31 +9,17 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    nix-filter.url = "github:numtide/nix-filter";
     arrayfire-haskell = {
       url = "github:twesterhout/arrayfire-haskell/withDevicePtr";
       inputs.flake-utils.follows = "flake-utils";
       inputs.nixpkgs.follows = "nixpkgs";
-      inputs.nix-filter.follows = "nix-filter";
     };
   };
 
-  outputs = inputs@{ nixpkgs, flake-utils, nix-filter, ... }:
+  outputs = inputs@{ nixpkgs, flake-utils, ... }:
     let
       inherit (nixpkgs) lib;
-      src = nix-filter.lib {
-        root = ./.;
-        include = [
-          "src"
-          "example"
-          "test"
-          "construction.png"
-          "halide-haskell.cabal"
-          "README.md"
-          "test-readme/README.lhs"
-          "LICENSE"
-        ];
-      };
+      src = ./.;
       halide-haskell-for = pkgs: haskellPackages:
         let
           builder =

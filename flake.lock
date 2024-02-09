@@ -5,9 +5,7 @@
         "flake-utils": [
           "flake-utils"
         ],
-        "nix-filter": [
-          "nix-filter"
-        ],
+        "nix-filter": "nix-filter",
         "nixpkgs": [
           "nixpkgs"
         ]
@@ -47,11 +45,11 @@
     },
     "nix-filter": {
       "locked": {
-        "lastModified": 1701697642,
-        "narHash": "sha256-L217WytWZHSY8GW9Gx1A64OnNctbuDbfslaTEofXXRw=",
+        "lastModified": 1705332318,
+        "narHash": "sha256-kcw1yFeJe9N4PjQji9ZeX47jg0p9A0DuU4djKvg1a7I=",
         "owner": "numtide",
         "repo": "nix-filter",
-        "rev": "c843418ecfd0344ecb85844b082ff5675e02c443",
+        "rev": "3449dc925982ad46246cfc36469baf66e1b64f17",
         "type": "github"
       },
       "original": {
@@ -80,7 +78,6 @@
       "inputs": {
         "arrayfire-haskell": "arrayfire-haskell",
         "flake-utils": "flake-utils",
-        "nix-filter": "nix-filter",
         "nixpkgs": "nixpkgs"
       }
     },
