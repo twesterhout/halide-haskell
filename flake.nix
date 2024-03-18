@@ -78,8 +78,8 @@
               halide-haskell = halide-haskell-for self hself;
               halide-JuicyPixels =
                 (hself.callCabal2nix "halide-JuicyPixels" ./halide-JuicyPixels { });
-              halide-arrayfire =
-                (hself.callCabal2nix "halide-arrayfire" ./halide-arrayfire { });
+              # halide-arrayfire =
+              #   (hself.callCabal2nix "halide-arrayfire" ./halide-arrayfire { });
               halide-readme = with-markdown-unlit hself
                 (hself.callCabal2nix "halide-readme" ./test-readme { });
               halide-tutorial01 = with-markdown-unlit hself
@@ -100,7 +100,7 @@
                   halide-tutorial03
                   halide-tutorial04
                   halide-tutorial05
-                ] ++ lib.optional self.stdenv.isLinux halide-arrayfire;
+                ]; # ++ lib.optional self.stdenv.isLinux halide-arrayfire;
               };
             });
         };
@@ -119,7 +119,7 @@
             halide-tutorial03
             halide-tutorial04
             halide-tutorial05
-          ] ++ lib.optional pkgs.stdenv.isLinux halide-arrayfire;
+          ]; #  ++ lib.optional pkgs.stdenv.isLinux halide-arrayfire;
           withHoogle = true;
           buildInputs = with pkgs; [ libffcall ocl-icd ];
           nativeBuildInputs = with pkgs; with ps; [
